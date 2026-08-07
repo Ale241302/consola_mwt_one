@@ -179,7 +179,7 @@ Esto re-escribe los dos JSON. Luego push.
 |---|---|---|
 | `base_url` | default | `https://consola.mwt.one` |
 | `admin_email` | default | `alejandro@muitowork.com` |
-| `admin_password` | **secret** | `MuitoWork2026?` (nunca commitear cambios reales) |
+| `admin_password` | **secret** | `CHANGE-ME-ADMIN-PASSWORD` (nunca commitear cambios reales) |
 | `access_token` | secret | (auto · lo setea Login) |
 | `refresh_token` | secret | (auto · lo setea Login) |
 | `user_id` `user_email` `user_role` | default | (auto · lo setea Login) |

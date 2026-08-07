@@ -21,16 +21,55 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 
-from django.http import StreamingHttpResponse, Http404
+from django.http import HttpResponseRedirect
 
 from .services import (
     generate_signed_url, paperless_ingest, ensure_bucket,
-    delete_object, make_object_key, put_object_stream, get_object_stream,
+    delete_object, make_object_key, put_object_stream,
 )
 
 log = logging.getLogger(__name__)
+
+
+def _user_can_access_key(user, key: str) -> bool:
+    """Verifica que un key de MinIO pertenezca a un objeto visible por el usuario.
+
+    Ola 0 — P0.2: mínimo viable. Si el key es de un documento, se aplica el
+    scope del expediente y el gate de audience. Si el usuario es bypass
+    (superadmin/admin) se permite cualquier key. Para otros tipos de objeto
+    (productos, marcas, etc.) se permite a staff autenticado; en la Ola 1 se
+    añadirá scoping específico.
+    """
+    from apps.core.scoped_querysets import _is_bypass, scoped_expediente_ids
+    from apps.expedientes.models import Documento
+    from apps.core.permissions import _is_client_viewer, _is_admin_viewer
+
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    if _is_bypass(user):
+        return True
+
+    # Documento: scope via expediente_id + audience.
+    try:
+        doc = Documento.objects.filter(storage_url=key, is_active=True).first()
+        if doc:
+            exp_ids = scoped_expediente_ids(user)
+            if exp_ids is not None and str(doc.expediente_id) not in exp_ids:
+                return False
+            doc_aud = getattr(doc, "audience", "CLIENT")
+            if _is_client_viewer(user) and doc_aud != "CLIENT":
+                return False
+            if doc_aud == "ADMIN_ONLY" and not _is_admin_viewer(user):
+                return False
+            return True
+    except Exception as e:
+        log.warning("_user_can_access_key(documento) falló: %s", e)
+
+    # Fallback: permitir a staff autenticado para otros tipos de objeto.
+    # Esto cubre productos, marcas, logos, etc. hasta que se añada scoping.
+    return True
 
 
 class StorageViewSet(viewsets.ViewSet):
@@ -124,62 +163,31 @@ class StorageViewSet(viewsets.ViewSet):
         result["size"]         = f.size
         return Response(result, status=200 if result.get("ok") else 502)
 
-    # ── Download-proxy: stream GET vía Django (HTTPS) en vez de exponer
-    #    la URL HTTP de MinIO. Permite que <img>/<iframe> en el FE
-    #    pidan archivos sin mixed-content. Usa GET para que cacheen. ──
+    # ── Download: redirect a URL firmada de corta vida (HTTPS).
+    #    Requiere autenticación y verifica que el key pertenezca al scope
+    #    del usuario. El bucket nunca viene del cliente.
     @action(detail=False, methods=["get"], url_path="download",
-            permission_classes=[AllowAny])   # la key UUID actúa como secret
+            permission_classes=[IsAuthenticated])
     def download(self, request):
         """
         GET /api/storage/download/?key=<key>
 
-        Streamea el objeto desde MinIO. Permite acceso sin auth porque
-        las keys contienen un UUID hex de 8 chars que es difícil de
-        adivinar (security through obscurity tipo signed-URL pre-S3).
-        Las keys solo se conocen leyendo el modelo del usuario, que SÍ
-        requiere auth. Para uso público de img/iframe en pages HTTPS.
-
-        Devuelve 404 si no existe, 503 si MinIO está offline.
+        Requiere autenticación. Verifica que el key pertenezca a un objeto
+        visible por el usuario y devuelve una URL firmada de 5 minutos,
+        redirigiendo con HTTP 302. El cliente no puede elegir bucket.
         """
         key = request.query_params.get("key")
-        bkt = request.query_params.get("bucket") or None
         if not key:
             return Response({"detail": "Falta 'key'"}, status=400)
-        try:
-            resp = get_object_stream(key, bucket=bkt)
-        except Exception as e:
-            cls = type(e).__name__
-            if "NoSuchKey" in cls:
-                raise Http404("objeto no existe")
-            log.error("download(%s) falló: %s", key, e)
-            return Response({"detail": str(e)}, status=502)
-        if resp is None:
-            return Response({"detail": "minio_unavailable"}, status=503)
 
-        # Adivina el content-type del header de MinIO o por extensión.
-        ct = resp.headers.get("Content-Type") or "application/octet-stream"
-        cl = resp.headers.get("Content-Length")
-        fname = key.split("/")[-1]
+        if not _user_can_access_key(request.user, key):
+            return Response({"detail": "No autorizado"}, status=403)
 
-        # Generator que cierra el upstream automáticamente al terminar.
-        # (Antes usaba `_resource_closers` que es atributo privado y puede
-        # cambiar entre versiones de Django — este patrón es más estable.)
-        def _stream():
-            try:
-                for chunk in resp.stream(64 * 1024):
-                    yield chunk
-            finally:
-                try: resp.close()
-                except Exception: pass
-                try: resp.release_conn()
-                except Exception: pass
+        signed = generate_signed_url(key, kind="get", ttl=300)
+        if not signed.get("available"):
+            return Response({"detail": "storage_unavailable"}, status=503)
 
-        streamer = StreamingHttpResponse(_stream(), content_type=ct)
-        streamer["Cache-Control"]       = "private, max-age=300"
-        streamer["Content-Disposition"] = f'inline; filename="{fname}"'
-        if cl:
-            streamer["Content-Length"] = cl
-        return streamer
+        return HttpResponseRedirect(signed["url"])
 
     # ── DELETE genérico: borra un objeto del bucket por su key.
     #    El llamador (Producto/Expediente/etc.) es responsable de

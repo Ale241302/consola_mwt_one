@@ -35,7 +35,7 @@ description: >-
     · refresh_token      = (lo setea Login)
     · user_id            = (lo setea Login)
     · admin_email        = alejandro@muitowork.com
-    · admin_password     = MuitoWork2026?
+    · admin_password     = CHANGE-ME-ADMIN-PASSWORD
     · client_uuid        = (cualquier cliente real — para probar /clientes/<id>/)
     · brand_uuid         = (cualquier marca real)
     · product_uuid       = (cualquier producto real)

@@ -13,6 +13,6 @@ body:
       "role_default": "superadmin",
       "preferred_language": "es",
       "timezone": "America/Lima",
-      "password": "MuitoWork2026?"
+      "password": "CHANGE-ME-ADMIN-PASSWORD"
     }
 order: 3000

@@ -30,7 +30,7 @@ Instala el paquete `mwt-mcp` y sus dependencias (módulo `mwt_mcp`, se arranca c
       "command": "python",
       "args": ["-m", "mwt_mcp"],
       "env": {
-        "MWT_MCP_TOKEN": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjo0OTM1NDM1NjQ2LCJpYXQiOjE3ODE4MzU2NDYsImp0aSI6ImY4OTllMTEyODFjODRmZDI5ZGNjNGVhZDVlOWFhNDFlIiwidXNlcl91dWlkIjoiNTA3MmZjZTItZTY2ZS00YmY3LThmZDItNjIzY2ZkM2FmYWY2IiwiZW1haWwiOiJhbGVqYW5kcm9AbXVpdG93b3JrLmNvbSIsInJvbGUiOiJhZG1pbiIsIm1jcCI6dHJ1ZX0.yeS-5L0LNapR7E6FJuH8g0d2hPobeMwWoke-TqKTetk",
+        "MWT_MCP_TOKEN": "$MWT_MCP_TOKEN",
         "MWT_API_BASE": "https://consola.mwt.one/api"
       }
     }
@@ -43,7 +43,7 @@ Instala el paquete `mwt-mcp` y sus dependencias (módulo `mwt_mcp`, se arranca c
 ```bash
 kimi mcp add mwt-one \
   --command python --args "-m,mwt_mcp" \
-  --env MWT_MCP_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjo0OTM1NDM1NjQ2LCJpYXQiOjE3ODE4MzU2NDYsImp0aSI6ImY4OTllMTEyODFjODRmZDI5ZGNjNGVhZDVlOWFhNDFlIiwidXNlcl91dWlkIjoiNTA3MmZjZTItZTY2ZS00YmY3LThmZDItNjIzY2ZkM2FmYWY2IiwiZW1haWwiOiJhbGVqYW5kcm9AbXVpdG93b3JrLmNvbSIsInJvbGUiOiJhZG1pbiIsIm1jcCI6dHJ1ZX0.yeS-5L0LNapR7E6FJuH8g0d2hPobeMwWoke-TqKTetk \
+  --env MWT_MCP_TOKEN=$MWT_MCP_TOKEN \
   --env MWT_API_BASE=https://consola.mwt.one/api
 ```
 

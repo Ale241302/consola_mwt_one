@@ -18,13 +18,17 @@ from pathlib import Path
 import os
 from datetime import timedelta
 
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # --------------------------------------------------------------------
 # Núcleo
 # --------------------------------------------------------------------
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-change-me")
-DEBUG      = os.environ.get("DJANGO_DEBUG", "1") == "1"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
+if not SECRET_KEY:
+    raise ImproperlyConfigured("DJANGO_SECRET_KEY debe estar definido en el entorno")
+DEBUG      = os.environ.get("DJANGO_DEBUG", "0") == "1"
 
 # ALLOWED_HOSTS: coma-separada. "*" significa aceptar todos los hosts.
 # ALLOWED_HOSTS: coma-separada. "*" significa aceptar todos los hosts.
@@ -179,6 +183,16 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ),
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.ScopedRateThrottle",
+        "rest_framework.throttling.AnonRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "5/minute",
+        "login": "5/minute",
+        "logout": "10/minute",
+        "password_reset": "3/minute",
+    },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
@@ -321,22 +335,16 @@ OXR_BASE_URL = os.environ.get("OXR_BASE_URL", "https://openexchangerates.org/api
 FX_REQUEST_TIMEOUT = int(os.environ.get("FX_REQUEST_TIMEOUT", "8"))
 
 # --------------------------------------------------------------------
-# MinIO (S3-compatible) — endpoint del VPS compartido.
-#
-# IMPORTANTE: la lib Python usa la API S3 en el puerto 9000.
-# La consola web (UI de admin) corre en 9001 — esa NO va acá.
-#
-# Hardcodeado al servidor de producción para que no dependa de env vars
-# (las env vars suelen "perderse" entre restarts si docker-compose no
-# está bien configurado). Las env vars siguen funcionando como override
-# para dev local o staging — si las defines, ganan sobre el default.
+# MinIO (S3-compatible) — credentials SOLO por variables de entorno.
+# En producción se usa TLS (MINIO_SECURE=1) y un endpoint privado/interno
+# para el backend. Las URLs firmadas para el navegador usan MINIO_PUBLIC_ENDPOINT.
 # --------------------------------------------------------------------
-MINIO_ENDPOINT   = os.environ.get("MINIO_ENDPOINT",   "http://187.77.218.102:9000")
+MINIO_ENDPOINT        = os.environ.get("MINIO_ENDPOINT", "")
 MINIO_PUBLIC_ENDPOINT = os.environ.get("MINIO_PUBLIC_ENDPOINT", "")
-MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "admin")
-MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "MuitoWork2026?")
-MINIO_BUCKET     = os.environ.get("MINIO_BUCKET",     "mwt-one")
-MINIO_SECURE     = os.environ.get("MINIO_SECURE", "0") == "1"
+MINIO_ACCESS_KEY      = os.environ.get("MINIO_ACCESS_KEY", "")
+MINIO_SECRET_KEY      = os.environ.get("MINIO_SECRET_KEY", "")
+MINIO_BUCKET          = os.environ.get("MINIO_BUCKET", "mwt-one")
+MINIO_SECURE          = os.environ.get("MINIO_SECURE", "1") == "1"
 
 # --------------------------------------------------------------------
 # Paperless-ngx (gestión documental, opcional)

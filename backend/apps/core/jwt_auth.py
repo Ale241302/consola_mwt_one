@@ -159,6 +159,24 @@ class MwtJWTAuthentication(JWTAuthentication):
     usuario va contra core.users (SQL raw) en vez de auth_user.
     """
 
+    def get_validated_token(self, raw_token):
+        validated = super().get_validated_token(raw_token)
+        try:
+            jti = validated.get("jti")
+            if jti:
+                with connection.cursor() as cur:
+                    cur.execute(
+                        "SELECT 1 FROM core.token_denylist WHERE jti = %s LIMIT 1",
+                        [jti],
+                    )
+                    if cur.fetchone():
+                        raise InvalidToken("Token revocado")
+        except InvalidToken:
+            raise
+        except Exception as e:
+            log.warning("Denylist check falló: %s", e)
+        return validated
+
     def get_user(self, validated_token):
         # 1) Sacar el UUID del claim (user_uuid es el preferido; "sub" /
         #    "user_id" como fallback si algún token viejo lo trae).

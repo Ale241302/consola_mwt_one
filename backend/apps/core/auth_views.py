@@ -30,13 +30,18 @@ Notas:
 =====================================================================
 """
 import hashlib
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
+log = logging.getLogger(__name__)
+
 from django.db import connection
+from django.contrib.auth.hashers import make_password, check_password
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
@@ -110,19 +115,45 @@ def _fetch_user(usuario: str):
     return user
 
 
-def _verify_password(plain: str, user: dict) -> bool:
+def _verify_password(plain: str, user: dict) -> tuple[bool, bool]:
+    """Verifica password y devuelve (ok, needs_rehash).
+
+    Soporta hashes legados SHA-256 (sin salt, inseguro) y hashes modernos
+    gestionados por Django (pbkdf2_sha256, argon2, bcrypt). En producción
+    todas las contraseñas nuevas se guardan con PBKDF2/Argon2.
+    """
     kind = (user.get("hash_kind") or "sha256").lower()
     expected = user.get("password_hash") or ""
+    if not expected:
+        return False, False
+
     if kind == "sha256":
-        return _sha256(plain) == expected
-    if kind.startswith("pbkdf2") or kind in ("argon2", "bcrypt"):
-        # Delegamos a Django password hashers si aplica
-        try:
-            from django.contrib.auth.hashers import check_password
-            return check_password(plain, expected)
-        except Exception:
-            return False
-    return False
+        ok = _sha256(plain) == expected
+        return ok, ok  # si era correcto, migrar a hash moderno
+
+    # Hashes Django: pbkdf2_sha256$..., argon2$..., bcrypt$...
+    try:
+        ok = check_password(plain, expected)
+    except Exception:
+        ok = False
+    # check_password no levanta si el hash es inválido; devuelve False.
+    return ok, False
+
+
+def _rehash_password(user_uuid: str, plain: str) -> None:
+    """Reemplaza un hash SHA-256 legado por pbkdf2_sha256."""
+    new_hash = make_password(plain)
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE core.users
+               SET password_hash = %s,
+                   hash_kind     = 'pbkdf2_sha256',
+                   updated_at    = NOW()
+             WHERE id = %s::uuid
+            """,
+            [new_hash, user_uuid],
+        )
 
 
 def _touch_last_login(user_uuid):
@@ -181,6 +212,8 @@ def _serialize_user(user: dict) -> dict:
 class LoginView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "login"
 
     def post(self, request):
         usuario  = request.data.get("usuario")  or request.data.get("email") or request.data.get("username")
@@ -197,13 +230,22 @@ class LoginView(APIView):
                 {"detail": "Usuario o contraseña incorrectos"},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
-        if not _verify_password(password, user):
+        if not _verify_password(password, user)[0]:
             return Response(
                 {"detail": "Usuario o contraseña incorrectos"},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
         _touch_last_login(user["id"])
+
+        # Migración transparente: si era SHA-256, rehash a PBKDF2.
+        if (user.get("hash_kind") or "sha256").lower() == "sha256":
+            try:
+                _rehash_password(str(user["id"]), password)
+            except Exception:
+                # No bloquear login si el rehash falla; loguear para revisión.
+                log.exception("Rehash de password falló para user=%s", user["id"])
+
         tokens = _make_tokens(user)
 
         # Sprint 2026-07-16 · el login ahora incluye legal_entity_ids (Portal
@@ -258,14 +300,47 @@ class RefreshView(APIView):
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "logout"
+
+    def _deny_token(self, token, token_type, revoked_by):
+        """Inserta el jti de un token en la denylist, si existe."""
+        if not token:
+            return
+        try:
+            jti = token.get("jti")
+            exp = token.get("exp")
+        except Exception:
+            return
+        if not jti or not exp:
+            return
+        try:
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO core.token_denylist (jti, token_type, user_uuid, expires_at, revoked_by)
+                    VALUES (%s, %s, %s::uuid, to_timestamp(%s)::timestamptz, %s::uuid)
+                    ON CONFLICT (jti) DO NOTHING
+                    """,
+                    [jti, token_type, str(revoked_by), int(exp), str(revoked_by)],
+                )
+        except Exception:
+            log.exception("Logout denylist falló para jti=%s", jti)
 
     def post(self, request):
+        # Revocar el access token actual (si hay auth).
+        user = getattr(request, "user", None)
+        user_uuid = getattr(user, "id", None) if user else None
+        access = getattr(request, "auth", None)
+        self._deny_token(access, "access", user_uuid)
+
         raw = request.data.get("refresh")
         if raw:
             try:
-                RefreshToken(raw).blacklist()
+                rt = RefreshToken(raw)
+                self._deny_token(rt, "refresh", user_uuid)
             except Exception:
-                pass  # si el blacklist app no está activo, ignoramos
+                pass
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -276,12 +351,14 @@ class PasswordResetConfirmView(APIView):
 
     Flujo:
       1. SHA-256(token) → busca en users.password_reset_token activo y no expirado.
-      2. Si válido: actualiza core.users.password_hash con SHA-256(new_password).
+      2. Si válido: actualiza core.users.password_hash con PBKDF2/Argon2(new_password).
       3. Marca el token como consumido (consumed_at = NOW).
       4. Devuelve 200 con {ok: True, email: <email>}.
     """
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         import hashlib
@@ -337,7 +414,7 @@ class PasswordResetConfirmView(APIView):
         if not email:
             return Response({"detail": "Usuario asociado no encontrado."}, status=404)
 
-        new_hash = hashlib.sha256(new_password.encode("utf-8")).hexdigest()
+        new_hash = make_password(new_password)
 
         # Update password en core.users (la tabla del login).
         # Si por algún motivo no existe la fila, hacer UPSERT.
@@ -345,7 +422,7 @@ class PasswordResetConfirmView(APIView):
             cur.execute("""
                 UPDATE core.users
                    SET password_hash = %s,
-                       hash_kind     = 'sha256',
+                       hash_kind     = 'pbkdf2_sha256',
                        updated_at    = NOW()
                  WHERE lower(email_plain) = lower(%s)
             """, [new_hash, email])
@@ -358,7 +435,7 @@ class PasswordResetConfirmView(APIView):
                         (id, email_plain, password_hash, hash_kind, full_name,
                          role, is_active, is_staff, created_at, updated_at)
                     VALUES
-                        (%s, %s, %s, 'sha256', '', 'viewer', TRUE, FALSE, NOW(), NOW())
+                        (%s, %s, %s, 'pbkdf2_sha256', '', 'viewer', TRUE, FALSE, NOW(), NOW())
                 """, [str(_uuid.uuid4()), email, new_hash])
 
             # Marcar token consumido

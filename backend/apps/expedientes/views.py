@@ -234,6 +234,14 @@ class OcViewSet(viewsets.ViewSet):
                    .order_by("-issued_at", "-created_at").first())
             if o is None:
                 return Response({"detail": "OC no existe"}, status=404)
+        # Scope check: la OC debe pertenecer al pool de clientes del usuario.
+        scoped = filter_by_user_clients(
+            Oc.objects.filter(pk=o.id, is_active=True),
+            request.user,
+            client_field="client_id",
+        )
+        if not scoped.exists():
+            return Response({"detail": "OC no existe"}, status=404)
         return Response(OcSerializer(o, context={"request": request}).data)
 
     def create(self, request):
@@ -248,8 +256,21 @@ class OcViewSet(viewsets.ViewSet):
         denied = _deny_client_mutation(request, action_label="oc.update")
         if denied is not None: return denied
         try:
-            o = Oc.objects.get(pk=pk)
-        except Oc.DoesNotExist:
+            o = filter_by_user_clients(
+                Oc.objects.filter(pk=pk),
+                request.user,
+                client_field="client_id",
+            ).first()
+        except Exception:
+            o = None
+        if o is None:
+            # Fallback por codigo, scopeado igualmente.
+            o = filter_by_user_clients(
+                Oc.objects.filter(codigo=pk).order_by("-issued_at", "-created_at"),
+                request.user,
+                client_field="client_id",
+            ).first()
+        if o is None:
             return Response({"detail": "OC no existe"}, status=404)
         s = OcSerializer(o, data=request.data, partial=True)
         s.is_valid(raise_exception=True)
@@ -260,7 +281,20 @@ class OcViewSet(viewsets.ViewSet):
     def destroy(self, request, pk=None):
         denied = _deny_client_mutation(request, action_label="oc.destroy")
         if denied is not None: return denied
-        Oc.objects.filter(pk=pk).update(is_active=False)
+        affected = filter_by_user_clients(
+            Oc.objects.filter(pk=pk),
+            request.user,
+            client_field="client_id",
+        ).update(is_active=False)
+        if affected == 0:
+            # Fallback por codigo
+            affected = filter_by_user_clients(
+                Oc.objects.filter(codigo=pk).order_by("-issued_at", "-created_at")[:1],
+                request.user,
+                client_field="client_id",
+            ).update(is_active=False)
+        if affected == 0:
+            return Response({"detail": "OC no existe"}, status=404)
         return Response(status=204)
 
     # ── Selects ────────────────────────────────────────
@@ -475,6 +509,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 e = Expediente.objects.get(codigo=pk, is_active=True)
             except Expediente.DoesNotExist:
                 return Response({"detail": "Expediente no existe"}, status=404)
+        # Scope check: client_id U operating_company_id deben estar en el
+        # pool del usuario. Esto cierra enumeración por codigo secuencial.
+        scoped = filter_by_user_clients(
+            Expediente.objects.filter(pk=e.id, is_active=True),
+            request.user,
+            client_field="client_id",
+            extra_fields=("operating_company_id",),
+        )
+        if not scoped.exists():
+            return Response({"detail": "Expediente no existe"}, status=404)
         return Response(ExpedienteSerializer(e, context={"request": request}).data)
 
     def create(self, request):
@@ -933,8 +977,22 @@ class ExpedienteViewSet(viewsets.ViewSet):
         denied = _deny_client_mutation(request, action_label="expediente.update")
         if denied is not None: return denied
         try:
-            e = Expediente.objects.get(pk=pk)
-        except Expediente.DoesNotExist:
+            e = filter_by_user_clients(
+                Expediente.objects.filter(pk=pk),
+                request.user,
+                client_field="client_id",
+                extra_fields=("operating_company_id",),
+            ).first()
+        except Exception:
+            e = None
+        if e is None:
+            e = filter_by_user_clients(
+                Expediente.objects.filter(codigo=pk),
+                request.user,
+                client_field="client_id",
+                extra_fields=("operating_company_id",),
+            ).first()
+        if e is None:
             return Response({"detail": "Expediente no existe"}, status=404)
         s = ExpedienteSerializer(e, data=request.data, partial=True)
         s.is_valid(raise_exception=True)
@@ -956,14 +1014,25 @@ class ExpedienteViewSet(viewsets.ViewSet):
         denied = _deny_client_mutation(request, action_label="expediente.destroy")
         if denied is not None: return denied
         # Lookup tolerante: pk puede ser UUID o codigo (mismo patron que retrieve).
+        # Scope check antes de cualquier mutación.
         exp = None
         try:
-            exp = Expediente.objects.filter(pk=pk).first()
+            exp = filter_by_user_clients(
+                Expediente.objects.filter(pk=pk),
+                request.user,
+                client_field="client_id",
+                extra_fields=("operating_company_id",),
+            ).first()
         except Exception:
             exp = None
         if exp is None:
             try:
-                exp = Expediente.objects.filter(codigo=pk).first()
+                exp = filter_by_user_clients(
+                    Expediente.objects.filter(codigo=pk),
+                    request.user,
+                    client_field="client_id",
+                    extra_fields=("operating_company_id",),
+                ).first()
             except Exception:
                 exp = None
         if exp is None:
@@ -4825,6 +4894,10 @@ class LineaViewSet(viewsets.ViewSet):
             l = Linea.objects.get(pk=pk, is_active=True)
         except Linea.DoesNotExist:
             return Response({"detail": "Línea no existe"}, status=404)
+        # Scope check via expediente padre.
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None and str(l.expediente_id) not in exp_ids:
+            return Response({"detail": "Línea no existe"}, status=404)
         return Response(LineaSerializer(l).data)
 
     def create(self, request):
@@ -4850,6 +4923,9 @@ class LineaViewSet(viewsets.ViewSet):
         try:
             l = Linea.objects.get(pk=pk)
         except Linea.DoesNotExist:
+            return Response({"detail": "Línea no existe"}, status=404)
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None and str(l.expediente_id) not in exp_ids:
             return Response({"detail": "Línea no existe"}, status=404)
         s = LineaSerializer(l, data=request.data, partial=True)
         s.is_valid(raise_exception=True)
@@ -4906,6 +4982,13 @@ class LineaViewSet(viewsets.ViewSet):
     def destroy(self, request, pk=None):
         denied = _deny_client_mutation(request, action_label="linea.destroy")
         if denied is not None: return denied
+        try:
+            l = Linea.objects.get(pk=pk)
+        except Linea.DoesNotExist:
+            return Response({"detail": "Línea no existe"}, status=404)
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None and str(l.expediente_id) not in exp_ids:
+            return Response({"detail": "Línea no existe"}, status=404)
         Linea.objects.filter(pk=pk).update(is_active=False)
         return Response(status=204)
 
@@ -5073,6 +5156,10 @@ class DocumentoViewSet(viewsets.ViewSet):
         try:
             d = Documento.objects.get(pk=pk, is_active=True)
         except Documento.DoesNotExist:
+            return Response({"detail": "Documento no existe"}, status=404)
+        # Scope check via expediente padre.
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None and str(d.expediente_id) not in exp_ids:
             return Response({"detail": "Documento no existe"}, status=404)
         # Sprint 2026-05-06 · audiencia.
         #   CLIENT_*  no puede acceder a MWT_INTERNAL ni ADMIN_ONLY.
@@ -5308,6 +5395,9 @@ class DocumentoViewSet(viewsets.ViewSet):
             d = Documento.objects.get(pk=pk)
         except Documento.DoesNotExist:
             return Response({"detail": "Documento no existe"}, status=404)
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None and str(d.expediente_id) not in exp_ids:
+            return Response({"detail": "Documento no existe"}, status=404)
         s = DocumentoSerializer(d, data=request.data, partial=True)
         s.is_valid(raise_exception=True)
         s.save()
@@ -5321,6 +5411,9 @@ class DocumentoViewSet(viewsets.ViewSet):
             instance = Documento.objects.get(pk=pk)
         except Documento.DoesNotExist:
             return Response(status=204)
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None and str(instance.expediente_id) not in exp_ids:
+            return Response({"detail": "Documento no existe"}, status=404)
         # Capturar TODAS las keys ANTES del save/delete
         keys = [
             instance.storage_url,

@@ -6,13 +6,11 @@
 // Modo de operación:
 //   · POST /api/auth/login  →  { access, refresh, user }
 //   · Token + user persistidos en localStorage (key: 'mwt-auth')
-//   · Fallback DEV: si el backend no está activo, se permite login
-//     directo validando el SHA-256 contra el hash del admin seed
-//     (alejandro@muitowork.com / MuitoWork2026?). Esto permite probar
-//     la UI antes de levantar Django.
+//   · No hay fallback local: en producción el backend es la única fuente de
+//     verdad. Para desarrollo local usar VITE_USE_MOCKS o levantar Django.
 // =====================================================================
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
-import { authApi, ApiError, refreshAccessToken } from "../lib/api.js";
+import { authApi, refreshAccessToken } from "../lib/api.js";
 import { clearCache } from "../lib/swrCache.js";
 
 const AUTH_KEY = "mwt-auth";
@@ -24,34 +22,6 @@ const AUTH_KEY = "mwt-auth";
 const ACTIVITY_KEY  = "mwt-activity";
 const IDLE_LIMIT_MS = 30 * 60 * 1000;
 const ACTIVITY_EVENTS = ["mousemove", "mousedown", "keydown", "touchstart", "scroll", "click"];
-
-// Hash SHA-256 del password admin (para fallback DEV). Generado con:
-//   printf '%s' 'MuitoWork2026?' | sha256sum
-const ADMIN_FALLBACK = {
-  email:     "alejandro@muitowork.com",
-  usernames: ["alejandro@muitowork.com", "admin", "alejandro"],
-  sha256:    "9fd0f3edaadea3046e561859e9f211878e8d124b1c196ddad82924ed570c05f9",
-  user: {
-    id:    "00000000-0000-0000-0000-000000000001",
-    email: "alejandro@muitowork.com",
-    full_name: "Alejandro Mendoza",
-    role: "admin",
-    role_name: "Admin",
-    permissions: {
-      modules: ["*"],
-      actions: ["view","create","edit","delete","export","admin"],
-    },
-  },
-};
-
-// SHA-256 en browser via WebCrypto
-async function sha256Hex(text) {
-  const enc = new TextEncoder().encode(text);
-  const buf = await crypto.subtle.digest("SHA-256", enc);
-  return Array.from(new Uint8Array(buf))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 const AuthContext = createContext(null);
 
@@ -126,27 +96,8 @@ export function AuthProvider({ children }) {
     setAuthLoading(true);
     setAuthError("");
     try {
-      // 1) Intento contra el backend real
-      let data;
-      try {
-        data = await authApi.login(usuario, password);
-      } catch (err) {
-        // Si el backend no responde (HTTP 0 / 404), caemos al fallback DEV.
-        const backendDown = err instanceof ApiError && (err.status === 0 || err.status === 404);
-        if (!backendDown) throw err;
-
-        // Fallback DEV: validamos contra el admin seed
-        const hash = await sha256Hex(password);
-        const userOk = ADMIN_FALLBACK.usernames.includes(usuario.toLowerCase());
-        if (!userOk || hash !== ADMIN_FALLBACK.sha256) {
-          throw new ApiError("Usuario o contraseña incorrectos", 401, null);
-        }
-        data = {
-          access:  "dev-local-" + Date.now(),
-          refresh: "dev-local-refresh-" + Date.now(),
-          user:    ADMIN_FALLBACK.user,
-        };
-      }
+      // 1) Intento contra el backend real (único camino válido)
+      const data = await authApi.login(usuario, password);
 
       setUser(data.user);
       setAccessToken(data.access);

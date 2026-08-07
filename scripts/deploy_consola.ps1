@@ -123,4 +123,5 @@ Write-Host ""
 Write-Step "Listo"
 Write-Host "  Frontend:  http://${VpsHost}:3100" -ForegroundColor Green
 Write-Host "  API:       http://${VpsHost}:8100/api/" -ForegroundColor Green
-Write-Host "  Login:     alejandro@muitowork.com / MuitoWork2026?" -ForegroundColor Green
+Write-Host "  Login:     alejandro@muitowork.com / [definir en MWT_ADMIN_SEED_PASSWORD]" -ForegroundColor Green
+Write-Host "  ⚠️  Cambiar la contraseña por defecto inmediatamente con seed_admins --password" -ForegroundColor Yellow

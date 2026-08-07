@@ -2,10 +2,12 @@
 apps.nodos.views — CRUD + endpoints de select_* y jerarquía para el FE.
 """
 import uuid
-from django.db import connection
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from apps.core.permissions import IsCeoOrAdmin
 
 from .models import Nodo, TipoCat, StatusCat, NodoJerarquia, NodoArtefacto
 from .serializers import (
@@ -29,6 +31,8 @@ class NodoViewSet(viewsets.ViewSet):
     GET     /api/nodos/jerarquia/               → árbol completo (sólo raíces con hijos)
     GET     /api/nodos/{id}/descendientes/      → subtree a partir del nodo
     """
+
+    permission_classes = [IsAuthenticated, IsCeoOrAdmin]
 
     # Set canónico de capacidades — fuente única; el FE no debería hardcodearlas.
     CAPABILITIES_CANON = [

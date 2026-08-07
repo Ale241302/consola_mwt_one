@@ -50,6 +50,26 @@ def user_is_ceo_or_admin(user) -> bool:
     )
 
 
+def _user_role(user) -> str:
+    if not user or not getattr(user, "is_authenticated", False):
+        return ""
+    return str(
+        getattr(user, "role_default", None) or getattr(user, "role", None) or ""
+    ).strip().lower()
+
+
+def _is_client_viewer(user) -> bool:
+    """True si el usuario tiene un rol de cliente (incluye CLIENT_VIEWER)."""
+    return is_client_role(_user_role(user))
+
+
+def _is_admin_viewer(user) -> bool:
+    """True si el usuario es un usuario interno (no cliente)."""
+    if not user or not getattr(user, "is_authenticated", False):
+        return False
+    return not is_client_role(_user_role(user))
+
+
 class IsCeoOrAdmin(BasePermission):
     """Permiso positivo para superficies CEO/Admin-only."""
 

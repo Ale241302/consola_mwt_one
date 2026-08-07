@@ -13,7 +13,9 @@ Por qué SQL crudo y no ORM:
     que luego divergen.
 
 Uso:
-    # Correr por default (alejandro + alvaro @muitowork.com, clave MuitoWork2026?)
+    # Correr por default (alejandro + alvaro @muitowork.com). En producción
+    # pasar la password con la variable de entorno MWT_ADMIN_SEED_PASSWORD o
+    # con la flag --password. Nunca dejar la contraseña por default en prod.
     python manage.py seed_admins
 
     # Pasar una password distinta por flag:
@@ -32,6 +34,7 @@ Seguridad:
 =====================================================================
 """
 import hashlib
+import os
 import uuid
 
 from django.core.management.base import BaseCommand
@@ -56,7 +59,10 @@ DEFAULT_ADMINS = [
     },
 ]
 
-DEFAULT_PASSWORD = "MuitoWork2026?"
+DEFAULT_PASSWORD = os.environ.get(
+    "MWT_ADMIN_SEED_PASSWORD",
+    "CHANGE-ME-SEED-ADMIN-PASSWORD",
+)
 
 
 def _sha256(plain: str) -> str:
@@ -66,15 +72,16 @@ def _sha256(plain: str) -> str:
 class Command(BaseCommand):
     help = (
         "Crea o actualiza los superadmins canónicos de MWT.ONE "
-        "(alejandro + alvaro @muitowork.com) en core.users. Idempotente."
+        "(alejandro + alvaro @muitowork.com) en core.users. Idempotente. "
+        "Usa MWT_ADMIN_SEED_PASSWORD o --password para la contraseña."
     )
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--password",
             default=DEFAULT_PASSWORD,
-            help=f"Password a asignar a todos los superadmins "
-                 f"(default: '{DEFAULT_PASSWORD}').",
+            help="Password a asignar a todos los superadmins. "
+                 "Puede venir de la env var MWT_ADMIN_SEED_PASSWORD.",
         )
         parser.add_argument(
             "--only",

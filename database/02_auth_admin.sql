@@ -5,21 +5,18 @@
 -- Propósito:
 --   · Crear el modelo de roles y permisos (core.roles, core.user_roles).
 --   · Sembrar el rol Admin con permisos totales.
---   · Upsertear al usuario admin (alejandro@muitowork.com) con la
---     contraseña "MuitoWork2026?" hasheada en SHA-256 (hex lower).
+--   · Upsertear al usuario admin (alejandro@muitowork.com) con un hash
+--     intencionalmente inválido. La contraseña real debe definirse con
+--     MWT_ADMIN_SEED_PASSWORD + `python manage.py seed_admins`.
 --   · Vincular admin ↔ Admin.
 --
 -- Ejecutar DESPUÉS de init.sql:
 --     psql -U mwt -d mwt_one -f 02_auth_admin.sql
 --
--- Hash verificado (hex lower, 64 chars):
---     printf '%s' 'MuitoWork2026?' | sha256sum
---     → 9fd0f3edaadea3046e561859e9f211878e8d124b1c196ddad82924ed570c05f9
---
 -- Nota de seguridad:
---   SHA-256 plano cumple con el requerimiento explícito del CEO. Para
---   producción se recomienda migrar a pbkdf2_sha256 / argon2 / bcrypt;
---   el backend ya tolera ambos formatos (hash_kind prefix).
+--   La contraseña por defecto ha sido eliminada. SHA-256 plano cumple con
+--   el requerimiento explícito del CEO; el backend ya tolera pbkdf2_sha256,
+--   argon2 y bcrypt (hash_kind prefix). Migrar tras rotar secrets.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
@@ -106,7 +103,8 @@ ON CONFLICT (slug) DO UPDATE
 -- =====================================================================
 -- 5. Upsert del usuario admin
 --    email:    alejandro@muitowork.com
---    password: MuitoWork2026?   (SHA-256 hex lower)
+--    password: INTENCIONALMENTE INVÁLIDA. Define la contraseña real con
+--              MWT_ADMIN_SEED_PASSWORD y `python manage.py seed_admins`.
 -- =====================================================================
 INSERT INTO core.users (
     email,
@@ -121,7 +119,7 @@ INSERT INTO core.users (
 VALUES (
     'alejandro@muitowork.com',
     'alejandro@muitowork.com',
-    '9fd0f3edaadea3046e561859e9f211878e8d124b1c196ddad82924ed570c05f9',
+    '0000000000000000000000000000000000000000000000000000000000000000',
     'sha256',
     'Alejandro Mendoza',
     'admin',

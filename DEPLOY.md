@@ -22,8 +22,9 @@ Cuatro contenedores, todos bajo el proyecto Docker Compose `consola-mwt-one`:
 La primera vez que arranca Postgres, aplica automáticamente:
 
 1. `database/init.sql` → crea schemas (core, clientes, expedientes…) y tablas.
-2. `database/02_auth_admin.sql` → crea rol Admin + usuario `alejandro@muitowork.com`
-   con password `MuitoWork2026?` en SHA-256.
+2. `database/02_auth_admin.sql` → crea rol Admin + usuario `alejandro@muitowork.com`.
+   La contraseña inicial debe definirse antes del primer deploy (ver
+   `MWT_ADMIN_SEED_PASSWORD` o `python manage.py seed_admins --password`).
 
 Si relanzas `docker compose up` con la DB ya creada, el entrypoint del
 backend verifica en `public._applied_sql` cuáles SQL ya corrieron y **no
@@ -122,9 +123,11 @@ docker compose up -d --build
 | Login endpoint      | `POST http://187.77.218.102:8100/api/auth/login/` |
 | Swagger UI          | <http://187.77.218.102:8100/api/schema/swagger-ui/> |
 
-Credenciales iniciales (sembradas por `02_auth_admin.sql`):
+Credenciales iniciales (sembradas por `02_auth_admin.sql` / `seed_admins`):
 
-- Usuario: `alejandro@muitowork.com` · Password: `MuitoWork2026?`
+- Usuario: `alejandro@muitowork.com`
+- Password: definir con `MWT_ADMIN_SEED_PASSWORD` o `python manage.py seed_admins --password`.
+- ⚠️ Cambiar la contraseña por defecto inmediatamente después del primer login.
 
 ---
 

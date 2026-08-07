@@ -60,7 +60,7 @@ Variables clave (definidas en environment):
   · refresh_token      = (lo setea Login)
   · user_id            = (lo setea Login)
   · admin_email        = alejandro@muitowork.com
-  · admin_password     = MuitoWork2026?
+  · admin_password     = CHANGE-ME-ADMIN-PASSWORD
   · client_uuid        = (cualquier cliente real — para probar /clientes/<id>/)
   · brand_uuid         = (cualquier marca real)
   · product_uuid       = (cualquier producto real)
@@ -730,7 +730,7 @@ environment = {
         {"key": "base_url",         "value": "https://consola.mwt.one", "type": "default", "enabled": True},
         # Credenciales · cambia esto antes de hacer push a Git
         {"key": "admin_email",      "value": "alejandro@muitowork.com", "type": "default", "enabled": True},
-        {"key": "admin_password",   "value": "MuitoWork2026?",          "type": "secret",  "enabled": True},
+        {"key": "admin_password",   "value": "CHANGE-ME-ADMIN-PASSWORD",  "type": "secret",  "enabled": True},
         # Tokens · los rellena Login automáticamente
         {"key": "access_token",     "value": "",                         "type": "secret",  "enabled": True},
         {"key": "refresh_token",    "value": "",                         "type": "secret",  "enabled": True},

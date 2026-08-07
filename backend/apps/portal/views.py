@@ -32,6 +32,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.core.permissions import IsCeoOrAdmin
+
 from .models import MwtUser, PortalSessionLog, PortalAuditLog
 from .serializers import (
     MwtUserListSerializer, MwtUserSerializer,
@@ -250,23 +252,30 @@ def _resolve_client_ids(request):
 
     # 2. Override: query param ?empresa_id (cliente activo del usuario)
     empresa_q = request.query_params.get("empresa_id")
-    if empresa_q and (is_staff or not user_ids or empresa_q in user_ids):
-        return [empresa_q]
+    if empresa_q:
+        empresa_q = empresa_q.lower()
+        # Fail-closed: solo staff puede actuar sin empresas asignadas; un
+        # usuario normal debe tener la empresa en su lista canónica.
+        if is_staff or empresa_q in user_ids:
+            return [empresa_q]
 
     # 3. Override: header X-Portal-Client (legacy, una sola empresa)
     hdr = request.headers.get("X-Portal-Client")
     if hdr:
-        # Si user_ids está poblado y el header NO está, ignorarlo
-        # (no podemos confiar en headers para autorización).
-        if is_staff or not user_ids or hdr in user_ids:
+        hdr = hdr.lower()
+        # No confiamos en headers para autorización si el usuario no tiene
+        # empresas asignadas; staff puede seguir usándolo para soporte.
+        if is_staff or hdr in user_ids:
             return [hdr]
 
     # 4. Legacy ?client_id=
     cid_q = request.query_params.get("client_id")
-    if cid_q and (is_staff or not user_ids or cid_q in user_ids):
-        return [cid_q]
+    if cid_q:
+        cid_q = cid_q.lower()
+        if is_staff or cid_q in user_ids:
+            return [cid_q]
 
-    # 5. Por defecto: TODAS las empresas del usuario
+    # 5. Por defecto: TODAS las empresas del usuario (vacío si no tiene)
     return user_ids
 
 
@@ -1318,6 +1327,7 @@ class MwtUserViewSet(viewsets.ModelViewSet):
     """
     queryset = MwtUser.objects.filter(is_active=True)
     serializer_class = MwtUserSerializer
+    permission_classes = [IsAuthenticated, IsCeoOrAdmin]
 
     def get_serializer_class(self):
         if self.action == "list":
