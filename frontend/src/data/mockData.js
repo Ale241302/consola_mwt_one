@@ -1,5 +1,13 @@
 // Mock data for MWT ONE prototype
-// Expedientes, clients, brands, products, pagos, artifacts, activity...
+// Sprint 2026-08-07 · Ola 1 F2: guard para aislar datos mock en producción.
+// En producción (sin VITE_USE_MOCKS='true'), las listas/objetos de datos devuelven vacíos.
+const USE_MOCKS = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_USE_MOCKS === 'true') ||
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.DEV && import.meta.env.VITE_USE_MOCKS !== 'false');
+
+const _emptyArr = [];
+const _emptyObj = {};
+const _wrap = (val, fallback = _emptyArr) => (USE_MOCKS ? val : fallback);
+
 
 // ─────────────────────────────────────────────────────────
 // MARCAS — ENT_PLAT_MARCAS (canónico)
@@ -11,7 +19,7 @@
 //   feature_flags     { STOREFRONT_ENABLED, B2B_PORTAL_ENABLED,
 //                       EXPEDITION_ENABLED, SCANNER_ENABLED }
 // ─────────────────────────────────────────────────────────
-export const BRANDS = [
+const _RAW_BRANDS = [
   {
     id: 'bis', brand_id: 'BIS',
     name: 'Bison', code: 'BIS', color: '#8E6B3F',
@@ -146,7 +154,7 @@ export const BRANDS = [
 // BRAND_ATTRIBUTES — enums de calzado de seguridad
 // (para formularios y mapeo Excel)
 // ─────────────────────────────────────────────────────────
-export const BRAND_ATTRIBUTES = {
+const _RAW_BRAND_ATTRIBUTES = {
   tipo_calzado:      ['Bota Alta','Bota al Tobillo','Zapato tipo crocs','Tenis','Plantilla'],
   cubrepuntera:      ['Sí','No'],
   tipo_puntera:      ['Acero 200J','Composite 200J','No tiene','Plástico','Citoplástico 200C'],
@@ -187,7 +195,7 @@ export const BRAND_ATTRIBUTES = {
 // ─────────────────────────────────────────────────────────
 // BRAND_PRODUCTS — catálogo técnico con specs colapsadas
 // ─────────────────────────────────────────────────────────
-export const BRAND_PRODUCTS = [
+const _RAW_BRAND_PRODUCTS = [
   // ── Marluvas (MLV) — calzado de seguridad ─────────
   {
     id: 'bp-mlv-001', brand_id: 'mlv', sku: 'MLV-50S29-BLK-42',
@@ -312,7 +320,7 @@ export const BRAND_PRODUCTS = [
 //   client_prices { [client_id]: override }
 //   internal_cost (Costo FOB/Fábrica · CEO-ONLY)
 // ─────────────────────────────────────────────────────────
-export const BRAND_PRICING = [
+const _RAW_BRAND_PRICING = [
   { brand_id:'mlv', sku:'MLV-50S29-BLK-42',   base_price: 52.00, client_prices: { c1: 49.00, c2: 47.50, c3: 51.00 }, internal_cost: 18.50 },
   { brand_id:'mlv', sku:'MLV-40S18-BRN-41',   base_price: 68.00, client_prices: { c1: 64.00, c5: 62.00 },            internal_cost: 24.80 },
   { brand_id:'mlv', sku:'MLV-EVA-AST-BLK-40', base_price: 44.00, client_prices: { c2: 41.00, c4: 42.00, c8: 43.00 }, internal_cost: 15.20 },
@@ -341,7 +349,7 @@ export const BRAND_PRICING = [
 //   estado            ACTIVO | PAUSADO | BLOQUEADO
 //   band              GREEN | AMBER | RED (derivado por ahora)
 // ─────────────────────────────────────────────────────────
-export const CLIENTS = [
+const _RAW_CLIENTS = [
   {
     id: 'c1', uuid: '0c77c2ea-1c11-4d4a-9e61-e10001000001',
     codigo_marluvas: '4000000100', cedula_juridica: '20512345678',
@@ -464,7 +472,7 @@ export const CLIENTS = [
 // CLIENT_PAYMENTS — Payment Status Machine
 //   status: pending | verified | credit_released | rejected
 // ─────────────────────────────────────────────────────────
-export const CLIENT_PAYMENTS = [
+const _RAW_CLIENT_PAYMENTS = [
   // c1 · Andes Retail
   { id:'PG-2026-00821', client_id:'c1', date:'2026-01-12', amount:47400, method:'Movimiento', ref:'TRX-88412', expediente:'EXP-1029', status:'credit_released', verified_by:'T. Muñoz', notes:'Aplicado a PF-0942 · 50%' },
   { id:'PG-2026-00914', client_id:'c1', date:'2026-02-04', amount:47400, method:'Movimiento', ref:'TRX-91203', expediente:'EXP-1029', status:'credit_released', verified_by:'T. Muñoz', notes:'Saldo PF-0942' },
@@ -488,7 +496,7 @@ export const CLIENT_PAYMENTS = [
 // ─────────────────────────────────────────────────────────
 // CLIENT_PRODUCTS_BOUGHT — inteligencia de surtido
 // ─────────────────────────────────────────────────────────
-export const CLIENT_PRODUCTS_BOUGHT = [
+const _RAW_CLIENT_PRODUCTS_BOUGHT = [
   // c1 · Andes Retail
   { client_id:'c1', sku:'BIS-OXF-BLK-42', product:'Oxford cuero negro T.42', units_12m: 1840, revenue_12m: 83420, last_order:'2026-03-22', frequency: 'mensual' },
   { client_id:'c1', sku:'BIS-OXF-TAN-42', product:'Oxford cuero tan T.42',   units_12m: 1200, revenue_12m: 54400, last_order:'2026-02-18', frequency: 'bi-mensual' },
@@ -515,7 +523,7 @@ export const CLIENT_PRODUCTS_BOUGHT = [
 // ─────────────────────────────────────────────────────────
 // Legal entities & Operators (ENT_OPS_NODOS · owner ≠ operator)
 // ─────────────────────────────────────────────────────────
-export const LEGAL_ENTITIES = [
+const _RAW_LEGAL_ENTITIES = [
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e001', name: 'MWT México S. de R.L.',      short: 'MWT MX',      country: 'MX' },
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e002', name: 'MWT Perú S.A.C.',            short: 'MWT PE',      country: 'PE' },
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e003', name: 'MWT Colombia SAS',           short: 'MWT CO',      country: 'CO' },
@@ -530,7 +538,7 @@ export const LEGAL_ENTITIES = [
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e009', name: 'MWT Costa Rica S.A.',        short: 'MWT CR',      country: 'CR' },
 ];
 
-export const OPERATORS = [
+const _RAW_OPERATORS = [
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110001', name: 'MWT Operations',  kind: 'mwt'        },
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110002', name: 'Amazon FBA',      kind: '3pl'        },
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110003', name: 'Mercado Libre Fulfillment', kind: '3pl' },
@@ -562,7 +570,7 @@ export const OPERATORS = [
 // Campos legacy (location, entity) se mantienen para no
 // romper consumidores existentes (Dashboard, Expedientes, etc.).
 // ─────────────────────────────────────────────────────────
-export const NODES = [
+const _RAW_NODES = [
   {
     id: '3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001',
     node_id: 'SHA-CN',
@@ -709,7 +717,7 @@ export const NODES = [
 // ─────────────────────────────────────────────────────────
 // Inventario por nodo (NODE_INVENTORY) — SKUs × nodo × días de stock
 // ─────────────────────────────────────────────────────────
-export const NODE_INVENTORY = [
+const _RAW_NODE_INVENTORY = [
   // FBA-US — surtido alto, rotación alta → días de stock variados
   { node_id: '3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', sku: 'BIS-OXF-BLK-42', qty: 420, days_stock: 42, value: 18900 },
   { node_id: '3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', sku: 'LEO-SN-WH-38',   qty: 380, days_stock: 28, value: 14300 },
@@ -736,7 +744,7 @@ export const NODE_INVENTORY = [
 // ─────────────────────────────────────────────────────────
 // Transferencias entre nodos (ENT_OPS_TRANSFERS)
 // ─────────────────────────────────────────────────────────
-export const NODE_TRANSFERS = [
+const _RAW_NODE_TRANSFERS = [
   { id:'TR-2026-00421', date:'2026-04-18', from:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001', to:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', skus: 3, units: 820, status:'in_transit' },
   { id:'TR-2026-00419', date:'2026-04-15', from:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001', to:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e006', skus: 2, units: 410, status:'received'   },
   { id:'TR-2026-00418', date:'2026-04-14', from:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e006', to:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e009', skus: 1, units: 230, status:'approved'   },
@@ -748,7 +756,7 @@ export const NODE_TRANSFERS = [
 // ─────────────────────────────────────────────────────────
 // Automatizaciones ancladas a nodos (context anchors)
 // ─────────────────────────────────────────────────────────
-export const NODE_AUTOMATIONS = [
+const _RAW_NODE_AUTOMATIONS = [
   { id:'au1', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', name:'Sync FBA inbound shipments',   cadence:'cada 15 min', state:'active' },
   { id:'au2', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', name:'Cálculo restock semanal',       cadence:'lunes 07:00', state:'active' },
   { id:'au3', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', name:'Alerta días de stock < 21',     cadence:'diario 08:00', state:'active' },
@@ -758,7 +766,7 @@ export const NODE_AUTOMATIONS = [
   { id:'au7', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e006', name:'Consolidación hub LatAm',        cadence:'diario 22:00', state:'active' },
 ];
 
-export const PRODUCTS = [
+const _RAW_PRODUCTS = [
   { id: 'p1',  brand: 'Bison',   sku: 'BIS-OXF-BLK-42', name: 'Oxford cuero negro',  category: 'Calzado', desc: 'Oxford caballero cuero vacuno' },
   { id: 'p2',  brand: 'Bison',   sku: 'BIS-OXF-TAN-42', name: 'Oxford cuero tan',    category: 'Calzado', desc: 'Oxford caballero cuero vacuno' },
   { id: 'p3',  brand: 'Goliath', sku: 'GOL-BT-BLK-44',  name: 'Bota industrial',     category: 'Calzado', desc: 'Bota industrial puntera acero' },
@@ -886,10 +894,10 @@ function randomRecentDate(daysFrom, daysTo) {
   return new Date(now + offset).toISOString();
 }
 
-export const EXPEDIENTES = Array.from({length: 32}, (_, i) => makeExpediente(i));
+const _RAW_EXPEDIENTES = _wrap(Array.from({length: 32}, (_, i) => makeExpediente(i)));
 
 // One hero expediente with rich detail
-export const HERO_ID = EXPEDIENTES[2].id;
+export const HERO_ID = USE_MOCKS ? (EXPEDIENTES[2].id) : '';
 EXPEDIENTES[2] = {
   ...EXPEDIENTES[2],
   id: HERO_ID,
@@ -925,7 +933,7 @@ EXPEDIENTES[2] = {
 };
 
 // ── Product lines for the hero expediente ─────
-export const HERO_LINES = [
+const _RAW_HERO_LINES = [
   { id: 'l1', sku: 'BIS-OXF-BLK-42', name: 'Oxford cuero negro T.42', qty: 420, unit_cost: 48.50, unit_price: 69.90, margin: 0.306, container: 'MSCU-7821094' },
   { id: 'l2', sku: 'BIS-OXF-TAN-42', name: 'Oxford cuero tan T.42',   qty: 360, unit_cost: 48.50, unit_price: 69.90, margin: 0.306, container: 'MSCU-7821094' },
   { id: 'l3', sku: 'BIS-BLT-BRN-L',  name: 'Cinturón cuero marrón L', qty: 520, unit_cost: 12.20, unit_price: 24.90, margin: 0.510, container: 'MSCU-4398721' },
@@ -933,7 +941,7 @@ export const HERO_LINES = [
 ];
 
 // ── Costs for the hero expediente ─────
-export const HERO_COSTS = [
+const _RAW_HERO_COSTS = [
   { id: 'co1', date: '2026-01-14', type: 'Mercadería',         amount:  96420, currency: 'USD', visibility: 'CLIENT', supplier: 'Bison CN Ltd.',        doc: 'CI-88214' },
   { id: 'co2', date: '2026-01-22', type: 'Flete marítimo',     amount:  12800, currency: 'USD', visibility: 'CLIENT', supplier: 'MSC Line',             doc: 'BL-MSCU-99812' },
   { id: 'co3', date: '2026-01-22', type: 'Seguro',             amount:   1840, currency: 'USD', visibility: 'CLIENT', supplier: 'MAPFRE',               doc: 'POL-2026-4412' },
@@ -944,13 +952,13 @@ export const HERO_COSTS = [
 ];
 
 // ── Pagos for the hero expediente ─────
-export const HERO_PAGOS = [
+const _RAW_HERO_PAGOS = [
   { id: 'pg1', date: '2026-01-12', amount: 47400, method: 'Movimiento', ref: 'TRX-88412', currency: 'USD', applied_to: 'PF-0942 · 50%',  status: 'APPLIED' },
   { id: 'pg2', date: '2026-02-04', amount: 47400, method: 'Movimiento', ref: 'TRX-91203', currency: 'USD', applied_to: 'PF-0942 · 50%',  status: 'APPLIED' },
 ];
 
 // ── Artifacts (documents) ─────
-export const HERO_ARTIFACTS = [
+const _RAW_HERO_ARTIFACTS = [
   { id: 'a1', kind: 'Proforma Cliente',    code: 'PF-0942',        status: 'issued',  date: '2026-01-10', author: 'A. Mendoza' },
   { id: 'a2', kind: 'Proforma Fábrica',    code: 'PFF-BIS-1142',   status: 'issued',  date: '2026-01-12', author: 'Bison CN' },
   { id: 'a3', kind: 'Commercial Invoice',  code: 'CI-88214',       status: 'issued',  date: '2026-01-22', author: 'Bison CN' },
@@ -960,7 +968,7 @@ export const HERO_ARTIFACTS = [
 ];
 
 // ── Activity feed for hero ─────
-export const HERO_ACTIVITY = [
+const _RAW_HERO_ACTIVITY = [
   { id: 'ev1', t: '2026-03-28T10:14:00Z', who: 'A. Mendoza',    what: 'Zarpe confirmado',               detail: 'Nave MSC Leone zarpó de Ningbo. ETA Callao 2026-04-22.' },
   { id: 'ev2', t: '2026-03-26T16:02:00Z', who: 'Sistema',       what: 'Artefacto recibido',             detail: 'Bill of Lading preliminar recibido de MSC.' },
   { id: 'ev3', t: '2026-03-21T09:41:00Z', who: 'L. Paredes',    what: 'Pago registrado',                detail: 'Movimiento USD 47,400 aplicada a PF-0942 (saldo 50%).' },
@@ -971,7 +979,7 @@ export const HERO_ACTIVITY = [
 ];
 
 // ── Inventory ─────
-export const INVENTORY = [
+const _RAW_INVENTORY = [
   // node · sku · qty / reserved / vendidos / days_stock (para semáforo salud)
   { sku: 'BIS-OXF-BLK-42', product: 'Oxford cuero negro T.42', node: 'Callao CD',       qty: 248, reserved: 120, vendidos: 186, lot: 'BIS-L-24-01', received: '2026-02-22', days_stock: 38 },
   { sku: 'BIS-OXF-TAN-42', product: 'Oxford cuero tan T.42',   node: 'Callao CD',       qty: 210, reserved: 200, vendidos: 142, lot: 'BIS-L-24-01', received: '2026-02-22', days_stock: 12 },
@@ -991,7 +999,7 @@ export const INVENTORY = [
 // TRANSFERS_IN_TRANSIT — transferencias activas (mock)
 //   legal_context: internal | nationalization | reexport | distribution | consignment
 // ─────────────────────────────────────────────────────────
-export const TRANSFERS_IN_TRANSIT = [
+const _RAW_TRANSFERS_IN_TRANSIT = [
   {
     id: 'TRF-2026-0018', origen:'Shanghái DC', destino:'Callao CD',
     legal_context: 'nationalization', ref_tracking: 'BL-COSCO-88421',
@@ -1032,7 +1040,7 @@ export function getDaysStockTier(d) {
 //     qty_reserve     unidades pre-comprometidas del total transferido
 //     qty_received    null hasta que se reciba, luego cantidad validada en destino
 // ─────────────────────────────────────────────────────────
-export const TRANSFERS = [
+const _RAW_TRANSFERS = [
   // ── PLANNED (pendientes de aprobación / alistamiento) ─────
   {
     id: 'TRF-2026-0024',
@@ -1321,7 +1329,7 @@ export function getTransferTotals(t) {
 }
 
 // ── Dashboard KPIs ─────
-export const DASHBOARD = {
+const _RAW_DASHBOARD = {
   kpi: {
     active: EXPEDIENTES.length,
     total_cost:       EXPEDIENTES.reduce((a,e)=>a+e.total_cost,0),
@@ -1483,10 +1491,10 @@ function buildOCs() {
   return ocs;
 }
 
-export const OCS = buildOCs();
+const _RAW_OCS = _wrap(buildOCs());
 
 // Pick a hero OC: the one containing HERO_ID
-export const HERO_OC_ID = OCS.find(oc => oc.expedientes.includes(HERO_ID))?.id || OCS[0].id;
+export const HERO_OC_ID = USE_MOCKS ? (OCS.find(oc => oc.expedientes.includes(HERO_ID))?.id || OCS[0].id) : '';
 
 // ══════════════════════════════════════════════════════════════
 // ARTIFACT CATALOG — global library of artifact types per state
@@ -1554,7 +1562,7 @@ export const ARTIFACT_CATALOG = [
 
 // ── Seed records for the hero expediente ─────
 // Map: artifactId → [records]
-export const HERO_ARTIFACT_RECORDS = {
+const _RAW_HERO_ARTIFACT_RECORDS = {
   'AC-01': [{ id:'R-1',  created:'2026-01-09', author:'A. Mendoza', oc_number:'PO-2026-04128', date:'2026-01-08', amount:189600, file:'OC_AndesRetail.pdf' }],
   'AC-02': [{ id:'R-2',  created:'2026-01-10', author:'A. Mendoza', pf_code:'PF-0942',         date:'2026-01-10', amount:189600, valid_until:'2026-01-31', file:'PF-0942.pdf' }],
   'AC-03': [{ id:'R-3',  created:'2026-01-12', author:'A. Mendoza', amount:47400, method:'Movimiento', ref:'TRX-88412', date:'2026-01-12' }],
@@ -1636,7 +1644,7 @@ export const SIZES = [
 // ─────────────────────────────────────────────────────────
 // PRODUCT_SIZES — qué tallas maneja cada producto (por SKU)
 // ─────────────────────────────────────────────────────────
-export const PRODUCT_SIZES = [
+const _RAW_PRODUCT_SIZES = [
   { sku: 'MLV-50S29-BLK-42',   sizes: ['sz-eu-38','sz-eu-39','sz-eu-40','sz-eu-41','sz-eu-42','sz-eu-43','sz-eu-44'] },
   { sku: 'MLV-40S18-BRN-41',   sizes: ['sz-eu-39','sz-eu-40','sz-eu-41','sz-eu-42','sz-eu-43','sz-eu-44','sz-eu-45'] },
   { sku: 'MLV-EVA-AST-BLK-40', sizes: ['sz-eu-38','sz-eu-39','sz-eu-40','sz-eu-41','sz-eu-42','sz-eu-43'] },
@@ -1653,7 +1661,7 @@ export const PRODUCT_SIZES = [
 //   visible_to_all   master toggle
 //   client_overrides { [client_id]: true|false }  solo aplica si visible_to_all=false
 // ─────────────────────────────────────────────────────────
-export const PRODUCT_CLIENT_VISIBILITY = [
+const _RAW_PRODUCT_CLIENT_VISIBILITY = [
   { sku: 'MLV-50S29-BLK-42',   visible_to_all: true,  client_overrides: {} },
   { sku: 'MLV-40S18-BRN-41',   visible_to_all: false, client_overrides: { c1:true, c2:true, c3:false, c4:false, c5:true,  c6:false, c7:false, c8:false } },
   { sku: 'MLV-EVA-AST-BLK-40', visible_to_all: true,  client_overrides: {} },
@@ -1668,7 +1676,7 @@ export const PRODUCT_CLIENT_VISIBILITY = [
 // ─────────────────────────────────────────────────────────
 // PRODUCT_NODE_ASSIGNMENTS — qué nodos logísticos operan cada SKU
 // ─────────────────────────────────────────────────────────
-export const PRODUCT_NODE_ASSIGNMENTS = [
+const _RAW_PRODUCT_NODE_ASSIGNMENTS = [
   { sku: 'MLV-50S29-BLK-42',   node_ids: ['3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e003','3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e004'] },
   { sku: 'MLV-40S18-BRN-41',   node_ids: ['3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e003','3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e005'] },
   { sku: 'MLV-EVA-AST-BLK-40', node_ids: ['3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e003'] },
@@ -1689,7 +1697,7 @@ export const PRODUCT_NODE_ASSIGNMENTS = [
 //   size_breakdown   { [size_id]: qty }
 //   estado           fase textual
 // ─────────────────────────────────────────────────────────
-export const PRODUCT_EXPEDIENTE_LINES = [
+const _RAW_PRODUCT_EXPEDIENTE_LINES = [
   // BIS-OXF-BLK-42 — hero + históricos
   { id:'pl-001', sku:'BIS-OXF-BLK-42', expediente_ref:'EXP-1029', client_id:'c1', estado:'TRANSITO',    qty:420, unit_price_sold: 69.90, size_breakdown:{ 'sz-eu-40':60,'sz-eu-41':80,'sz-eu-42':140,'sz-eu-43':90,'sz-eu-44':50 } },
   { id:'pl-002', sku:'BIS-OXF-BLK-42', expediente_ref:'EXP-1015', client_id:'c3', estado:'CERRADO',     qty:220, unit_price_sold: 68.00, size_breakdown:{ 'sz-eu-41':50,'sz-eu-42':90,'sz-eu-43':60,'sz-eu-44':20 } },
@@ -1736,7 +1744,7 @@ export const PRODUCT_EXPEDIENTE_LINES = [
 //   lead_time_*   días prometido vs. real promedio
 //   certs         ['CE','RoHS','FCC','ISO 9001']
 // ─────────────────────────────────────────────────────────
-export const SUPPLIERS = [
+const _RAW_SUPPLIERS = [
   {
     id: 'SUP-001', uuid: '1b2c3d4e-5f60-71a2-b3c4-d5e6f7000001',
     nombre_comercial: 'Marluvas',   razon_social: 'Marluvas Calçados de Segurança Ltda.',
@@ -1854,7 +1862,7 @@ export const SUPPLIERS = [
 // ─────────────────────────────────────────────────────────
 // SUPPLIER_PRODUCTS — SKUs proveídos por cada supplier
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_PRODUCTS = [
+const _RAW_SUPPLIER_PRODUCTS = [
   // SUP-001 Marluvas
   { supplier_id:'SUP-001', sku:'MLV-50S29-BLK-42',   units_12m: 2400, last_purchase_price: 18.50, last_po_date:'2026-03-18' },
   { supplier_id:'SUP-001', sku:'MLV-40S18-BRN-41',   units_12m: 1860, last_purchase_price: 24.80, last_po_date:'2026-02-22' },
@@ -1879,7 +1887,7 @@ export const SUPPLIER_PRODUCTS = [
 // ─────────────────────────────────────────────────────────
 // SUPPLIER_EXPEDIENTE_REFS — expedientes asociados a cada supplier
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_EXPEDIENTE_REFS = [
+const _RAW_SUPPLIER_EXPEDIENTE_REFS = [
   { supplier_id:'SUP-001', expediente_ref:'EXP-1029', estado:'TRANSITO',    fecha:'2026-01-09', monto: 189600 },
   { supplier_id:'SUP-001', expediente_ref:'EXP-1037', estado:'PRODUCCION',  fecha:'2026-03-14', monto: 142800 },
   { supplier_id:'SUP-001', expediente_ref:'EXP-1048', estado:'CERRADO',     fecha:'2025-11-22', monto:  86400 },
@@ -1900,7 +1908,7 @@ export const SUPPLIER_EXPEDIENTE_REFS = [
 // SUPPLIER_PROMO_CODES — rebates, volume discounts, marketing
 //   scope: 'ALL' | ['sku1','sku2']
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_PROMO_CODES = [
+const _RAW_SUPPLIER_PROMO_CODES = [
   {
     id: 'PC-001', supplier_id:'SUP-001', codigo:'MLV-SUMMER-5',
     descripcion:'Rebaja verano 2026', scope:'ALL',
@@ -1957,7 +1965,7 @@ export const SUPPLIER_PROMO_CODES = [
 //   Calidad 30% · Entregas 25% · Comunicación 15% · Técnica 15% · Precio 15%
 //   Todas las dimensiones en escala 1.0–5.0
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_AUDIT_SCORES = {
+const _RAW_SUPPLIER_AUDIT_SCORES = {
   'SUP-001': { audit_date:'2026-03-15', auditor:'K. Vargas',
     dimensions: { calidad: 4.6, entregas: 4.2, comunicacion: 4.5, tecnica: 4.8, precio: 3.9 },
     history: [
@@ -2018,7 +2026,7 @@ export const SUPPLIER_AUDIT_SCORES = {
 // SUPPLIER_INCIDENTS — NC log · ISO 9001 8.7 control de no conformes
 //   impacto: BAJO | MEDIO | ALTO | CRITICO
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_INCIDENTS = [
+const _RAW_SUPPLIER_INCIDENTS = [
   { id:'NC-2026-001', supplier_id:'SUP-001', date:'2026-02-12',
     descripcion:'Variación de tono en lote T.42 TAN (MLV-50S29 batch BC-142)',
     impacto:'MEDIO', accion:'Inspección 100% · aprobado con observación por cliente Andes',
@@ -2098,7 +2106,7 @@ export const EMAIL_LANGUAGES = [
   { value:'PT-BR', label:'Português (BR)' },
 ];
 
-export const EMAIL_TEMPLATES = [
+const _RAW_EMAIL_TEMPLATES = [
   {
     id:'tpl-001',
     name:'Aviso de Despacho',
@@ -2816,7 +2824,7 @@ export function comexResolvePriceMock({ sku, comision_pct = 0, dias_pago = 0, me
 const _now = Date.now();
 const _ago = (mins) => new Date(_now - mins * 60_000).toISOString();
 
-export const MOCK_AI_THREADS = [
+const _RAW_MOCK_AI_THREADS = [
   {
     id: 'mock-th-pricing-bisontes',
     titulo: 'Lista de precios Bisontes 2026 — revisión de margen',
@@ -3146,3 +3154,44 @@ export const MOCK_AI_CONTEXT_BY_THREAD = {
   },
 };
 
+
+
+// ── Ola 1 F2: Exports aislados para producción ──
+export const BRANDS = _wrap(_RAW_BRANDS, _emptyArr);
+export const BRAND_ATTRIBUTES = _wrap(_RAW_BRAND_ATTRIBUTES, _emptyObj);
+export const BRAND_PRODUCTS = _wrap(_RAW_BRAND_PRODUCTS, _emptyArr);
+export const BRAND_PRICING = _wrap(_RAW_BRAND_PRICING, _emptyArr);
+export const CLIENTS = _wrap(_RAW_CLIENTS, _emptyArr);
+export const CLIENT_PAYMENTS = _wrap(_RAW_CLIENT_PAYMENTS, _emptyArr);
+export const CLIENT_PRODUCTS_BOUGHT = _wrap(_RAW_CLIENT_PRODUCTS_BOUGHT, _emptyArr);
+export const LEGAL_ENTITIES = _wrap(_RAW_LEGAL_ENTITIES, _emptyArr);
+export const OPERATORS = _wrap(_RAW_OPERATORS, _emptyArr);
+export const NODES = _wrap(_RAW_NODES, _emptyArr);
+export const NODE_INVENTORY = _wrap(_RAW_NODE_INVENTORY, _emptyArr);
+export const NODE_TRANSFERS = _wrap(_RAW_NODE_TRANSFERS, _emptyArr);
+export const NODE_AUTOMATIONS = _wrap(_RAW_NODE_AUTOMATIONS, _emptyArr);
+export const PRODUCTS = _wrap(_RAW_PRODUCTS, _emptyArr);
+export const EXPEDIENTES = _wrap(_RAW_EXPEDIENTES, _emptyArr);
+export const HERO_LINES = _wrap(_RAW_HERO_LINES, _emptyArr);
+export const HERO_COSTS = _wrap(_RAW_HERO_COSTS, _emptyArr);
+export const HERO_PAGOS = _wrap(_RAW_HERO_PAGOS, _emptyArr);
+export const HERO_ARTIFACTS = _wrap(_RAW_HERO_ARTIFACTS, _emptyArr);
+export const HERO_ACTIVITY = _wrap(_RAW_HERO_ACTIVITY, _emptyArr);
+export const INVENTORY = _wrap(_RAW_INVENTORY, _emptyArr);
+export const TRANSFERS_IN_TRANSIT = _wrap(_RAW_TRANSFERS_IN_TRANSIT, _emptyArr);
+export const TRANSFERS = _wrap(_RAW_TRANSFERS, _emptyArr);
+export const DASHBOARD = _wrap(_RAW_DASHBOARD, _emptyObj);
+export const OCS = _wrap(_RAW_OCS, _emptyArr);
+export const HERO_ARTIFACT_RECORDS = _wrap(_RAW_HERO_ARTIFACT_RECORDS, _emptyObj);
+export const PRODUCT_SIZES = _wrap(_RAW_PRODUCT_SIZES, _emptyArr);
+export const PRODUCT_CLIENT_VISIBILITY = _wrap(_RAW_PRODUCT_CLIENT_VISIBILITY, _emptyArr);
+export const PRODUCT_NODE_ASSIGNMENTS = _wrap(_RAW_PRODUCT_NODE_ASSIGNMENTS, _emptyArr);
+export const PRODUCT_EXPEDIENTE_LINES = _wrap(_RAW_PRODUCT_EXPEDIENTE_LINES, _emptyArr);
+export const SUPPLIERS = _wrap(_RAW_SUPPLIERS, _emptyArr);
+export const SUPPLIER_PRODUCTS = _wrap(_RAW_SUPPLIER_PRODUCTS, _emptyArr);
+export const SUPPLIER_EXPEDIENTE_REFS = _wrap(_RAW_SUPPLIER_EXPEDIENTE_REFS, _emptyArr);
+export const SUPPLIER_PROMO_CODES = _wrap(_RAW_SUPPLIER_PROMO_CODES, _emptyArr);
+export const SUPPLIER_AUDIT_SCORES = _wrap(_RAW_SUPPLIER_AUDIT_SCORES, _emptyObj);
+export const SUPPLIER_INCIDENTS = _wrap(_RAW_SUPPLIER_INCIDENTS, _emptyArr);
+export const EMAIL_TEMPLATES = _wrap(_RAW_EMAIL_TEMPLATES, _emptyArr);
+export const MOCK_AI_THREADS = _wrap(_RAW_MOCK_AI_THREADS, _emptyArr);

@@ -174,6 +174,7 @@ class ClienteViewSet(viewsets.ViewSet):
       política se active, el contexto debe incluir ``request`` (lo que
       hacemos en `_ctx()` y pasamos a cada Serializer).
     """
+    required_module = "clientes"
 
     def _ctx(self, request):
         """Context estándar DRF — requerido para POL_VISIBILIDAD."""

@@ -185,6 +185,7 @@ class NodoViewSet(viewsets.ViewSet):
 # =====================================================================
 class NodoArtefactoViewSet(viewsets.ViewSet):
     """CRUD de artefactos nested bajo /api/nodos/{nodo_pk}/."""
+    required_module = "nodos"
 
     def _qs(self, nodo_pk):
         return (NodoArtefacto.objects

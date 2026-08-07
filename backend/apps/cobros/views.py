@@ -85,6 +85,7 @@ def _stage_for_days(dias):
 # Cobro
 # ════════════════════════════════════════════════════════════
 class CobroViewSet(viewsets.ViewSet):
+    required_module = "cobros"
     def list(self, request):
         qs = Cobro.objects.filter(is_active=True).order_by("-fecha_vencimiento", "-created_at")
         # Sprint 2026-05-22 · scope multi-tenant: superadmin/admin ven todo,
@@ -278,6 +279,7 @@ class CobroViewSet(viewsets.ViewSet):
 # Pago
 # ════════════════════════════════════════════════════════════
 class PagoViewSet(viewsets.ViewSet):
+    required_module = "cobros"
     def list(self, request):
         qs = Pago.objects.filter(is_active=True).order_by("-fecha_operacion", "-created_at")
         # Sprint 2026-05-22 · scope multi-tenant.
@@ -434,6 +436,7 @@ class PagoViewSet(viewsets.ViewSet):
 # Conciliación
 # ════════════════════════════════════════════════════════════
 class ConciliacionViewSet(viewsets.ViewSet):
+    required_module = "cobros"
     def list(self, request):
         qs = Conciliacion.objects.filter(is_active=True).order_by("-created_at")
         # Sprint 2026-05-22 · scope indirecto via cobro.client_id.
@@ -490,6 +493,7 @@ class ConciliacionViewSet(viewsets.ViewSet):
 # Vencimiento (Plan de pagos T1/T2/T3)
 # ════════════════════════════════════════════════════════════
 class VencimientoViewSet(viewsets.ViewSet):
+    required_module = "cobros"
     def list(self, request):
         qs = Vencimiento.objects.filter(is_active=True).order_by("fecha_vencimiento")
         # Sprint 2026-05-22 · scope indirecto via cobro.client_id.
@@ -538,6 +542,7 @@ class VencimientoViewSet(viewsets.ViewSet):
 # Withholding log (append-only)
 # ════════════════════════════════════════════════════════════
 class WithholdingLogViewSet(viewsets.ViewSet):
+    required_module = "cobros"
     def list(self, request):
         qs = WithholdingLog.objects.filter(is_active=True).order_by("-created_at")
         # Sprint 2026-05-22 · scope indirecto via cobro.client_id.
@@ -571,6 +576,7 @@ class WithholdingLogViewSet(viewsets.ViewSet):
 # FX Rate history
 # ════════════════════════════════════════════════════════════
 class FxRateHistoryViewSet(viewsets.ViewSet):
+    required_module = "cobros"
     def list(self, request):
         qs = FxRateHistory.objects.filter(is_active=True).order_by("-fecha")
         for p, f in (("moneda_from", "moneda_from"), ("moneda_to", "moneda_to"),
@@ -623,6 +629,7 @@ class FxRateHistoryViewSet(viewsets.ViewSet):
 # CollectionEvent (log inmutable del CollectionBot)
 # ════════════════════════════════════════════════════════════
 class CollectionEventViewSet(viewsets.ViewSet):
+    required_module = "cobros"
     def list(self, request):
         qs = CollectionEvent.objects.filter(is_active=True).order_by("-created_at")
         # Sprint 2026-05-22 · scope directo por client_id.

@@ -53,6 +53,7 @@ class RoleCatViewSet(viewsets.ModelViewSet):
     `is_system=True` (superadmin, admin, client_b2b) están BLOQUEADAS
     con HTTP 409 CONFLICT — son roles canónicos del sistema.
     """
+    required_module = "roles"
     queryset = RoleCat.objects.all()
     serializer_class = RoleCatSerializer
     lookup_field = "slug"
@@ -119,6 +120,7 @@ class RoleCatViewSet(viewsets.ModelViewSet):
 # ModuleCat · read-only
 # ══════════════════════════════════════════════════════════════════════
 class ModuleCatViewSet(viewsets.ReadOnlyModelViewSet):
+    required_module = "roles"
     queryset = ModuleCat.objects.filter(is_active=True)
     serializer_class = ModuleCatSerializer
 
@@ -138,6 +140,7 @@ class RolePermissionViewSet(viewsets.ModelViewSet):
 
     Para bulk upsert usar RoleGroupMatrixView (PATCH /permissions/groups/<slug>/).
     """
+    required_module = "roles"
     queryset = RolePermission.objects.all()
     serializer_class = RolePermissionSerializer
 

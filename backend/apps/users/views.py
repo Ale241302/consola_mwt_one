@@ -112,6 +112,7 @@ def _deny_non_admin(request, resource_label: str = "users.admin"):
 # ══════════════════════════════════════════════════════════════════════
 class MwtUserViewSet(viewsets.ModelViewSet):
     """Gestión de usuarios del ERP. Admin-only."""
+    required_module = "usuarios"
     queryset = MwtUser.objects.filter(is_active=True)
     serializer_class = MwtUserSerializer
 
@@ -839,6 +840,7 @@ class ProfileResetPasswordView(APIView):
 # ══════════════════════════════════════════════════════════════════════
 class ActivityFeedViewSet(viewsets.ReadOnlyModelViewSet):
     """Feed de notificaciones del usuario actual."""
+    required_module = "usuarios"
     serializer_class = ActivityFeedSerializer
 
     def get_queryset(self):
@@ -896,6 +898,7 @@ class ActivityFeedViewSet(viewsets.ReadOnlyModelViewSet):
 # ══════════════════════════════════════════════════════════════════════
 class UserAddressAdminViewSet(viewsets.ModelViewSet):
     """CRUD admin de direcciones. Query filterable por ?user_id=<uuid>."""
+    required_module = "usuarios"
     queryset = UserAddress.objects.all()
     serializer_class = UserAddressAdminSerializer
 

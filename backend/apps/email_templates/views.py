@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 # Template
 # ════════════════════════════════════════════════════════════
 class TemplateViewSet(viewsets.ViewSet):
+    required_module = "email_templates"
     def list(self, request):
         qs = Template.objects.all().order_by("template_key", "language", "brand")
         active = request.query_params.get("is_active")
@@ -426,6 +427,7 @@ class TemplateViewSet(viewsets.ViewSet):
 # Version (audit — read-only + create)
 # ════════════════════════════════════════════════════════════
 class VersionViewSet(viewsets.ViewSet):
+    required_module = "email_templates"
     def list(self, request):
         qs = Version.objects.all().order_by("-created_at")
         tid = request.query_params.get("template")
@@ -451,6 +453,7 @@ class VersionViewSet(viewsets.ViewSet):
 # RenderPreviewLog (append-only)
 # ════════════════════════════════════════════════════════════
 class RenderPreviewLogViewSet(viewsets.ViewSet):
+    required_module = "email_templates"
     def list(self, request):
         qs = RenderPreviewLog.objects.filter(is_active=True).order_by("-created_at")
         for p, f in (("template", "template_id"),

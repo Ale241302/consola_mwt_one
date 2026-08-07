@@ -18,6 +18,7 @@ from .serializers import (
 
 
 class MarcaViewSet(viewsets.ViewSet):
+    required_module = "marcas"
     def list(self, request):
         qs = Marca.objects.filter(is_active=True).order_by("nombre")
         mapping = {

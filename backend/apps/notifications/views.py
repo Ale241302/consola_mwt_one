@@ -43,6 +43,7 @@ log = logging.getLogger(__name__)
 # NotificationLog (general)
 # ════════════════════════════════════════════════════════════
 class NotificationLogViewSet(viewsets.ViewSet):
+    required_module = "notificaciones"
     def list(self, request):
         qs = NotificationLog.objects.filter(is_active=True).order_by("-ts")
         # Sprint 2026-05-22 · scope multi-tenant via expediente_id.
@@ -360,6 +361,7 @@ class NotificationLogViewSet(viewsets.ViewSet):
 # CollectionLog — view filtrada (trigger C1/C2/C3)
 # ════════════════════════════════════════════════════════════
 class CollectionLogViewSet(viewsets.ViewSet):
+    required_module = "notificaciones"
     def list(self, request):
         qs = NotificationLog.objects.filter(
             is_active=True,
@@ -428,6 +430,7 @@ class CollectionLogViewSet(viewsets.ViewSet):
 # GraceDaysCatViewSet — CRUD del catálogo (finance puede editar)
 # ════════════════════════════════════════════════════════════
 class GraceDaysCatViewSet(viewsets.ViewSet):
+    required_module = "notificaciones"
     def list(self, request):
         qs = GraceDaysCat.objects.filter(is_active=True)
         return Response(GraceDaysCatSerializer(qs, many=True).data)
@@ -455,6 +458,7 @@ class GraceDaysCatViewSet(viewsets.ViewSet):
 # EmailQueueLog (tracking de la cola Celery)
 # ════════════════════════════════════════════════════════════
 class EmailQueueLogViewSet(viewsets.ViewSet):
+    required_module = "notificaciones"
     def list(self, request):
         # Sprint 2026-05-22 · cola Celery: solo superadmin/admin la inspeccionan
         # (es info de ops interna sin scope de cliente).

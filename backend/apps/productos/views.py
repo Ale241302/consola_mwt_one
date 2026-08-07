@@ -46,6 +46,7 @@ def _is_staff_role(request) -> bool:
 
 
 class ProductoViewSet(viewsets.ViewSet):
+    required_module = "productos"
     def list(self, request):
         qs = Producto.objects.filter(is_active=True).order_by("nombre")
         mapping = {
@@ -1094,6 +1095,7 @@ class ProductoViewSet(viewsets.ViewSet):
 
 
 class NcmCodeViewSet(viewsets.ModelViewSet):
+    required_module = "productos"
     queryset = NcmCode.objects.filter(is_active=True).order_by("code")
     serializer_class = NcmCodeSerializer
 

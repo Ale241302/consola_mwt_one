@@ -25,6 +25,7 @@ from .serializers import (
 
 
 class ProveedorViewSet(viewsets.ViewSet):
+    required_module = "proveedores"
     def list(self, request):
         qs = Proveedor.objects.filter(is_active=True).order_by("razon_social")
         mapping = {

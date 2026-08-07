@@ -140,6 +140,7 @@ def _can_write(ticket: Ticket, request) -> Optional[Response]:
 # ViewSet principal
 # =====================================================================
 class TicketViewSet(viewsets.ViewSet):
+    required_module = "tickets"
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     # ── List / Retrieve ─────────────────────────────────────

@@ -27,6 +27,7 @@ from .cost_proration import operative_per_unit_map
 # StockViewSet  — /api/stock/
 # ============================================================
 class StockViewSet(viewsets.ViewSet):
+    required_module = "inventario"
     def list(self, request):
         qs = Stock.objects.filter(is_active=True).order_by("-updated_at")
         mapping = {
@@ -426,6 +427,7 @@ class StockViewSet(viewsets.ViewSet):
 # MovimientoViewSet  — /api/movimientos/
 # ============================================================
 class MovimientoViewSet(viewsets.ViewSet):
+    required_module = "inventario"
     def list(self, request):
         qs = Movimiento.objects.filter(is_active=True).order_by("-created_at")
         mapping = {
@@ -594,6 +596,7 @@ class MovimientoViewSet(viewsets.ViewSet):
 # =====================================================================
 class NodoAssignmentViewSet(viewsets.ViewSet):
     """Endpoints custom para asignación expediente→nodo. NO usa router CRUD."""
+    required_module = "inventario"
 
     # ── 1) Saldos pendientes por (expediente, producto, talla) ──
     @action(detail=False, methods=["get"], url_path="saldos-por-expediente")

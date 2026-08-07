@@ -160,6 +160,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
     (ej. cuando había filtros que devolvían []) y servirla durante el TTL
     incluso después de que el backend ya devuelve datos correctos.
     """
+    required_module = "analytics"
 
     # ── Dashboard KPIs ────────────────────────────────────────
     @action(detail=False, methods=["get"])
@@ -1629,6 +1630,7 @@ class DashboardSnapshotViewSet(viewsets.ModelViewSet):
     · Filtros de listado: user_id, snapshot_type, is_pinned, generated_by,
       period_start/end.
     """
+    required_module = "analytics"
     queryset = DashboardSnapshot.objects.filter(is_active=True)
     serializer_class = DashboardSnapshotSerializer
 
@@ -1767,6 +1769,7 @@ def models_Q_or_null(now):
 # ══════════════════════════════════════════════════════════════
 class WidgetCatViewSet(viewsets.ReadOnlyModelViewSet):
     """Catálogo de widgets del dashboard (read-only, seed en 94b SQL)."""
+    required_module = "analytics"
     queryset = WidgetCat.objects.filter(is_active=True)
     serializer_class = WidgetCatSerializer
 

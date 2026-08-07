@@ -411,6 +411,7 @@ CLIENT_STATE_MAP = {
 # ══════════════════════════════════════════════════════════════
 class PortalViewSet(viewsets.ViewSet):
     """Endpoints del portal B2B. Todas las acciones son read-only."""
+    required_module = "portal"
 
     # ── /api/portal/me/ ───────────────────────────────────────
     @action(detail=False, methods=["get"])
@@ -1505,6 +1506,7 @@ class MwtUserViewSet(viewsets.ModelViewSet):
 # PortalSessionLogViewSet — read-only
 # ══════════════════════════════════════════════════════════════
 class PortalSessionLogViewSet(viewsets.ReadOnlyModelViewSet):
+    required_module = "portal"
     queryset = PortalSessionLog.objects.filter(is_active=True)
     serializer_class = PortalSessionLogSerializer
 
@@ -1529,6 +1531,7 @@ class PortalSessionLogViewSet(viewsets.ReadOnlyModelViewSet):
 # PortalAuditLogViewSet — read-only
 # ══════════════════════════════════════════════════════════════
 class PortalAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    required_module = "portal"
     queryset = PortalAuditLog.objects.filter(is_active=True)
     serializer_class = PortalAuditLogSerializer
 
@@ -1594,6 +1597,7 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
 
     Tests cubren esto en tests/test_portal_products.py (BLOQUE 5).
     """
+    required_module = "portal"
     serializer_class = ProductPortalListSerializer
 
     # Solo aceptamos los métodos que queremos (DRF respeta esta lista);
@@ -2123,6 +2127,7 @@ class PortalProductViewSet(viewsets.ReadOnlyModelViewSet):
 # ══════════════════════════════════════════════════════════════════════
 class PortalExpedienteViewSet(viewsets.ReadOnlyModelViewSet):
     """Detalle de expediente del portal B2B. 100% read-only, strip-down."""
+    required_module = "portal"
 
     serializer_class = ExpedientePortalListSerializer
     http_method_names = ["get", "head", "options"]

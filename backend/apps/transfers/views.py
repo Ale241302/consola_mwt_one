@@ -276,6 +276,7 @@ def _resolve_line_pricing(t, lineas):
 # Transferencia
 # ════════════════════════════════════════════════════════════
 class TransferenciaViewSet(viewsets.ViewSet):
+    required_module = "transferencias"
     def list(self, request):
         qs = Transferencia.objects.filter(is_active=True).order_by("-created_at")
         for p, f in (("origen", "origen_id"), ("destino", "destino_id"),
@@ -1705,6 +1706,7 @@ class TransferenciaViewSet(viewsets.ViewSet):
 # Línea
 # ════════════════════════════════════════════════════════════
 class LineaViewSet(viewsets.ViewSet):
+    required_module = "transferencias"
     def list(self, request):
         qs = Linea.objects.filter(is_active=True).order_by("-created_at")
         tid = request.query_params.get("transferencia")
@@ -1761,6 +1763,7 @@ class LineaViewSet(viewsets.ViewSet):
 # Evento (audit trail — read-only + create)
 # ════════════════════════════════════════════════════════════
 class EventoViewSet(viewsets.ViewSet):
+    required_module = "transferencias"
     # Evento es append-only: la tabla NO tiene columna is_active
     # (ver apps.transfers.models.Evento docstring + 91_transfers_audit.sql §6).
     def list(self, request):
@@ -1787,6 +1790,7 @@ class EventoViewSet(viewsets.ViewSet):
 # Documento de transporte (genérico)
 # ════════════════════════════════════════════════════════════
 class TransferenciaDocumentoViewSet(viewsets.ViewSet):
+    required_module = "transferencias"
     def list(self, request):
         qs = TransferenciaDocumento.objects.filter(is_active=True).order_by("-created_at")
         tid = request.query_params.get("transferencia")

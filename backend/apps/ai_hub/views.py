@@ -308,6 +308,7 @@ class AiInstructionViewSet(viewsets.ModelViewSet):
 # =====================================================================
 class AiThreadViewSet(viewsets.ModelViewSet):
     """CRUD sobre `ai.thread` + acciones de gestión."""
+    required_module = "ai_hub"
     queryset = AiThread.objects.filter(is_active=True)
     serializer_class = AiThreadSerializer
 
@@ -541,6 +542,7 @@ class AiThreadViewSet(viewsets.ModelViewSet):
 # ThreadContext (CRUD bajo nivel — para gestión avanzada)
 # =====================================================================
 class AiThreadContextViewSet(viewsets.ModelViewSet):
+    required_module = "ai_hub"
     queryset = AiThreadContext.objects.filter(is_active=True)
     serializer_class = AiThreadContextSerializer
 
@@ -570,6 +572,7 @@ class AiThreadContextViewSet(viewsets.ModelViewSet):
 # Messages — read-mostly. La creación REAL pasa por chat_views.send().
 # =====================================================================
 class AiMessageViewSet(viewsets.ModelViewSet):
+    required_module = "ai_hub"
     queryset = AiMessage.objects.filter(is_active=True)
     serializer_class = AiMessageSerializer
 
@@ -621,6 +624,7 @@ class AiAttachmentViewSet(viewsets.ModelViewSet):
     """CRUD de adjuntos. Upload binario real → /api/ai/chat/upload/
     (chat_views.upload). Aquí mantenemos endpoint para listar/borrar.
     """
+    required_module = "ai_hub"
     queryset = AiAttachment.objects.filter(is_active=True)
     serializer_class = AiAttachmentSerializer
 

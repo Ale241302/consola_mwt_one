@@ -103,6 +103,7 @@ def _sum_size_multipliers(size_multipliers: dict) -> int:
 # PriceListVersion ViewSet
 # =====================================================================
 class PriceListVersionViewSet(viewsets.ModelViewSet):
+    required_module = "commercial"
     queryset = PriceListVersion.objects.filter(is_active=True)
     serializer_class = PriceListVersionSerializer
 
@@ -282,6 +283,7 @@ class PriceListVersionViewSet(viewsets.ModelViewSet):
 # GradeItem ViewSet (cost_usd enmascarado si ≠ CEO)
 # =====================================================================
 class GradeItemViewSet(viewsets.ModelViewSet):
+    required_module = "commercial"
     queryset = GradeItem.objects.filter(is_active=True)
 
     def get_serializer_class(self):
@@ -342,6 +344,7 @@ class GradeItemViewSet(viewsets.ModelViewSet):
 # ClientAssignment ViewSet (CPA)
 # =====================================================================
 class ClientAssignmentViewSet(viewsets.ModelViewSet):
+    required_module = "commercial"
     queryset = ClientAssignment.objects.filter(is_active=True)
     serializer_class = ClientAssignmentSerializer
 
@@ -374,6 +377,7 @@ class ClientAssignmentViewSet(viewsets.ModelViewSet):
 # EarlyPaymentPolicy ViewSet
 # =====================================================================
 class EarlyPaymentPolicyViewSet(viewsets.ModelViewSet):
+    required_module = "commercial"
     queryset = EarlyPaymentPolicy.objects.filter(is_active=True)
     serializer_class = EarlyPaymentPolicySerializer
 
@@ -457,6 +461,7 @@ class EarlyPaymentPolicyViewSet(viewsets.ModelViewSet):
 # EarlyPaymentTier ViewSet (CRUD bajo nivel)
 # =====================================================================
 class EarlyPaymentTierViewSet(viewsets.ModelViewSet):
+    required_module = "commercial"
     queryset = EarlyPaymentTier.objects.filter(is_active=True)
     serializer_class = EarlyPaymentTierSerializer
 
@@ -484,6 +489,7 @@ class EarlyPaymentTierViewSet(viewsets.ModelViewSet):
 # =====================================================================
 class CommissionRuleViewSet(viewsets.ModelViewSet):
     """CRUD CEO-ONLY. Si not _is_ceo → 403 sobre TODOS los métodos."""
+    required_module = "commercial"
     queryset = CommissionRule.objects.filter(is_active=True)
     serializer_class = CommissionRuleSerializer
 
@@ -522,16 +528,19 @@ class CommissionRuleViewSet(viewsets.ModelViewSet):
 # Catálogos read-only
 # =====================================================================
 class CurrencyCatViewSet(viewsets.ReadOnlyModelViewSet):
+    required_module = "commercial"
     queryset = CurrencyCat.objects.filter(is_active=True)
     serializer_class = CurrencyCatSerializer
 
 
 class PriceListSourceCatViewSet(viewsets.ReadOnlyModelViewSet):
+    required_module = "commercial"
     queryset = PriceListSourceCat.objects.filter(is_active=True).order_by("orden")
     serializer_class = PriceListSourceCatSerializer
 
 
 class CommissionBaseCatViewSet(viewsets.ReadOnlyModelViewSet):
+    required_module = "commercial"
     queryset = CommissionBaseCat.objects.filter(is_active=True).order_by("orden")
     serializer_class = CommissionBaseCatSerializer
 
@@ -645,6 +654,7 @@ class ResolveClientPriceView(APIView):
     Este endpoint NUNCA expone cost/margen a usuarios no-CEO — aún cuando el
     GradeItem los tiene, el resultado los OMITE antes de serializar.
     """
+    required_module = "commercial"
 
     def post(self, request):
         ser = ResolveClientPriceInputSerializer(data=request.data)
@@ -1031,6 +1041,7 @@ class BrandClientPricingAssignmentViewSet(viewsets.ModelViewSet):
       POST /api/commercial/brand-client-pricing/<id>/upload-file/
       DELETE /api/commercial/brand-client-pricing/<id>/  → soft delete
     """
+    required_module = "commercial"
     queryset = BrandClientPricingAssignment.objects.filter(is_active=True)
     serializer_class = BrandClientPricingAssignmentSerializer
     parser_classes = [JSONParser, MultiPartParser, FormParser]
