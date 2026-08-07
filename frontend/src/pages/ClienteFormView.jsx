@@ -30,7 +30,7 @@ import {
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { CLIENTS } from "../data/mockData.js";
-import { clientesApi, apiFetch, getToken } from "../lib/api.js";
+import { clientesApi, apiFetch, getToken, storageUrl } from "../lib/api.js";
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 
@@ -287,7 +287,7 @@ export default function ScreenClienteFormView() {
         }}>
           {form.logo_url ? (
             <img
-              src={`${window.location.origin}/api/storage/download/?key=${encodeURIComponent(form.logo_url)}`}
+              src={storageUrl(form.logo_url)}
               alt="logo"
               style={{ width: "100%", height: "100%", objectFit: "contain" }}
             />

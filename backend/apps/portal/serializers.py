@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from apps.storage.serializers import StorageNormalizeMixin
 from .models import MwtUser, PortalSessionLog, PortalAuditLog
 
 # Importación tardía en los serializers del catálogo — evitamos acoplamiento
@@ -63,7 +64,8 @@ class PortalAuditLogSerializer(serializers.ModelSerializer):
 # nuevo que [AG-DATABASE] agregue a productos.producto queda OCULTO
 # por default hasta que lo añadamos conscientemente acá.
 # ════════════════════════════════════════════════════════════════════
-class ProductPortalListSerializer(serializers.ModelSerializer):
+class ProductPortalListSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
+    storage_normalize_fields = ("imagen_url", "ficha_url")
     """
     Serializer del Catálogo B2B (list view). Payload mínimo: lo
     indispensable para renderizar la ProductCatalogGrid del portal.
@@ -252,7 +254,8 @@ class ExpedientePortalLineaSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class ExpedientePortalDocumentoSerializer(serializers.ModelSerializer):
+class ExpedientePortalDocumentoSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
+    storage_normalize_fields = ("storage_url",)
     """Documentos expuestos al cliente (solo artefactos públicos:
     proforma, BL/AWB, factura, packing list).
 

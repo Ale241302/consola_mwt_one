@@ -1,15 +1,18 @@
 from rest_framework import serializers
+from apps.storage.serializers import StorageNormalizeMixin
 from .models import Marca, BrandDiscountCode, BrandImportLog
 
 
-class MarcaSerializer(serializers.ModelSerializer):
+class MarcaSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
+    storage_normalize_fields = ("logo_url",)
     class Meta:
         model  = Marca
         fields = "__all__"
         read_only_fields = ("id", "created_at", "updated_at")
 
 
-class MarcaListSerializer(serializers.ModelSerializer):
+class MarcaListSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
+    storage_normalize_fields = ("logo_url",)
     class Meta:
         model  = Marca
         fields = (

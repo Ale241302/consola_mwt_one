@@ -25,7 +25,7 @@
 //                onDelete={() => askDelete(producto.ficha_url)} />
 // =====================================================================
 import React, { useEffect, useState } from "react";
-import { apiFetch, getToken } from "../../lib/api.js";
+import { apiFetch, getToken, storageUrl } from "../../lib/api.js";
 
 const MIME_BY_EXT = {
   pdf:  "application/pdf",
@@ -64,7 +64,6 @@ export default function FilePreview({
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState(null);
 
-  const isAbsolute = typeof keyOrUrl === "string" && /^https?:\/\//i.test(keyOrUrl);
   const finalMime  = (mime || guessMime(keyOrUrl) || "").toLowerCase();
   const fname      = filename || basename(keyOrUrl);
 
@@ -76,17 +75,10 @@ export default function FilePreview({
   useEffect(() => {
     setError(null);
     if (!keyOrUrl) { setSignedUrl(null); return; }
-    if (isAbsolute) { setSignedUrl(keyOrUrl); return; }
-    // Stream proxy a través de Django (HTTPS, sin mixed-content).
-    let url = `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(keyOrUrl)}`;
-    // Para activos privados el backend requiere auth; <img>/<iframe> no pueden
-    // mandar Authorization header, así que pasamos el JWT por query param.
-    const token = getToken();
-    if (token && !isPublicKey) {
-      url += `&token=${encodeURIComponent(token)}`;
-    }
-    setSignedUrl(url);
-  }, [keyOrUrl, isAbsolute, isPublicKey]);
+    // Normaliza key relativa o URL firmada de MinIO a /api/storage/download/.
+    // Para URLs externas (CDN) storageUrl las devuelve tal cual.
+    setSignedUrl(storageUrl(keyOrUrl, { forceToken: !isPublicKey }));
+  }, [keyOrUrl, isPublicKey]);
 
   if (!keyOrUrl) {
     return (

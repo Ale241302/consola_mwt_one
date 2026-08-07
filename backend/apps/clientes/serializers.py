@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 from rest_framework import serializers
 
+from apps.storage.serializers import StorageNormalizeMixin
 from .models import Cliente, ClienteCreditSnapshot
 
 
@@ -64,7 +65,8 @@ def _is_admin_request(context) -> bool:
 # ═════════════════════════════════════════════════════════════════════
 # Serializer principal · full CRUD (Admin) + strip-down (CLIENT)
 # ═════════════════════════════════════════════════════════════════════
-class ClienteSerializer(serializers.ModelSerializer):
+class ClienteSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
+    storage_normalize_fields = ("logo_url",)
     """
     Serializer con POL_VISIBILIDAD.
 
@@ -335,7 +337,8 @@ class ClienteSerializer(serializers.ModelSerializer):
 # ═════════════════════════════════════════════════════════════════════
 # Lista ligera para el grid (Clientes.jsx) y para subsidiarias
 # ═════════════════════════════════════════════════════════════════════
-class ClienteListSerializer(serializers.ModelSerializer):
+class ClienteListSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
+    storage_normalize_fields = ("logo_url",)
     """Versión ligera · no expone comision_pct en el listado.
 
     Incluye `parent_id` y `subsidiarias_count` para que el dashboard y

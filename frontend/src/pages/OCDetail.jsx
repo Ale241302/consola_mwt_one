@@ -44,7 +44,7 @@ import { useRole } from "../context/RoleContext.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { ocsApi, clientesApi, marcasApi, expedientesApi, lineasApi,
          productosApi, documentosApi, storageApi, getToken,
-         nodoAssignmentsApi, financePaymentsApi } from "../lib/api.js";
+         nodoAssignmentsApi, financePaymentsApi, storageUrl } from "../lib/api.js";
 // Sprint Pagos Transfers — wizard de registro de pago en OC.
 import RegisterPaymentWizard from "../components/finance/RegisterPaymentWizard.jsx";
 import PaymentDetailDrawer   from "../components/finance/PaymentDetailDrawer.jsx";
@@ -913,12 +913,12 @@ export default function ScreenOCDetail() {
         throw new Error(resp?.error || 'URL no disponible');
       }
       // El backend ahora sirve por el proxy HTTPS same-origin
-      // (/api/storage/download/?key=...). Lo absolutizamos para
-      // window.open / <a download>.
+      // (/api/storage/download/?key=...). Lo absolutizamos y aseguramos
+      // token para documentos privados.
       if (resp?.proxy === true && url.startsWith('/')) {
         url = `${window.location.origin}${url}`;
       }
-      // Sprint 2026-05-08 · documentos DINÁMICOS (Proforma HTML).
+      url = storageUrl(url, { forceToken: true }) || url;      // Sprint 2026-05-08 · documentos DINÁMICOS (Proforma HTML).
       // Backend devuelve { url:"/api/expedientes/.../proforma-html/...", dynamic:true }.
       // window.open no envía el JWT del usuario → 401. Hacemos fetch
       // con Authorization, recibimos text/html, lo convertimos a Blob

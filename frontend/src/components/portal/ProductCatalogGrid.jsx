@@ -22,7 +22,7 @@ import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
-import { apiFetch, getToken } from "../../lib/api.js";
+import { apiFetch, getToken, storageUrl } from "../../lib/api.js";
 import { fmtMoney } from "../../lib/i18n.js";
 import { bandaForTC } from "../../constants/marluvas.js";
 import { useExchangeRateUSDBRL } from "../../hooks/useExchangeRateUSDBRL.js";
@@ -367,15 +367,7 @@ function ProductCard({
       <div className="catalog-card-thumb" aria-hidden="true">
         {imagen_url ? (
           <img
-            src={
-              // Si imagen_url ya es URL absoluta (CDN externo), úsala
-              // directo. Si es una key de MinIO (formato 'producto/.../*.png'),
-              // pásala por /api/storage/download/ — mismo patrón que el
-              // módulo /productos admin.
-              /^https?:\/\//i.test(imagen_url)
-                ? imagen_url
-                : `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(imagen_url)}`
-            }
+            src={storageUrl(imagen_url)}
             alt={nombre || sku}
             loading="lazy"
             onError={(e) => {

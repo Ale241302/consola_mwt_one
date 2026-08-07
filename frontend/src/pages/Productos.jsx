@@ -28,7 +28,7 @@ import {
   BRANDS, BRAND_PRODUCTS as MOCK_BRAND_PRODUCTS, SIZES, NODES,
   PRODUCT_EXPEDIENTE_LINES, PRODUCT_NODE_ASSIGNMENTS,
 } from "../data/mockData.js";
-import { productosApi } from "../lib/api.js";
+import { productosApi, storageUrl } from "../lib/api.js";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 import useBrandsLight from "../hooks/useBrandsLight.js";
 
@@ -442,14 +442,7 @@ export default function ScreenProductos() {
                            }}>
                         {p.imagen_url ? (
                           <img
-                            src={
-                              // Si imagen_url ya es una URL absoluta (CDN externo,
-                              // ej. cdn.mwt.one), úsala directo. Si es un object_key
-                              // de MinIO, pásalo por /api/storage/download/.
-                              /^https?:\/\//i.test(p.imagen_url)
-                                ? p.imagen_url
-                                : `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(p.imagen_url)}`
-                            }
+                            src={storageUrl(p.imagen_url)}
                             alt={p.nombre}
                             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                             onError={(e) => {

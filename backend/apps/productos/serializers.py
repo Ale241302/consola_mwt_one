@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from apps.storage.serializers import StorageNormalizeMixin
 from .models import Producto, ProductClientAlias, NcmCode
 
 
@@ -20,7 +21,8 @@ def _marca_nombre(marca_id):
     return _MARCA_CACHE["data"].get(str(marca_id))
 
 
-class ProductoListSerializer(serializers.ModelSerializer):
+class ProductoListSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
+    storage_normalize_fields = ("imagen_url", "ficha_url")
     # Nombre de la marca derivado de marca_id (UUID). Sin FK, así que
     # lookup vía cache compartido. El FE usa marca_id para la lógica
     # interna (selectores, edits) y marca_nombre para mostrar.
@@ -46,7 +48,8 @@ class ProductoListSerializer(serializers.ModelSerializer):
         )
 
 
-class ProductoSerializer(serializers.ModelSerializer):
+class ProductoSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
+    storage_normalize_fields = ("imagen_url", "ficha_url")
     # Por decisión de producto: NINGÚN campo es obligatorio al crear/editar.
     # Esto permite guardar borradores con sólo el SKU o sólo el nombre.
     sku    = serializers.CharField(max_length=64,  required=False, allow_blank=True, allow_null=True)

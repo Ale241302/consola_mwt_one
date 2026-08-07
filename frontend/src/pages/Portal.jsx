@@ -10,7 +10,7 @@
 //  - Modo C lines get a subtle "Operado por Muito Work" tag.
 //  - All downloadable docs marked as signed-URL (15-min expiry).
 import React, { useState, useEffect } from "react";
-import { clientesApi } from "../lib/api.js";
+import { clientesApi, storageUrl } from "../lib/api.js";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import OcChoiceModal from "../components/portal/OcChoiceModal.jsx";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
@@ -459,7 +459,7 @@ export default function ScreenPortal() {
             <div className="avatar" style={{ width:28, height:28, fontSize:11, overflow:'hidden', padding:0 }}>
               {client.logo_url ? (
                 <img
-                  src={`/api/storage/download/?key=${encodeURIComponent(client.logo_url)}`}
+                  src={storageUrl(client.logo_url)}
                   alt="logo"
                   style={{ width:'100%', height:'100%', objectFit:'contain' }}
                 />
@@ -992,7 +992,7 @@ function MyCompanyCard({ lang, client, creditLimit, creditUsed }) {
         }}>
           {client.logo_url ? (
             <img
-              src={`/api/storage/download/?key=${encodeURIComponent(client.logo_url)}`}
+              src={storageUrl(client.logo_url)}
               alt="logo"
               style={{ width:'100%', height:'100%', objectFit:'contain' }}
             />

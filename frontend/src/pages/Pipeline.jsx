@@ -35,6 +35,7 @@ import {
 import {
   expedientesApi, ocsApi,
   clientesApi, lineasApi, productosApi, marcasApi,
+  storageUrl,
 } from "../lib/api.js";
 import { useRole } from "../context/RoleContext.jsx";
 
@@ -448,16 +449,8 @@ export default function ScreenPipeline({
   );
 }
 
-// ─── Rich pipeline card (Sprint 2026-05-17 · CEO refactor) ─────────
-// Convierte una logo_url (key de MinIO o URL absoluta) en URL servible.
-// Mismo patrón que ClienteFormView/Portal: /api/storage/download/ es
-// AllowAny — la key UUID actúa como capability token.
-function logoSrc(keyOrUrl) {
-  if (!keyOrUrl) return null;
-  return /^https?:\/\//i.test(keyOrUrl)
-    ? keyOrUrl
-    : `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(keyOrUrl)}`;
-}
+// ─── Rich pipeline card ─────────
+// storageUrl se importa desde lib/api.js.
 
 function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onDragStart, onDragEnd, isClient, canDrag, showMoney }) {
   // Monto cliente y monto MWT (mismo criterio que la tabla master de Expedientes.jsx)
@@ -511,7 +504,7 @@ function PipelineCard({ exp, currentState, lang, dragging, onOpen, onOpenOC, onD
   // cliente final. Ambos se hidratan en load() desde /api/clientes/<id>.
   // rev2: solo staff (ADMIN/CEO) — el cliente B2B no ve logos en la card.
   const cardLogo = !isClient
-    ? (logoSrc(exp.operator_logo) || logoSrc(exp.client_logo))
+    ? (storageUrl(exp.operator_logo) || storageUrl(exp.client_logo))
     : null;
 
   return (

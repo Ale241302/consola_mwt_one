@@ -406,6 +406,94 @@ export const getToken = () => {
   );
 };
 
+
+// ─────────────────────────────────────────────────────────────────
+// Storage URL helper
+// Convierte un key relativo o una URL firmada de MinIO en una URL
+// servible por el backend (proxy HTTPS). Preserva URLs externas (CDN).
+// ─────────────────────────────────────────────────────────────────
+const STORAGE_PUBLIC_PREFIXES = ["producto/", "cliente/"];
+
+function _isPublicStorageKey(key) {
+  if (!key) return false;
+  const k = String(key).toLowerCase();
+  return STORAGE_PUBLIC_PREFIXES.some(p => k.startsWith(p));
+}
+
+function _extractKeyFromMinioUrl(url) {
+  try {
+    const u = new URL(url);
+    // Si es una URL firmada de S3/MinIO, el path es /<bucket>/<key>.
+    // El bucket puede variar, pero el patrón es path-style.
+    const segments = u.pathname.split("/").filter(Boolean);
+    // Descartamos el primer segmento si parece un bucket (no tiene extensión
+    // y el segundo segmento es un scope conocido). Esto cubre mwt-one.
+    const scopes = new Set([
+      "producto", "cliente", "marca", "documento", "expediente",
+      "artifact-field", "misc", "ai-attachment", "proforma", "oc",
+    ]);
+    if (segments.length >= 2 && scopes.has(segments[1].toLowerCase())) {
+      return segments.slice(1).join("/");
+    }
+    // Fallback: si el path empieza con mwt-one/ (bucket legacy default)
+    if (segments[0] === "mwt-one" && segments.length > 1) {
+      return segments.slice(1).join("/");
+    }
+    return segments.join("/");
+  } catch {
+    return null;
+  }
+}
+
+export function storageUrl(keyOrUrl, { token, forceToken } = {}) {
+  if (!keyOrUrl) return null;
+
+  let key = keyOrUrl;
+  const isAbsUrl = /^https?:\/\//i.test(keyOrUrl);
+
+  if (isAbsUrl) {
+    const url = new URL(keyOrUrl);
+
+    // Ya es una URL del proxy same-origin → solo asegurar que lleve token si es privada.
+    if (url.pathname === "/api/storage/download/") {
+      const existingKey = url.searchParams.get("key");
+      if (!existingKey) return keyOrUrl;
+      key = existingKey;
+      const params = new URLSearchParams();
+      params.set("key", key);
+      const needsAuth = forceToken || !_isPublicStorageKey(key);
+      const t = token || getToken();
+      if (needsAuth && t) params.set("token", t);
+      return `${window.location.origin}/api/storage/download/?${params.toString()}`;
+    }
+
+    const isMinio =
+      url.searchParams.has("X-Amz-Algorithm") ||
+      url.searchParams.has("X-Amz-Credential") ||
+      /\/mwt-one\//.test(url.pathname);
+
+    if (isMinio) {
+      key = _extractKeyFromMinioUrl(keyOrUrl);
+      if (!key) return keyOrUrl; // no pudimos parsear → devolvemos original
+    } else {
+      // CDN u otro origen externo: usar tal cual.
+      return keyOrUrl;
+    }
+  }
+
+  // key es ahora relativa.
+  const params = new URLSearchParams();
+  params.set("key", key);
+
+  const needsAuth = forceToken || !_isPublicStorageKey(key);
+  if (needsAuth) {
+    const t = token || getToken();
+    if (t) params.set("token", t);
+  }
+
+  return `${window.location.origin}/api/storage/download/?${params.toString()}`;
+}
+
 // ---------------------------------------------------------------------
 // CRUD genérico alineado al ViewSet de DRF.
 //   resource("nodos")    → { list, get, create, update, remove, select }

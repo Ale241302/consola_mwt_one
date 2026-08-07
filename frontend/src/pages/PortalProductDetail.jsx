@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext, useParams } from "react-router-dom";
-import { productosApi, getToken } from "../lib/api.js";
+import { productosApi, getToken, storageUrl } from "../lib/api.js";
 import { fmtMoney } from "../lib/i18n.js";
 import {
   IconChevLeft, IconDownload, IconImage, IconShield,
@@ -628,11 +628,7 @@ function defaultDescription(nombre, familia, lang) {
     : `Safety footwear ${familia ? `from the ${familia} line` : ""} designed for demanding industrial environments. Model ${nombre || ""}.`;
 }
 
-function storageUrl(key) {
-  if (!key) return null;
-  if (/^https?:\/\//i.test(key)) return key;
-  return `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(key)}`;
-}
+// (storageUrl se importa desde ../lib/api.js)
 
 const API_BASE = import.meta.env.VITE_API_BASE || "/api";
 

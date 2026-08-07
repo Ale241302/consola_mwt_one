@@ -20,7 +20,7 @@ import {
 import {
   SUPPLIER_AUDIT_SCORES, SUPPLIER_INCIDENTS,
 } from "../../data/mockData.js";
-import { proveedoresApi, apiFetch, getToken } from "../../lib/api.js";
+import { proveedoresApi, apiFetch, getToken, storageUrl } from "../../lib/api.js";
 import NewIsoEvaluationModal from "./NewIsoEvaluationModal.jsx";
 
 const DIMENSIONS = [
@@ -334,7 +334,7 @@ function BackendAuditView({ lang, supplierId, supplierName }) {
                         {e.documento_evidencia && (
                           <div className="caption" style={{color:'var(--text-tertiary)', marginTop:2}}>
                             <IconFileText size={10} style={{verticalAlign:'-1px', marginRight:3}}/>
-                            <a href={`/api/storage/download/?key=${encodeURIComponent(e.documento_evidencia)}`}
+                            <a href={storageUrl(e.documento_evidencia, { forceToken: true })}
                                target="_blank" rel="noreferrer"
                                style={{color:'inherit', textDecoration:'underline'}}>
                               {lang==='es'?'Evidencia':'Evidence'}
