@@ -794,8 +794,8 @@ export const PHASE_BASELINE = {
 
 function makeExpediente(n) {
   const status = pick(STATES.slice(0, 6)); // keep active
-  const client = CLIENTS[n % CLIENTS.length];
-  const brand  = BRANDS[(n+1) % BRANDS.length];
+  const client = (CLIENTS && CLIENTS.length > 0 ? CLIENTS[n % CLIENTS.length] : null) || { id: 'c1', name: 'Cliente Demo', country: 'Perú', band: 'GREEN' };
+  const brand  = (BRANDS && BRANDS.length > 0 ? BRANDS[(n+1) % BRANDS.length] : null) || { id: 'bis', name: 'Bison' };
   const credit_days = Math.floor(rand(10, 95));
   const cost_total   = Math.round(rand(18000, 260000));
   const invoiced     = Math.round(cost_total * rand(1.10, 1.32));
@@ -898,7 +898,7 @@ const _RAW_EXPEDIENTES = _wrap(Array.from({length: 32}, (_, i) => makeExpediente
 
 // One hero expediente with rich detail
 export const HERO_ID = USE_MOCKS ? (EXPEDIENTES[2].id) : '';
-EXPEDIENTES[2] = {
+if (EXPEDIENTES && EXPEDIENTES[2]) EXPEDIENTES[2] = {
   ...EXPEDIENTES[2],
   id: HERO_ID,
   ref: HERO_ID,
@@ -3157,41 +3157,79 @@ export const MOCK_AI_CONTEXT_BY_THREAD = {
 
 
 // ── Ola 1 F2: Exports aislados para producción ──
-export const BRANDS = _wrap(_RAW_BRANDS, _emptyArr);
-export const BRAND_ATTRIBUTES = _wrap(_RAW_BRAND_ATTRIBUTES, _emptyObj);
-export const BRAND_PRODUCTS = _wrap(_RAW_BRAND_PRODUCTS, _emptyArr);
-export const BRAND_PRICING = _wrap(_RAW_BRAND_PRICING, _emptyArr);
-export const CLIENTS = _wrap(_RAW_CLIENTS, _emptyArr);
-export const CLIENT_PAYMENTS = _wrap(_RAW_CLIENT_PAYMENTS, _emptyArr);
-export const CLIENT_PRODUCTS_BOUGHT = _wrap(_RAW_CLIENT_PRODUCTS_BOUGHT, _emptyArr);
-export const LEGAL_ENTITIES = _wrap(_RAW_LEGAL_ENTITIES, _emptyArr);
-export const OPERATORS = _wrap(_RAW_OPERATORS, _emptyArr);
-export const NODES = _wrap(_RAW_NODES, _emptyArr);
-export const NODE_INVENTORY = _wrap(_RAW_NODE_INVENTORY, _emptyArr);
-export const NODE_TRANSFERS = _wrap(_RAW_NODE_TRANSFERS, _emptyArr);
-export const NODE_AUTOMATIONS = _wrap(_RAW_NODE_AUTOMATIONS, _emptyArr);
-export const PRODUCTS = _wrap(_RAW_PRODUCTS, _emptyArr);
-export const EXPEDIENTES = _wrap(_RAW_EXPEDIENTES, _emptyArr);
-export const HERO_LINES = _wrap(_RAW_HERO_LINES, _emptyArr);
-export const HERO_COSTS = _wrap(_RAW_HERO_COSTS, _emptyArr);
-export const HERO_PAGOS = _wrap(_RAW_HERO_PAGOS, _emptyArr);
-export const HERO_ARTIFACTS = _wrap(_RAW_HERO_ARTIFACTS, _emptyArr);
-export const HERO_ACTIVITY = _wrap(_RAW_HERO_ACTIVITY, _emptyArr);
-export const INVENTORY = _wrap(_RAW_INVENTORY, _emptyArr);
-export const TRANSFERS_IN_TRANSIT = _wrap(_RAW_TRANSFERS_IN_TRANSIT, _emptyArr);
-export const TRANSFERS = _wrap(_RAW_TRANSFERS, _emptyArr);
-export const DASHBOARD = _wrap(_RAW_DASHBOARD, _emptyObj);
-export const OCS = _wrap(_RAW_OCS, _emptyArr);
-export const HERO_ARTIFACT_RECORDS = _wrap(_RAW_HERO_ARTIFACT_RECORDS, _emptyObj);
-export const PRODUCT_SIZES = _wrap(_RAW_PRODUCT_SIZES, _emptyArr);
-export const PRODUCT_CLIENT_VISIBILITY = _wrap(_RAW_PRODUCT_CLIENT_VISIBILITY, _emptyArr);
-export const PRODUCT_NODE_ASSIGNMENTS = _wrap(_RAW_PRODUCT_NODE_ASSIGNMENTS, _emptyArr);
-export const PRODUCT_EXPEDIENTE_LINES = _wrap(_RAW_PRODUCT_EXPEDIENTE_LINES, _emptyArr);
-export const SUPPLIERS = _wrap(_RAW_SUPPLIERS, _emptyArr);
-export const SUPPLIER_PRODUCTS = _wrap(_RAW_SUPPLIER_PRODUCTS, _emptyArr);
-export const SUPPLIER_EXPEDIENTE_REFS = _wrap(_RAW_SUPPLIER_EXPEDIENTE_REFS, _emptyArr);
-export const SUPPLIER_PROMO_CODES = _wrap(_RAW_SUPPLIER_PROMO_CODES, _emptyArr);
-export const SUPPLIER_AUDIT_SCORES = _wrap(_RAW_SUPPLIER_AUDIT_SCORES, _emptyObj);
-export const SUPPLIER_INCIDENTS = _wrap(_RAW_SUPPLIER_INCIDENTS, _emptyArr);
-export const EMAIL_TEMPLATES = _wrap(_RAW_EMAIL_TEMPLATES, _emptyArr);
-export const MOCK_AI_THREADS = _wrap(_RAW_MOCK_AI_THREADS, _emptyArr);
+export const BRANDS = USE_MOCKS ? (_wrap(_RAW_BRANDS, _emptyArr)) : [];
+
+export const BRAND_ATTRIBUTES = USE_MOCKS ? (_wrap(_RAW_BRAND_ATTRIBUTES, _emptyObj)) : {};
+
+export const BRAND_PRODUCTS = USE_MOCKS ? (_wrap(_RAW_BRAND_PRODUCTS, _emptyArr)) : [];
+
+export const BRAND_PRICING = USE_MOCKS ? (_wrap(_RAW_BRAND_PRICING, _emptyArr)) : [];
+
+export const CLIENTS = USE_MOCKS ? (_wrap(_RAW_CLIENTS, _emptyArr)) : [];
+
+export const CLIENT_PAYMENTS = USE_MOCKS ? (_wrap(_RAW_CLIENT_PAYMENTS, _emptyArr)) : [];
+
+export const CLIENT_PRODUCTS_BOUGHT = USE_MOCKS ? (_wrap(_RAW_CLIENT_PRODUCTS_BOUGHT, _emptyArr)) : [];
+
+export const LEGAL_ENTITIES = USE_MOCKS ? (_wrap(_RAW_LEGAL_ENTITIES, _emptyArr)) : [];
+
+export const OPERATORS = USE_MOCKS ? (_wrap(_RAW_OPERATORS, _emptyArr)) : [];
+
+export const NODES = USE_MOCKS ? (_wrap(_RAW_NODES, _emptyArr)) : [];
+
+export const NODE_INVENTORY = USE_MOCKS ? (_wrap(_RAW_NODE_INVENTORY, _emptyArr)) : [];
+
+export const NODE_TRANSFERS = USE_MOCKS ? (_wrap(_RAW_NODE_TRANSFERS, _emptyArr)) : [];
+
+export const NODE_AUTOMATIONS = USE_MOCKS ? (_wrap(_RAW_NODE_AUTOMATIONS, _emptyArr)) : [];
+
+export const PRODUCTS = USE_MOCKS ? (_wrap(_RAW_PRODUCTS, _emptyArr)) : [];
+
+export const EXPEDIENTES = USE_MOCKS ? (_wrap(_RAW_EXPEDIENTES, _emptyArr)) : [];
+
+export const HERO_LINES = USE_MOCKS ? (_wrap(_RAW_HERO_LINES, _emptyArr)) : [];
+
+export const HERO_COSTS = USE_MOCKS ? (_wrap(_RAW_HERO_COSTS, _emptyArr)) : [];
+
+export const HERO_PAGOS = USE_MOCKS ? (_wrap(_RAW_HERO_PAGOS, _emptyArr)) : [];
+
+export const HERO_ARTIFACTS = USE_MOCKS ? (_wrap(_RAW_HERO_ARTIFACTS, _emptyArr)) : [];
+
+export const HERO_ACTIVITY = USE_MOCKS ? (_wrap(_RAW_HERO_ACTIVITY, _emptyArr)) : [];
+
+export const INVENTORY = USE_MOCKS ? (_wrap(_RAW_INVENTORY, _emptyArr)) : [];
+
+export const TRANSFERS_IN_TRANSIT = USE_MOCKS ? (_wrap(_RAW_TRANSFERS_IN_TRANSIT, _emptyArr)) : [];
+
+export const TRANSFERS = USE_MOCKS ? (_wrap(_RAW_TRANSFERS, _emptyArr)) : [];
+
+export const DASHBOARD = USE_MOCKS ? (_wrap(_RAW_DASHBOARD, _emptyObj)) : {};
+
+export const OCS = USE_MOCKS ? (_wrap(_RAW_OCS, _emptyArr)) : [];
+
+export const HERO_ARTIFACT_RECORDS = USE_MOCKS ? (_wrap(_RAW_HERO_ARTIFACT_RECORDS, _emptyObj)) : {};
+
+export const PRODUCT_SIZES = USE_MOCKS ? (_wrap(_RAW_PRODUCT_SIZES, _emptyArr)) : [];
+
+export const PRODUCT_CLIENT_VISIBILITY = USE_MOCKS ? (_wrap(_RAW_PRODUCT_CLIENT_VISIBILITY, _emptyArr)) : [];
+
+export const PRODUCT_NODE_ASSIGNMENTS = USE_MOCKS ? (_wrap(_RAW_PRODUCT_NODE_ASSIGNMENTS, _emptyArr)) : [];
+
+export const PRODUCT_EXPEDIENTE_LINES = USE_MOCKS ? (_wrap(_RAW_PRODUCT_EXPEDIENTE_LINES, _emptyArr)) : [];
+
+export const SUPPLIERS = USE_MOCKS ? (_wrap(_RAW_SUPPLIERS, _emptyArr)) : [];
+
+export const SUPPLIER_PRODUCTS = USE_MOCKS ? (_wrap(_RAW_SUPPLIER_PRODUCTS, _emptyArr)) : [];
+
+export const SUPPLIER_EXPEDIENTE_REFS = USE_MOCKS ? (_wrap(_RAW_SUPPLIER_EXPEDIENTE_REFS, _emptyArr)) : [];
+
+export const SUPPLIER_PROMO_CODES = USE_MOCKS ? (_wrap(_RAW_SUPPLIER_PROMO_CODES, _emptyArr)) : [];
+
+export const SUPPLIER_AUDIT_SCORES = USE_MOCKS ? (_wrap(_RAW_SUPPLIER_AUDIT_SCORES, _emptyObj)) : {};
+
+export const SUPPLIER_INCIDENTS = USE_MOCKS ? (_wrap(_RAW_SUPPLIER_INCIDENTS, _emptyArr)) : [];
+
+export const EMAIL_TEMPLATES = USE_MOCKS ? (_wrap(_RAW_EMAIL_TEMPLATES, _emptyArr)) : [];
+
+export const MOCK_AI_THREADS = USE_MOCKS ? (_wrap(_RAW_MOCK_AI_THREADS, _emptyArr)) : [];
+
