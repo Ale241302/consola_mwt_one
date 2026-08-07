@@ -89,12 +89,20 @@ def _is_public_key(key: str) -> bool:
     return any(key.startswith(prefix) for prefix in prefixes)
 
 
-def _stream_object_response(key: str):
+def _stream_object_response(key: str, public: bool = False):
     """Devuelve un StreamingHttpResponse con el contenido del objeto MinIO.
 
     Hotfix para evitar mixed-content / ERR_SSL_PROTOCOL_ERROR cuando MinIO
     no tiene certificado válido: en vez de redirigir al navegador a una URL
     firmada (que puede ser HTTP), Django stremea los bytes por HTTPS.
+
+    Seguridad:
+      - X-Content-Type-Options: nosniff para evitar sniffing de MIME.
+      - Content-Disposition: attachment para tipos ejecutables (HTML, SVG, JS)
+        y inline para imágenes/PDF.
+      - Cache-Control: public para activos públicos, private para privados.
+      - Cierra/libera la conexión de urllib3 al terminar (incluso si el cliente
+        corta la descarga).
     """
     from .services import get_object_stream
 
@@ -115,10 +123,52 @@ def _stream_object_response(key: str):
         or mimetypes.guess_type(key)[0]
         or "application/octet-stream"
     )
-    django_resp = StreamingHttpResponse(resp.stream(), content_type=content_type)
+
+    # Forzar attachment para tipos que pueden ejecutar scripts en same-origin.
+    executable_types = {"text/html", "application/xhtml+xml", "image/svg+xml",
+                        "text/javascript", "application/javascript", "application/x-shockwave-flash"}
+    safe_inline = content_type.startswith("image/") or content_type == "application/pdf"
+    if safe_inline:
+        disposition = "inline"
+    else:
+        disposition = "attachment"
+
+    # Extraer filename del key (último segmento).
+    filename = key.split("/")[-1]
+
+    def _chunks():
+        try:
+            for chunk in resp.stream():
+                yield chunk
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+            try:
+                resp.release_conn()
+            except Exception:
+                pass
+
+    django_resp = StreamingHttpResponse(_chunks(), content_type=content_type)
     content_length = resp.headers.get("Content-Length")
     if content_length:
         django_resp["Content-Length"] = content_length
+    django_resp["X-Content-Type-Options"] = "nosniff"
+    django_resp["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+    if public:
+        django_resp["Cache-Control"] = "public, max-age=3600"
+    else:
+        django_resp["Cache-Control"] = "private, max-age=0"
+
+    # Passthrough de ETag/Last-Modified para aprovechar cache condicional.
+    etag = resp.headers.get("ETag")
+    if etag:
+        django_resp["ETag"] = etag
+    last_modified = resp.headers.get("Last-Modified")
+    if last_modified:
+        django_resp["Last-Modified"] = last_modified
+
     return django_resp
 
 
@@ -235,7 +285,7 @@ class StorageViewSet(viewsets.ViewSet):
             return Response({"detail": "Falta 'key'"}, status=400)
 
         if _is_public_key(key):
-            return _stream_object_response(key)
+            return _stream_object_response(key, public=True)
 
         if not request.user or not getattr(request.user, "is_authenticated", False):
             return Response({"detail": "Las credenciales de autenticación no se proveyeron."}, status=401)
@@ -243,7 +293,7 @@ class StorageViewSet(viewsets.ViewSet):
         if not _user_can_access_key(request.user, key):
             return Response({"detail": "No autorizado"}, status=403)
 
-        return _stream_object_response(key)
+        return _stream_object_response(key, public=False)
 
     # ── DELETE genérico: borra un objeto del bucket por su key.
     #    El llamador (Producto/Expediente/etc.) es responsable de
