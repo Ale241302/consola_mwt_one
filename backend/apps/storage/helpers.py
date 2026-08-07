@@ -97,3 +97,16 @@ def normalize_storage_key(value: str | None) -> str | None:
     if not key:
         return None
     return key
+
+
+def proxy_download_url(key: str | None, *, bucket: str | None = None) -> str | None:
+    """Devuelve la URL del proxy same-origin para descargar un objeto.
+
+    El frontend (y <img>/<iframe>) usa esta URL para evitar mixed-content
+    y para añadir ?token= en activos privados.
+    """
+    if not key:
+        return None
+    from urllib.parse import quote
+    bucket = bucket or getattr(settings, "MINIO_BUCKET", "mwt-one") or "mwt-one"
+    return f"/api/storage/download/?key={quote(str(key), safe='')}&bucket={quote(bucket, safe='')}"

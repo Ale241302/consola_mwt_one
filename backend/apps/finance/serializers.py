@@ -39,15 +39,12 @@ class PaymentEvidenceSerializer(serializers.ModelSerializer):
         )
 
     def get_archivo_url(self, obj: PaymentEvidence) -> str | None:
-        # URL firmada (15 min) — el FE la usa para preview/embed
+        # URL del proxy HTTPS same-origin (el frontend añade ?token= si es privado).
         try:
-            from apps.storage.services import generate_signed_url
+            from apps.storage.helpers import proxy_download_url
         except Exception:
             return None
-        result = generate_signed_url(
-            obj.object_key, kind="get", ttl=900, bucket=obj.bucket,
-        )
-        return result.get("url") if result.get("available") else None
+        return proxy_download_url(obj.object_key, bucket=obj.bucket)
 
 
 class PaymentApplicationSerializer(serializers.ModelSerializer):

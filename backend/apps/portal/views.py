@@ -2190,18 +2190,15 @@ class PortalExpedienteViewSet(viewsets.ReadOnlyModelViewSet):
             )
         data = self.get_serializer(exp).data
 
-        # Firmar URLs de documentos (best-effort)
+        # Usar el proxy HTTPS same-origin para documentos (evita mixed-content
+        # y permite auth por ?token= en el frontend).
+        from apps.storage.helpers import proxy_download_url  # noqa: PLC0415
         for d in (data.get("documentos") or []):
             raw_key = d.get("storage_url")
             if not raw_key:
                 continue
-            try:
-                from apps.storage.services import generate_signed_url  # noqa: PLC0415
-                signed = generate_signed_url(key=raw_key, kind="get", ttl=900)
-                d["storage_url"]         = signed.get("url") or raw_key
-                d["signed_url_ttl_sec"]  = 900
-            except Exception:
-                d["signed_url_ttl_sec"] = 0
+            d["storage_url"]        = proxy_download_url(raw_key)
+            d["signed_url_ttl_sec"] = 0
 
         _record_audit(
             user_id=getattr(request.user, "id", None),

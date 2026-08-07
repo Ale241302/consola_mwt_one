@@ -438,10 +438,10 @@ class TicketViewSet(viewsets.ViewSet):
         ).exists():
             return Response({"detail": "Adjunto no pertenece al ticket."}, status=400)
 
-        signed = generate_signed_url(key=att.file_object_key, kind="get", ttl=900)
+        from apps.storage.helpers import proxy_download_url  # noqa: PLC0415
         return Response({
-            "url":       signed.get("url"),
-            "expires_at":signed.get("expires_at"),
+            "url":        proxy_download_url(att.file_object_key),
+            "expires_at": None,
             "file_name": att.file_name,
             "file_mime": att.file_mime,
         })
