@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 
 import uvicorn
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .asgi_middleware import IdentityPropagationMiddleware
 from .config import settings
@@ -20,6 +21,9 @@ def main() -> None:
     if transport in ("http", "streamable-http", "streamable_http"):
         mcp.settings.host = settings.host
         mcp.settings.port = settings.port
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        )
         app = mcp.streamable_http_app()
         wrapped = IdentityPropagationMiddleware(app)
         print(
