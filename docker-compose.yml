@@ -244,7 +244,7 @@ services:
       MWT_MCP_TRANSPORT: http
       MWT_MCP_HOST: 0.0.0.0
       MWT_MCP_PORT: "8765"
-      MWT_API_BASE: https://consola.mwt.one/api
+      MWT_API_BASE: http://django:8000/api
       # Si quieres firma local de JWT de usuario, añade MWT_JWT_SIGNING_SECRET
       # al .env (mismo valor que DJANGO_SECRET_KEY). Por defecto se usa el
       # endpoint /api/auth/mcp-token/ del backend, que es más seguro.
