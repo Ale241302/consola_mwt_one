@@ -34,10 +34,11 @@ import {
   IconCreditCard, IconDollar, IconCheck, IconTrash, IconX,
 } from "../lib/icons.jsx";
 import {
-  EXPEDIENTES as MOCK_EXPEDIENTES,
-  STATES, PHASE_BASELINE,
-  OCS as MOCK_OCS,
+  PHASE_BASELINE,
 } from "../data/mockData.js";
+// Sprint 2026-08-07 · Ola 1 F2: PHASE_BASELINE es configuración de baseline
+// visual, no datos de negocio. MOCK_EXPEDIENTES/MOCK_OCS se eliminan para
+// no confundir con datos reales cuando el backend falla.
 // Sprint 2026-07-30 · Fases visuales: Preparación + Despacho → Preparación de despacho.
 import { DISPLAY_STAGES, displayStage, displayStageIndex } from "../lib/phaseDisplay.js";
 import { expedientesApi, ocsApi, clientesApi, marcasApi, lineasApi, productosApi } from "../lib/api.js";
@@ -171,6 +172,7 @@ export default function ScreenExpedientes() {
   const [apiExpedientes, setApiExpedientes] = useState(() => _seed?.exp || []);
   const [apiOcs,         setApiOcs]         = useState(() => _seed?.ocs || []);
   const [loading,        setLoading]        = useState(() => !_seed);
+  const [loadError,      setLoadError]      = useState(null);
 
   const load = useCallback(async (signal) => {
     // Spinner solo si no hay snapshot cacheado que mostrar mientras revalida.
@@ -181,11 +183,14 @@ export default function ScreenExpedientes() {
       // viajan en el MISMO Promise.all (4 en paralelo) en lugar de en serie.
       // Solo el enriquecimiento de clientes espera (depende de los client_id).
       const [expRaw, ocRaw, lnRaw, prodRaw] = await Promise.all([
-        expedientesApi.list(undefined, { signal }).catch(() => []),
-        ocsApi.list(undefined, { signal }).catch(() => []),
-        lineasApi.list({ is_active: true }, { signal }).catch(() => []),
-        productosApi.list(undefined, { signal }).catch(() => []),
+        // Sprint 2026-08-07 · Ola 1 F2: ya no se esconden errores con .catch(() => []).
+        // Si el backend falla, el usuario ve el error y puede reintentar.
+        expedientesApi.list(undefined, { signal }),
+        ocsApi.list(undefined, { signal }),
+        lineasApi.list({ is_active: true }, { signal }),
+        productosApi.list(undefined, { signal }),
       ]);
+      setLoadError(null);
       const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
       const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
       const mapped   = expItems.map(mapExpedienteFromApi);
@@ -294,6 +299,7 @@ export default function ScreenExpedientes() {
       setApiOcs(ocItems);
     } catch (e) {
       if (e?.name === "AbortError" || signal?.aborted) return;
+      setLoadError(e);
       // No pisamos con [] si ya teníamos datos cacheados en pantalla.
       if (!readCache(cacheKey)) {
         setApiExpedientes([]);
@@ -1528,7 +1534,27 @@ export default function ScreenExpedientes() {
         </table>
       </div>
 
-      {!loading && filtered.length === 0 && (
+      {!loading && loadError && filtered.length === 0 && (
+        <div className="card" style={{padding:40, textAlign:'center', marginTop:16}}>
+          <div className="heading-md" style={{marginBottom:6, color:'var(--critical, #DC2626)'}}>
+            {lang==='es'?'Error al cargar expedientes':'Error loading files'}
+          </div>
+          <div className="caption" style={{marginBottom:16}}>
+            {loadError?.message || (lang==='es'?'No se pudo conectar con el servidor.':'Could not connect to the server.')}
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              const c = new AbortController();
+              load(c.signal);
+            }}
+          >
+            {lang==='es'?'Reintentar':'Retry'}
+          </button>
+        </div>
+      )}
+
+      {!loading && !loadError && filtered.length === 0 && (
         <div className="card" style={{padding:40, textAlign:'center', marginTop:16}}>
           <div className="heading-md" style={{marginBottom:6}}>{lang==='es'?'Sin resultados':'No results'}</div>
           <div className="caption">{lang==='es'?'Ajusta los filtros para ver expedientes.':'Adjust filters to see files.'}</div>

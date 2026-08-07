@@ -47,13 +47,16 @@ export function usePortalData(clientId) {
     try {
       const [me, kpis, ocs, expedientes, pagos, cobros, documentos] =
         await Promise.all([
-          portalApi.me(clientId).catch(() => null),
-          portalApi.kpis(clientId).catch(() => null),
-          portalApi.misOcs(clientId).catch(() => []),
-          portalApi.misExpedientes(clientId).catch(() => []),
-          portalApi.misPagos(clientId).catch(() => []),
-          portalApi.misCobros(clientId).catch(() => []),
-          portalApi.misDocumentos(clientId).catch(() => []),
+          // Sprint 2026-08-07 · Ola 1 F2: propagar errores en vez de
+          // devolver arrays vacíos parciales. El componente Portal muestra
+          // el estado de error y ofrece reintentar.
+          portalApi.me(clientId),
+          portalApi.kpis(clientId),
+          portalApi.misOcs(clientId),
+          portalApi.misExpedientes(clientId),
+          portalApi.misPagos(clientId),
+          portalApi.misCobros(clientId),
+          portalApi.misDocumentos(clientId),
         ]);
       const fresh = {
         me:          me || null,

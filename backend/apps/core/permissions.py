@@ -16,6 +16,7 @@ REST_FRAMEWORK.DEFAULT_PERMISSION_CLASSES en settings.py.
 """
 import json
 import logging
+import os
 
 from rest_framework.permissions import BasePermission
 
@@ -167,31 +168,49 @@ def _permissions_for_role(role_slug: str) -> dict:
 
 class RoleBasedPermission(BasePermission):
     """
-    · Si la vista no declara `required_module`, solo se exige estar autenticado.
-    · Si lo declara, se valida contra el permiso del rol del usuario.
+    · Si la vista declara `required_module`, se valida contra el permiso del rol.
+    · Si NO lo declara:
+        - En modo log-only (MWT_RBAC_LOG_ONLY=1) se permite y se loguea.
+        - En modo estricto (default) se niega el acceso (fail-closed).
     · Los roles 'admin' y 'superadmin' (o modules=['*']) pasan todo.
+    · ServiceTokenUser aporta sus permisos directamente.
     """
+
     def has_permission(self, request, view):
-        # Auth ya fue validada por JWTAuthentication
+        # Auth ya fue validada por JWTAuthentication / ServiceTokenAuthentication
         if not request.user or not request.auth:
             return False
 
         required_module = getattr(view, "required_module", None)
         required_action = getattr(view, "required_action", "view")
+        view_name = f"{view.__class__.__module__}.{view.__class__.__name__}"
+
+        # ── Fail-closed cuando la vista no declara módulo ────────────────
         if not required_module:
-            return True
+            if os.environ.get("MWT_RBAC_LOG_ONLY", "0").strip().lower() in ("1", "true", "yes"):
+                log.warning(
+                    "[RoleBasedPermission][LOG-ONLY] Vista sin required_module: %s",
+                    view_name,
+                )
+                return True
+            log.warning(
+                "[RoleBasedPermission] Vista sin required_module denegada: %s",
+                view_name,
+            )
+            return False
 
-        # request.auth puede ser dict (JWT decoded) o str (token raw).
-        # En el segundo caso .get() rompe igual; defensivo:
-        if isinstance(request.auth, dict):
-            role_slug = request.auth.get("role")
+        # ── Permisos del usuario ───────────────────────────────────────
+        # ServiceTokenUser trae permisos directos en _permissions.
+        if getattr(request.user, "is_service_token", False):
+            perms = getattr(request.user, "_permissions", {}) or {}
         else:
-            role_slug = (getattr(request.user, "role", None)
-                         or getattr(request.user, "role_default", None))
+            if isinstance(request.auth, dict):
+                role_slug = request.auth.get("role")
+            else:
+                role_slug = (getattr(request.user, "role", None)
+                             or getattr(request.user, "role_default", None))
+            perms = _permissions_for_role(role_slug)
 
-        perms = _permissions_for_role(role_slug)
-        # Defensa adicional: _permissions_for_role ya normaliza, pero
-        # si algo raro pasara, garantizamos que .get() no explote.
         if not isinstance(perms, dict):
             log.warning(
                 "[RoleBasedPermission] perms no es dict (tipo=%s) -> negando",

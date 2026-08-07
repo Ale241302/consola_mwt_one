@@ -9,8 +9,9 @@
 // reabrir el modal se muestre preview de imagen o icono del archivo
 // con click → ventana nueva.
 // =====================================================================
-import React, { useRef, useState } from "react";
-import { storageApi } from "../../../lib/api.js";
+import React, { useEffect, useRef, useState } from "react";
+import { storageApi, storageUrl } from "../../../lib/api.js";
+import { parseLocaleNumber, formatLocaleNumber } from "../../../lib/numbers.js";
 import { IconUpload, IconFileText, IconX } from "../../../lib/icons.jsx";
 
 function normalizeOptions(opts) {
@@ -40,8 +41,13 @@ function FilePicker({ value, onChange, disabled, lang, field }) {
   const fileSize = Number(v?.size || 0);
   // URL final que abre en una pestaña nueva. Si tenemos `key`, usamos
   // el download-proxy de Django (HTTPS, sin mixed-content); si solo
-  // tenemos `url` (legado), la usamos tal cual.
-  const openUrl = v?.key ? storageApi.downloadUrl(v.key) : (v?.url || "");
+  // tenemos `url` (legado o URL absoluta de MinIO), la normalizamos
+  // con storageUrl para añadir ?token= en activos privados.
+  const openUrl = v?.key
+    ? storageApi.downloadUrl(v.key)
+    : v?.url
+      ? storageUrl(v.url, { forceToken: true })
+      : "";
   const hasFile = !!openUrl;
 
   const isImage = (fileMime || "").startsWith("image/")
@@ -287,19 +293,47 @@ export default function DynamicField({ field, value, onChange, disabled, lang = 
         />
       );
 
-    case "number":
+    case "number": {
+      // Sprint 2026-08-07 · Ola 1 F1: parseo numérico locale-es-CR.
+      // type="text" + inputMode="decimal" evita que el browser imponga
+      // formato en-US; parseamos en blur y mostramos valor crudo en foco.
+      const locale = lang === "es" ? "es-CR" : "en-US";
+      const [raw, setRaw] = useState("");
+      const [focused, setFocused] = useState(false);
+
+      useEffect(() => {
+        if (!focused) {
+          setRaw(value === null || value === undefined ? "" : formatLocaleNumber(value, locale, 2));
+        }
+      }, [value, focused, locale]);
+
+      const displayValue = focused
+        ? raw
+        : value === null || value === undefined
+          ? ""
+          : formatLocaleNumber(value, locale, 2);
+
       return (
         <input
           className="input tabular"
-          type="number"
-          value={value ?? ""}
+          type="text"
+          inputMode="decimal"
+          value={displayValue}
           placeholder={ph}
-          onChange={(e) =>
-            handle(e.target.value === "" ? null : Number(e.target.value))
-          }
+          onFocus={() => {
+            setFocused(true);
+            setRaw(value === null || value === undefined ? "" : String(value).replace(".", ","));
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            const parsed = parseLocaleNumber(e.target.value, locale);
+            handle(parsed);
+          }}
+          onChange={(e) => setRaw(e.target.value)}
           disabled={disabled}
         />
       );
+    }
 
     case "date":
       return (

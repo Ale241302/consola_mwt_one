@@ -62,7 +62,13 @@ def _set_cache(key: str, token: str) -> None:
 
 
 def _service_auth_header() -> dict[str, str]:
-    return {"Authorization": f"Bearer {settings.require_token()}"}
+    token = settings.require_token()
+    # Sprint 2026-08-07 · Ola 1 F3: soporte Bearer (legacy JWT) y ServiceToken.
+    # Los tokens de servicio nuevos son opacos de 64 hex y viajan como
+    # Authorization: ServiceToken <token>. Los JWT legacy siguen como Bearer.
+    if token.startswith("eyJ"):
+        return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"ServiceToken {token}"}
 
 
 def _mint_from_backend(identity) -> str | None:

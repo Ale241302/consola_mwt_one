@@ -24,11 +24,8 @@ import {
   IconClock, IconArrow, IconChevRight, IconBuilding, IconUsers, IconPlus,
 } from "../lib/icons.jsx";
 import { motion } from "framer-motion";
-import {
-  CLIENTS    as MOCK_CLIENTS,
-  OCS        as MOCK_OCS,
-  EXPEDIENTES as MOCK_EXPEDIENTES,
-} from "../data/mockData.js";
+// Sprint 2026-08-07 · Ola 1 F2: se eliminan imports de mockData; el portal
+// consume datos reales vía usePortalData.
 import { usePortalData } from "../hooks/usePortalData.js";
 import { useRole } from "../context/RoleContext.jsx";
 import ProductCatalogGrid from "../components/portal/ProductCatalogGrid.jsx";

@@ -1,120 +1,168 @@
-# backend/apps/core/management/commands/mint_mcp_token.py
 """
-Emite un AccessToken JWT de larga vida (para el servidor MCP de MWT.ONE),
-autenticado como un usuario CEO/ADMIN existente en `core.users`.
+=====================================================================
+MWT.ONE · apps.core.management.commands.mint_mcp_token
+Agente responsable: [AG-BACKEND]
+Ola 1 — F3: emite un ServiceToken opaco para el MCP gateway u otros
+servicios internos.
 
-El token se firma con el mismo DJANGO_SECRET_KEY que corre el contenedor `django`,
-por lo que es aceptado por `apps.core.jwt_auth.MwtJWTAuthentication` sin ningún
-mecanismo extra. Como no hay blacklist de access tokens, la única forma de revocar
-este token es: (a) rotar DJANGO_SECRET_KEY, o (b) desactivar / soft-delete el
-usuario en core.users (is_active=FALSE o deleted_at).
+El token se guarda como SHA-256 en core.service_token; scopes y client_ids
+como filas en core.service_token_scope. Revocar no requiere rotar
+DJANGO_SECRET_KEY.
 
 Uso:
-    python manage.py mint_mcp_token --email alejandro@muitowork.com
-    python manage.py mint_mcp_token --email alejandro@muitowork.com --days 36500
-    python manage.py mint_mcp_token --email alejandro@muitowork.com --quiet   # solo el token
+    python manage.py mint_mcp_token --name mcp-gateway-prod --scopes mcp:read,mcp:token_exchange
+    python manage.py mint_mcp_token --name mcp-gateway-prod --scopes mcp:* --client-ids <uuid1>,<uuid2>
+    python manage.py mint_mcp_token --name mcp-gateway-prod --scopes mcp:* --expires-days 30
+
+Salida:
+    MWT_MCP_SERVICE_TOKEN=<token-opaco-64-hex>
+=====================================================================
 """
 from __future__ import annotations
 
-from datetime import timedelta
+import os
+import secrets
+import uuid
+from datetime import timedelta, timezone
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import connection
-from rest_framework_simplejwt.tokens import AccessToken
+from django.db import connection, transaction
+
+
+DEFAULT_SCOPES = "mcp:read,mcp:token_exchange"
+DEFAULT_DAYS = 30
+MAX_DAYS = 90
+
+
+def _parse_uuid_list(s: str | None) -> list[str]:
+    if not s:
+        return []
+    out = []
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            uuid.UUID(part)
+        except ValueError as exc:
+            raise CommandError(f"client-id no es UUID válido: {part}") from exc
+        out.append(part.lower())
+    return out
 
 
 class Command(BaseCommand):
-    help = "Emite un AccessToken JWT de larga vida (MCP) para un usuario CEO/ADMIN de core.users."
+    help = "Emite un ServiceToken opaco para servicios MCP (gateway, etc.)."
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--email",
+            "--name",
             required=True,
-            help="email_plain del usuario en core.users (ej. alejandro@muitowork.com)",
+            help="Nombre descriptivo del token (ej. mcp-gateway-prod).",
         )
         parser.add_argument(
-            "--days",
+            "--scopes",
+            default=DEFAULT_SCOPES,
+            help=f"Scopes separados por coma (default: {DEFAULT_SCOPES}).",
+        )
+        parser.add_argument(
+            "--client-ids",
+            default=None,
+            help="UUIDs de clientes permitidos separados por coma (default: todos).",
+        )
+        parser.add_argument(
+            "--expires-days",
             type=int,
-            default=36500,  # ~100 años => 'sin vencimiento' a efectos prácticos
-            help="Vida del token en días (default 36500 ~ 100 años).",
+            default=DEFAULT_DAYS,
+            help=f"Días de vida (default {DEFAULT_DAYS}, máximo {MAX_DAYS}).",
+        )
+        parser.add_argument(
+            "--created-by",
+            default=None,
+            help="UUID del usuario que crea el token (opcional, para auditoría).",
         )
         parser.add_argument(
             "--quiet",
             action="store_true",
-            help="Imprime SOLO el token (sin banner), útil para capturarlo en un .env.",
+            help="Imprime solo MWT_MCP_SERVICE_TOKEN=<token>.",
         )
 
     def handle(self, *args, **opts):
-        email_low = (opts["email"] or "").strip().lower()
-        if not email_low:
-            raise CommandError("Debes pasar --email.")
+        name = (opts["name"] or "").strip()
+        if not name:
+            raise CommandError("--name es obligatorio.")
 
-        # 1) Resolver usuario en core.users (mismo patrón que apps.core.auth_views).
-        with connection.cursor() as cur:
-            cur.execute(
-                """
-                SELECT u.id::text,
-                       u.email_plain,
-                       u.role,
-                       u.is_active,
-                       COALESCE(r.slug, u.role) AS role_slug
-                  FROM core.users u
-                  LEFT JOIN core.user_roles ur ON ur.user_uuid = u.id
-                  LEFT JOIN core.roles      r  ON r.id          = ur.role_uuid
-                 WHERE lower(u.email_plain) = %s
-                   AND u.deleted_at IS NULL
-                 ORDER BY ur.granted_at ASC NULLS LAST
-                 LIMIT 1
-                """,
-                [email_low],
-            )
-            row = cur.fetchone()
+        days = int(opts["expires_days"] or DEFAULT_DAYS)
+        if days < 1 or days > MAX_DAYS:
+            raise CommandError(f"--expires-days debe estar entre 1 y {MAX_DAYS}.")
 
-        if not row:
-            raise CommandError(
-                f"Usuario '{email_low}' no existe en core.users o está borrado (deleted_at)."
-            )
+        scopes = [s.strip() for s in (opts["scopes"] or "").split(",") if s.strip()]
+        if not scopes:
+            raise CommandError("Debes especificar al menos un scope.")
 
-        uid, email, role_str, is_active, role_slug = row
-        if not is_active:
-            raise CommandError(f"Usuario '{email_low}' está inactivo (is_active=FALSE).")
+        client_ids = _parse_uuid_list(opts.get("client_ids"))
+        created_by = _parse_uuid_list(opts.get("created_by") or "")
+        created_by_uuid = created_by[0] if created_by else None
 
-        role = role_slug or role_str
-        if role not in ("admin", "superadmin"):
-            self.stderr.write(
-                self.style.WARNING(
-                    f"AVISO: el rol '{role}' NO es admin/superadmin; el token quedara "
-                    f"limitado por RoleBasedPermission en vistas con required_module."
+        # Token opaco de 64 caracteres hexadecimales (256 bits).
+        token = secrets.token_hex(32)
+        token_hash = _hash_token(token)
+        expires_at = (timezone.now() + timedelta(days=days)).replace(microsecond=0)
+
+        token_id = uuid.uuid4()
+        with transaction.atomic():
+            with connection.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO core.service_token
+                        (id, name, token_hash, role_slug, is_active, expires_at, created_by_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, 'service', TRUE, %s, %s, NOW(), NOW())
+                    """,
+                    [token_id, name, token_hash, expires_at, created_by_uuid],
                 )
-            )
-
-        # 2) Construir el AccessToken a mano (NO usar for_user: no hay auth.User en este repo).
-        token = AccessToken()
-        token["user_uuid"] = str(uid)   # claim obligatorio (USER_ID_CLAIM)
-        token["email"] = email
-        token["role"] = role            # leido por RoleBasedPermission
-        token["mcp"] = True             # marca de origen (auditoria)
-        token.set_exp(lifetime=timedelta(days=int(opts["days"])))
-
-        token_str = str(token)
+                for scope in scopes:
+                    if client_ids:
+                        for cid in client_ids:
+                            cur.execute(
+                                """
+                                INSERT INTO core.service_token_scope
+                                    (id, service_token_id, scope, client_id)
+                                VALUES (gen_random_uuid(), %s, %s, %s)
+                                """,
+                                [token_id, scope, cid],
+                            )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO core.service_token_scope
+                                (id, service_token_id, scope, client_id)
+                            VALUES (gen_random_uuid(), %s, %s, NULL)
+                            """,
+                            [token_id, scope],
+                        )
 
         if opts["quiet"]:
-            self.stdout.write(token_str)
+            self.stdout.write(f"MWT_MCP_SERVICE_TOKEN={token}")
             return
 
-        self.stdout.write(self.style.SUCCESS("== MWT.ONE — MCP service token =="))
-        self.stdout.write(f"  usuario : {email}")
-        self.stdout.write(f"  user_id : {uid}")
-        self.stdout.write(f"  rol     : {role}")
-        self.stdout.write(f"  vida    : {opts['days']} dias")
+        self.stdout.write(self.style.SUCCESS("== MWT.ONE — ServiceToken emitido =="))
+        self.stdout.write(f"  id         : {token_id}")
+        self.stdout.write(f"  name       : {name}")
+        self.stdout.write(f"  scopes     : {', '.join(scopes)}")
+        self.stdout.write(f"  client_ids : {', '.join(client_ids) if client_ids else '(todos)'}")
+        self.stdout.write(f"  expires_at : {expires_at.isoformat()}")
         self.stdout.write("")
-        self.stdout.write("  TOKEN (guardalo como MWT_MCP_TOKEN en el .env del MCP):")
+        self.stdout.write("  TOKEN (guardalo como MWT_MCP_SERVICE_TOKEN en el .env del MCP):")
         self.stdout.write("")
-        self.stdout.write(token_str)
+        self.stdout.write(token)
         self.stdout.write("")
         self.stdout.write(
             self.style.WARNING(
-                "  Trata este token como secreto. Para revocarlo: rota DJANGO_SECRET_KEY "
-                "o desactiva el usuario en core.users."
+                "  Trata este token como secreto. Para revocarlo: "
+                "python manage.py revoke_service_token <id>"
             )
         )
+
+
+def _hash_token(token: str) -> str:
+    import hashlib
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()

@@ -1,5 +1,6 @@
 from rest_framework import serializers
 import re
+import logging
 from datetime import datetime
 
 from .models import (
@@ -7,6 +8,9 @@ from .models import (
     TransicionCat, EventLog, OcrParsingLog,
     BuilderArtifactInstance,
 )
+
+
+log = logging.getLogger(__name__)
 
 
 def _normalize_po_code(codigo):
@@ -17,6 +21,14 @@ def _normalize_po_code(codigo):
     s = re.sub(r"^(PO|OC|OC\s+CLIENTE|OC_CLIENTE|PROFORMA|PF)\s*[\-\.]?\s*", "", s)
     s = re.sub(r"[^\w]", "", s)
     return s
+
+
+def _log_coherence(prefix, result):
+    """Escribe warnings/errores de coherencia en logs sin bloquear el guardado."""
+    for err in result.get("errors", []):
+        log.warning("[%s.coherence] ERROR %s: %s", prefix, err["code"], err["message"])
+    for warn in result.get("warnings", []):
+        log.warning("[%s.coherence] WARN %s: %s", prefix, warn["code"], warn["message"])
 
 
 class OcListSerializer(serializers.ModelSerializer):
@@ -107,6 +119,13 @@ class OcSerializer(serializers.ModelSerializer):
                 return float(r[0] or 0) if r else 0
         except Exception:  # noqa: BLE001
             return None
+
+    def validate(self, attrs):
+        from .validators import check_oc_coherence
+        instance = getattr(self, "instance", None)
+        if instance is not None:
+            _log_coherence("OcSerializer", check_oc_coherence(instance))
+        return attrs
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -756,6 +775,13 @@ class ExpedienteSerializer(serializers.ModelSerializer):
         model  = Expediente
         fields = "__all__"
 
+    def validate(self, attrs):
+        from .validators import check_expediente_coherence
+        instance = getattr(self, "instance", None)
+        if instance is not None:
+            _log_coherence("ExpedienteSerializer", check_expediente_coherence(instance))
+        return attrs
+
 
 class LineaSerializer(serializers.ModelSerializer):
     """Serializer de líneas con resolución dual de precio por viewer.
@@ -790,6 +816,13 @@ class LineaSerializer(serializers.ModelSerializer):
         if role_upper.startswith("CLIENT_") or role_upper in ("CLIENT", "CLIENTE", "CLIENT_B2B"):
             return obj.unit_price_client or obj.unit_price
         return obj.unit_price_mwt or obj.unit_price
+
+    def validate(self, attrs):
+        from .validators import check_linea_coherence
+        instance = getattr(self, "instance", None)
+        if instance is not None:
+            _log_coherence("LineaSerializer", check_linea_coherence(instance))
+        return attrs
 
 
 class DocumentoSerializer(serializers.ModelSerializer):

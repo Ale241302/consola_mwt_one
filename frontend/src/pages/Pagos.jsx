@@ -17,10 +17,10 @@ import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge, StatusBadge, CreditDot, CreditBar, CountryFlag } from "../components/ui/primitives.jsx";
 import { IconDownload, IconPlus, IconClock, IconShield } from "../lib/icons.jsx";
 import {
-  EXPEDIENTES as MOCK_EXPEDIENTES,
   CLIENTS,
-  OCS as MOCK_OCS,
 } from "../data/mockData.js";
+// Sprint 2026-08-07 · Ola 1 F2: CLIENTS sigue como fixture de catálogo
+// hasta tener endpoint. MOCK_EXPEDIENTES/MOCK_OCS se eliminan.
 import { expedientesApi, ocsApi, financePaymentsApi } from "../lib/api.js";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 import { useRole } from "../context/RoleContext.jsx";
@@ -59,10 +59,11 @@ export default function ScreenPagos() {
   const { lang } = useOutletContext();
   const { isClient, can } = useRole();
 
-  // ── Data desde API (fallback a mocks) ────────
+  // ── Data desde API (sin fallback a mocks) ────────
   const [apiExpedientes, setApiExpedientes] = useState([]);
   const [apiOcs,         setApiOcs]         = useState([]);
   const [loading,        setLoading]        = useState(true);
+  const [loadError,      setLoadError]      = useState(null);
 
   // Sprint Registrar Pago (Fase 2) · Estado del wizard + pagos reales.
   const [wizardOpen,  setWizardOpen]  = useState(false);
@@ -87,17 +88,20 @@ export default function ScreenPagos() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [expRaw, ocRaw] = await Promise.all([
-        expedientesApi.list().catch(() => []),
-        ocsApi.list().catch(() => []),
+        // Sprint 2026-08-07 · Ola 1 F2: errores propagados, no mocks.
+        expedientesApi.list(),
+        ocsApi.list(),
       ]);
       const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
       const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
       // Fable5 · guard: blindaje extra por si el shape del API cambia.
       setApiExpedientes(Array.isArray(expItems) ? expItems.map(mapExpedienteForPagos) : []);
       setApiOcs(Array.isArray(ocItems) ? ocItems : []);
-    } catch {
+    } catch (e) {
+      setLoadError(e);
       setApiExpedientes([]);
       setApiOcs([]);
     } finally {
@@ -361,6 +365,21 @@ export default function ScreenPagos() {
       />
 
       {/* Tabs */}
+
+      {!loading && loadError && (
+        <div className="card" style={{padding:40, textAlign:'center', marginBottom:16}}>
+          <div className="heading-md" style={{marginBottom:6, color:'var(--critical, #DC2626)'}}>
+            {lang==='es'?'Error al cargar pagos':'Error loading payments'}
+          </div>
+          <div className="caption" style={{marginBottom:16}}>
+            {loadError?.message || (lang==='es'?'No se pudo conectar con el servidor.':'Could not connect to the server.')}
+          </div>
+          <button className="btn btn-primary" onClick={() => load()}>
+            {lang==='es'?'Reintentar':'Retry'}
+          </button>
+        </div>
+      )}
+
       <div className="tabs mb-6">
         <button className="tab" data-active={tab==='receivable'} onClick={()=>setTab('receivable')}>{lang==='es'?'Por cobrar':'Receivable'}<span className="count">28</span></button>
         <button className="tab" data-active={tab==='clients'} onClick={()=>setTab('clients')}>{lang==='es'?'Por cliente':'By client'}<span className="count">{CLIENTS.length}</span></button>

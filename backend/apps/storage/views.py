@@ -199,6 +199,7 @@ def _stream_object_response(key: str, public: bool = False):
 
 class StorageViewSet(viewsets.ViewSet):
     """ViewSet liviano, sin `basename`, expuesto vía DefaultRouter en urls.py."""
+    required_module = "storage"
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     @action(detail=False, methods=["get", "post"])

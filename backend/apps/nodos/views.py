@@ -33,6 +33,8 @@ class NodoViewSet(viewsets.ViewSet):
     """
 
     permission_classes = [IsAuthenticated, IsCeoOrAdmin]
+    required_module = "nodos"
+    required_action = "view"
 
     # Set canónico de capacidades — fuente única; el FE no debería hardcodearlas.
     CAPABILITIES_CANON = [

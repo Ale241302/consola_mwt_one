@@ -1329,6 +1329,7 @@ class MwtUserViewSet(viewsets.ModelViewSet):
     queryset = MwtUser.objects.filter(is_active=True)
     serializer_class = MwtUserSerializer
     permission_classes = [IsAuthenticated, IsCeoOrAdmin]
+    required_module = "usuarios"
 
     def get_serializer_class(self):
         if self.action == "list":

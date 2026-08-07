@@ -193,6 +193,8 @@ def _deny_client_mutation(request, action_label: str = ""):
 # OC
 # ════════════════════════════════════════════════════════════
 class OcViewSet(viewsets.ViewSet):
+    required_module = "expedientes"
+
     def list(self, request):
         qs = Oc.objects.filter(is_active=True).order_by("-issued_at", "-created_at")
         # Sprint 2026-05-22 · scope multi-tenant. OC tiene client_id pero NO
@@ -430,6 +432,8 @@ def check_auto_close_en_destino(exp) -> bool:
 # Expediente
 # ════════════════════════════════════════════════════════════
 class ExpedienteViewSet(viewsets.ViewSet):
+    required_module = "expedientes"
+
     def list(self, request):
         # Sprint 2026-07-15 (CEO) · el listado se ordena por fecha de
         # REGISTRO (created_at DESC): el último expediente ingresado se ve
@@ -4870,11 +4874,40 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "storage_url":  new_storage_url,
         }, status=200)
 
+    # ── Sprint 2026-08-07 · Coherence check (Ola 1 F5) ───────────────
+    @action(detail=True, methods=["post"], url_path="coherence-check")
+    def coherence_check(self, request, pk=None):
+        """Audita coherencia del expediente sin modificarlo."""
+        try:
+            exp = Expediente.objects.get(pk=pk, is_active=True)
+        except Expediente.DoesNotExist:
+            return Response({"detail": "Expediente no existe"}, status=404)
+
+        # Scope check idéntico a retrieve.
+        scoped = filter_by_user_clients(
+            Expediente.objects.filter(pk=exp.id, is_active=True),
+            request.user,
+            client_field="client_id",
+            extra_fields=("operating_company_id",),
+        )
+        if not scoped.exists():
+            return Response({"detail": "Expediente no existe"}, status=404)
+
+        from .validators import check_expediente_coherence
+        result = check_expediente_coherence(exp)
+        return Response({
+            "expediente_id": str(exp.id),
+            "codigo": exp.codigo,
+            **result,
+        })
+
 
 # ════════════════════════════════════════════════════════════
 # Línea (se expone para edición en bloque)
 # ════════════════════════════════════════════════════════════
 class LineaViewSet(viewsets.ViewSet):
+    required_module = "expedientes"
+
     def list(self, request):
         qs = Linea.objects.filter(is_active=True)
         # Sprint 2026-05-22 · scope multi-tenant via expediente.
@@ -5124,6 +5157,7 @@ class LineaViewSet(viewsets.ViewSet):
 # Documento
 # ════════════════════════════════════════════════════════════
 class DocumentoViewSet(viewsets.ViewSet):
+    required_module = "expedientes"
     # Sprint 2026-05-01: accept multipart para subir el archivo en el create.
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
@@ -5523,6 +5557,8 @@ class DocumentoViewSet(viewsets.ViewSet):
 # ════════════════════════════════════════════════════════════
 class TransicionCatViewSet(viewsets.ViewSet):
     """Catálogo cerrado de transiciones válidas del motor de fases."""
+    required_module = "expedientes"
+
     def list(self, request):
         qs = TransicionCat.objects.filter(is_active=True)
         for p, f in (("fase_from", "fase_from"), ("fase_to", "fase_to")):
@@ -5545,6 +5581,8 @@ class TransicionCatViewSet(viewsets.ViewSet):
 class EventLogViewSet(viewsets.ViewSet):
     """Audit trail inmutable del pipeline (pipeline.event_log).
     Solo GET — INSERTs se hacen desde las actions de negocio."""
+    required_module = "expedientes"
+
     def list(self, request):
         qs = EventLog.objects.filter(is_active=True)
         mapping = {
@@ -5608,6 +5646,8 @@ class EventLogViewSet(viewsets.ViewSet):
 class OcrParsingLogViewSet(viewsets.ViewSet):
     """Log de corridas de OCR (Paperless+Tika). GET-only desde la app.
     Los INSERTs los hace el worker de OCR."""
+    required_module = "expedientes"
+
     def list(self, request):
         qs = OcrParsingLog.objects.filter(is_active=True)
         for p, f in (("expediente", "expediente_id"),

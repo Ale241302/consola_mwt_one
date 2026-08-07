@@ -27,7 +27,12 @@ class MwtApiError(Exception):
 
 
 def _auth_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {get_identity_token()}"}
+    token = get_identity_token()
+    # Sprint 2026-08-07 · Ola 1 F3: Bearer para JWT legacy, ServiceToken para
+    # tokens de servicio opacos emitidos por manage.py mint_mcp_token.
+    if token.startswith("eyJ"):
+        return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"ServiceToken {token}"}
 
 
 def _parse(resp: httpx.Response) -> Any:

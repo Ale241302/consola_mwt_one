@@ -71,7 +71,19 @@ export default function ArtifactFillModal({
         if (v === null || v === undefined) return true;
         if (typeof v === "string" && v.trim() === "") return true;
         if (Array.isArray(v) && v.length === 0) return true;
+        // Sprint 2026-08-07 · Ola 1 F1: NaN no cuenta como valor válido.
+        if (f.type === "number" && typeof v === "number" && !Number.isFinite(v)) return true;
         return false;
+      })
+      .map((f) => f.id);
+  }, [allFields, data]);
+
+  const invalidNumbers = useMemo(() => {
+    return allFields
+      .filter((f) => f.type === "number")
+      .filter((f) => {
+        const v = data[f.id];
+        return v !== null && v !== undefined && typeof v === "number" && !Number.isFinite(v);
       })
       .map((f) => f.id);
   }, [allFields, data]);
@@ -82,9 +94,10 @@ export default function ArtifactFillModal({
   };
 
   const handleSubmit = async () => {
-    if (missing.length > 0) {
+    const toTouch = [...missing, ...invalidNumbers];
+    if (toTouch.length > 0) {
       const t = {};
-      missing.forEach((id) => { t[id] = true; });
+      toTouch.forEach((id) => { t[id] = true; });
       setTouched((prev) => ({ ...prev, ...t }));
       return;
     }
@@ -375,7 +388,8 @@ export default function ArtifactFillModal({
                         style={{ display: "flex", flexDirection: "column", gap: 14 }}
                       >
                         {(col.fields || []).map((f) => {
-                          const showError = touched[f.id] && missing.includes(f.id);
+                          const showError = touched[f.id] && (missing.includes(f.id) || invalidNumbers.includes(f.id));
+                          const isInvalidNumber = f.type === "number" && invalidNumbers.includes(f.id);
                           return (
                             <div key={f.id} className="mdl-field">
                               <label style={{
@@ -421,9 +435,9 @@ export default function ArtifactFillModal({
                                     color: "var(--critical, #DC2626)",
                                   }}
                                 >
-                                  {lang === "es"
-                                    ? "Campo requerido"
-                                    : "Required field"}
+                                  {isInvalidNumber
+                                    ? (lang === "es" ? "Número inválido" : "Invalid number")
+                                    : (lang === "es" ? "Campo requerido" : "Required field")}
                                 </div>
                               )}
                             </div>

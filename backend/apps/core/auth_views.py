@@ -45,6 +45,8 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
+from .authentication import MwtServiceTokenAuthentication, ServiceTokenUser
+
 
 # ---------------------------------------------------------------------
 # Helpers
@@ -555,9 +557,12 @@ class McpTokenView(APIView):
     POST /api/auth/mcp-token/
 
     Emite un AccessToken JWT para un usuario MWT a partir de la identidad
-    propagada por el gateway MCP (headers X-Forwarded-User-*). El caller
-    debe estar autenticado con el token de servicio MCP (claim mcp:true)
-    o con un usuario admin/superadmin.
+    propagada por el gateway MCP (headers X-Forwarded-User-*).
+
+    El caller DEBE autenticarse con un ServiceToken (Authorization: ServiceToken
+    <token>) que tenga el scope `mcp:token_exchange`. El JWT emitido hereda
+    los límites del ServiceToken: los legal_entity_ids se intersectan con los
+    permitidos por el token de servicio.
 
     Request headers:
       X-Forwarded-User-Email: <email del usuario objetivo>
@@ -572,20 +577,14 @@ class McpTokenView(APIView):
     es consumido por el MCP server interno.
     """
 
+    authentication_classes = [MwtServiceTokenAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def _is_authorized(self, request):
-        """Solo el token de servicio MCP o un admin/superadmin pueden mintear."""
-        try:
-            is_mcp_service = bool(request.auth.get("mcp"))
-        except Exception:
-            is_mcp_service = False
-        role = ""
-        try:
-            role = request.auth.get("role", "")
-        except Exception:
-            role = getattr(getattr(request, "user", None), "role", "") or ""
-        return is_mcp_service or role in ("admin", "superadmin", "ceo")
+    def _service_token(self, request):
+        user = request.user
+        if isinstance(user, ServiceTokenUser):
+            return user
+        return None
 
     def _target_email(self, request):
         email = (
@@ -660,9 +659,10 @@ class McpTokenView(APIView):
         return {}
 
     def post(self, request):
-        if not self._is_authorized(request):
+        st = self._service_token(request)
+        if not st or not st.has_scope("mcp:token_exchange"):
             return Response(
-                {"detail": "No autorizado para emitir tokens MCP"},
+                {"detail": "Se requiere ServiceToken con scope mcp:token_exchange"},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -700,11 +700,21 @@ class McpTokenView(APIView):
             )
 
         role = role_slug or _role_str
+        perms = self._normalize_permissions(permissions)
+
+        # Intersectar legal_entity_ids del usuario con los del ServiceToken.
+        user_legal_ids = set(request.user.legal_entity_ids or [])
+        service_legal_ids = set(st.client_ids or [])
+        if service_legal_ids:
+            user_legal_ids = user_legal_ids & service_legal_ids
+
         access = AccessToken()
         access["user_uuid"] = str(uid)
         access["email"] = email_plain
         access["role"] = role
         access["mcp"] = True
+        access["modules"] = perms.get("modules") or []
+        access["legal_entity_ids"] = sorted(user_legal_ids)
         access.set_exp(lifetime=timedelta(hours=1))
 
         user = {
@@ -717,7 +727,8 @@ class McpTokenView(APIView):
             "is_active": is_active,
             "is_staff": is_staff,
             "last_login_at": last_login_at,
-            "permissions": self._normalize_permissions(permissions),
+            "permissions": perms,
+            "legal_entity_ids": sorted(user_legal_ids),
         }
         return Response({
             "access": str(access),
