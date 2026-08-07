@@ -40,6 +40,7 @@ services:
     image: ghcr.io/ibm/mcp-context-forge:latest
     container_name: mcp-gateway-contextforge
     restart: unless-stopped
+    entrypoint: ["/patch/entrypoint.sh"]
     depends_on:
       pocket-id: { condition: service_healthy }
     env_file:
@@ -60,6 +61,7 @@ services:
       SSRF_ALLOWED_NETWORKS: '["172.21.0.0/16"]'  # actualizar si cambia
     volumes:
       - ./data/contextforge:/data
+      - ./patch:/patch
     networks:
       - mcp-gateway-net
       - consola-mwt-one-net
