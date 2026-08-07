@@ -176,10 +176,10 @@ class RoleBasedPermission(BasePermission):
     """
     · Si la vista declara `required_module`, se valida contra el permiso del rol.
     · Si NO lo declara:
-        - En modo log-only (MWT_RBAC_LOG_ONLY=1) se permite y se loguea.
-        - En modo estricto (default) se niega el acceso (fail-closed).
+        - Por defecto se permite y se loguea (transición log-only).
+        - En modo estricto (MWT_RBAC_STRICT=1) se niega el acceso (fail-closed).
     · Los roles 'admin' y 'superadmin' (o modules=['*']) pasan todo.
-    · ServiceTokenUser aporta sus permisos directamente.
+    · ServiceTokenUser aporta sus permisos directos.
     """
 
     def has_permission(self, request, view):
@@ -191,19 +191,23 @@ class RoleBasedPermission(BasePermission):
         required_action = getattr(view, "required_action", "view")
         view_name = f"{view.__class__.__module__}.{view.__class__.__name__}"
 
-        # ── Fail-closed cuando la vista no declara módulo ────────────────
+        # ── Vista sin required_module ────────────────────────────────────
+        # Durante la transición de RBAC, permitimos por defecto para no
+        # romper módulos que aún no declaran módulo. Activar strict cuando
+        # todos los viewsets estén poblados.
         if not required_module:
-            if os.environ.get("MWT_RBAC_LOG_ONLY", "0").strip().lower() in ("1", "true", "yes"):
+            strict = os.environ.get("MWT_RBAC_STRICT", "0").strip().lower() in ("1", "true", "yes")
+            if strict:
                 log.warning(
-                    "[RoleBasedPermission][LOG-ONLY] Vista sin required_module: %s",
+                    "[RoleBasedPermission] Vista sin required_module denegada: %s",
                     view_name,
                 )
-                return True
+                return False
             log.warning(
-                "[RoleBasedPermission] Vista sin required_module denegada: %s",
+                "[RoleBasedPermission][LOG-ONLY] Vista sin required_module: %s",
                 view_name,
             )
-            return False
+            return True
 
         # ── Permisos del usuario ───────────────────────────────────────
         # ServiceTokenUser trae permisos directos en _permissions.
