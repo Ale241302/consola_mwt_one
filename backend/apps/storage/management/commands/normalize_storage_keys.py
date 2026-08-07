@@ -28,7 +28,7 @@ from apps.storage.helpers import normalize_storage_key
 TABLE_COLUMNS = [
     ("productos", "producto", ["imagen_url", "ficha_url"]),
     ("clientes", "cliente", ["logo_url"]),
-    ("marcas", "marca", ["logo_url"]),
+    ("brands", "marca", ["logo_url"]),
     ("expedientes", "documento", ["storage_url"]),
 ]
 
