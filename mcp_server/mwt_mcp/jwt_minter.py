@@ -124,7 +124,13 @@ def get_identity_token() -> str:
     - Si no hay identidad, cae al token de servicio estático.
     """
     identity = current_identity()
+    print(
+        f"[mwt-mcp] get_identity_token: identity email={identity.email!r} "
+        f"present={identity.is_present}",
+        file=sys.stderr,
+    )
     if not identity.is_present:
+        print("[mwt-mcp] get_identity_token: no identity, using service token", file=sys.stderr)
         return settings.require_token()
 
     key = _cache_key(identity)
@@ -135,6 +141,7 @@ def get_identity_token() -> str:
 
     token = _mint_from_backend(identity)
     if token:
+        print(f"[mwt-mcp] get_identity_token: minted user token for {identity.email!r}", file=sys.stderr)
         if key:
             _set_cache(key, token)
         return token

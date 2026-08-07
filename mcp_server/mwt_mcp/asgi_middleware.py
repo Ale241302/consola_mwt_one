@@ -26,4 +26,15 @@ class IdentityPropagationMiddleware:
                 value = raw_value.decode("latin-1")
                 headers[name] = value
             set_identity(headers)
+            import sys
+            identity = current_identity()
+            print(
+                f"[mwt-mcp] IdentityPropagationMiddleware: email={identity.email!r} "
+                f"user_id={identity.user_id!r} name={identity.name!r} "
+                f"roles={identity.roles!r} sub={identity.sub!r}",
+                file=sys.stderr,
+            )
+            forwarded = {k: v for k, v in headers.items() if k.startswith("x-forwarded")}
+            if forwarded:
+                print(f"[mwt-mcp] forwarded headers: {forwarded!r}", file=sys.stderr)
         return await self.app(scope, receive, send)
