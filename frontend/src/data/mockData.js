@@ -19,7 +19,7 @@ const _wrap = (val, fallback = _emptyArr) => (USE_MOCKS ? val : fallback);
 //   feature_flags     { STOREFRONT_ENABLED, B2B_PORTAL_ENABLED,
 //                       EXPEDITION_ENABLED, SCANNER_ENABLED }
 // ─────────────────────────────────────────────────────────
-export const BRANDS = _wrap([
+export const BRANDS = [
   {
     id: 'bis', brand_id: 'BIS',
     name: 'Bison', code: 'BIS', color: '#8E6B3F',
@@ -148,13 +148,13 @@ export const BRANDS = _wrap([
     created_at: '2025-09-02',
     description: 'Rana Walk — línea propia MWT en ramp-up.',
   },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // BRAND_ATTRIBUTES — enums de calzado de seguridad
 // (para formularios y mapeo Excel)
 // ─────────────────────────────────────────────────────────
-export const BRAND_ATTRIBUTES = _wrap({
+export const BRAND_ATTRIBUTES = {
   tipo_calzado:      ['Bota Alta','Bota al Tobillo','Zapato tipo crocs','Tenis','Plantilla'],
   cubrepuntera:      ['Sí','No'],
   tipo_puntera:      ['Acero 200J','Composite 200J','No tiene','Plástico','Citoplástico 200C'],
@@ -190,12 +190,12 @@ export const BRAND_ATTRIBUTES = _wrap({
     'Punción Plantar','Humedad','Piso Resbaladizo','Caída Objetos',
     'Ocupacional','Seguridad','Polimerico','Químicos',
   ],
-}, _emptyObj);
+};
 
 // ─────────────────────────────────────────────────────────
 // BRAND_PRODUCTS — catálogo técnico con specs colapsadas
 // ─────────────────────────────────────────────────────────
-export const BRAND_PRODUCTS = _wrap([
+export const BRAND_PRODUCTS = [
   // ── Marluvas (MLV) — calzado de seguridad ─────────
   {
     id: 'bp-mlv-001', brand_id: 'mlv', sku: 'MLV-50S29-BLK-42',
@@ -312,7 +312,7 @@ export const BRAND_PRODUCTS = _wrap([
     riesgo: 'Esguince', active_in_markets: ['MX','CL'],
     unit_cost_fob: 18.80, list_price: 42.00,
   },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // BRAND_PRICING — tabla de precios con governance
@@ -320,7 +320,7 @@ export const BRAND_PRODUCTS = _wrap([
 //   client_prices { [client_id]: override }
 //   internal_cost (Costo FOB/Fábrica · CEO-ONLY)
 // ─────────────────────────────────────────────────────────
-export const BRAND_PRICING = _wrap([
+export const BRAND_PRICING = [
   { brand_id:'mlv', sku:'MLV-50S29-BLK-42',   base_price: 52.00, client_prices: { c1: 49.00, c2: 47.50, c3: 51.00 }, internal_cost: 18.50 },
   { brand_id:'mlv', sku:'MLV-40S18-BRN-41',   base_price: 68.00, client_prices: { c1: 64.00, c5: 62.00 },            internal_cost: 24.80 },
   { brand_id:'mlv', sku:'MLV-EVA-AST-BLK-40', base_price: 44.00, client_prices: { c2: 41.00, c4: 42.00, c8: 43.00 }, internal_cost: 15.20 },
@@ -330,7 +330,7 @@ export const BRAND_PRICING = _wrap([
   { brand_id:'gol', sku:'GOL-BT-BLK-44',      base_price: 128.00, client_prices: { c3: 118.00, c5: 120.00 },          internal_cost: 55.80 },
   { brand_id:'leo', sku:'LEO-SN-WH-38',       base_price: 48.00, client_prices: { c2: 44.00, c4: 45.00 },             internal_cost: 22.40 },
   { brand_id:'vel', sku:'VEL-RN-BLU-40',      base_price: 42.00, client_prices: { c2: 39.00 },                        internal_cost: 18.80 },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // CLIENTES B2B — ENT_COMERCIAL_CLIENTES (canónico)
@@ -349,7 +349,7 @@ export const BRAND_PRICING = _wrap([
 //   estado            ACTIVO | PAUSADO | BLOQUEADO
 //   band              GREEN | AMBER | RED (derivado por ahora)
 // ─────────────────────────────────────────────────────────
-export const CLIENTS = _wrap([
+export const CLIENTS = [
   {
     id: 'c1', uuid: '0c77c2ea-1c11-4d4a-9e61-e10001000001',
     codigo_marluvas: '4000000100', cedula_juridica: '20512345678',
@@ -466,13 +466,13 @@ export const CLIENTS = _wrap([
     canal: 'directo', estado: 'ACTIVO', band: 'GREEN',
     created_at: '2025-02-20',
   },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // CLIENT_PAYMENTS — Payment Status Machine
 //   status: pending | verified | credit_released | rejected
 // ─────────────────────────────────────────────────────────
-export const CLIENT_PAYMENTS = _wrap([
+export const CLIENT_PAYMENTS = [
   // c1 · Andes Retail
   { id:'PG-2026-00821', client_id:'c1', date:'2026-01-12', amount:47400, method:'Movimiento', ref:'TRX-88412', expediente:'EXP-1029', status:'credit_released', verified_by:'T. Muñoz', notes:'Aplicado a PF-0942 · 50%' },
   { id:'PG-2026-00914', client_id:'c1', date:'2026-02-04', amount:47400, method:'Movimiento', ref:'TRX-91203', expediente:'EXP-1029', status:'credit_released', verified_by:'T. Muñoz', notes:'Saldo PF-0942' },
@@ -491,12 +491,12 @@ export const CLIENT_PAYMENTS = _wrap([
   { id:'PG-2026-01045', client_id:'c7', date:'2026-03-15', amount:29500, method:'Carta Crédito', ref:'LC-39921',  expediente:'EXP-1044', status:'verified',        verified_by:'T. Muñoz', notes:'LC emitida por Banco Pichincha' },
   // c8
   { id:'PG-2026-01220', client_id:'c8', date:'2026-04-14', amount:11200, method:'Movimiento', ref:'TRX-93482', expediente:'EXP-1048', status:'credit_released', verified_by:'T. Muñoz', notes:'' },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // CLIENT_PRODUCTS_BOUGHT — inteligencia de surtido
 // ─────────────────────────────────────────────────────────
-export const CLIENT_PRODUCTS_BOUGHT = _wrap([
+export const CLIENT_PRODUCTS_BOUGHT = [
   // c1 · Andes Retail
   { client_id:'c1', sku:'BIS-OXF-BLK-42', product:'Oxford cuero negro T.42', units_12m: 1840, revenue_12m: 83420, last_order:'2026-03-22', frequency: 'mensual' },
   { client_id:'c1', sku:'BIS-OXF-TAN-42', product:'Oxford cuero tan T.42',   units_12m: 1200, revenue_12m: 54400, last_order:'2026-02-18', frequency: 'bi-mensual' },
@@ -518,12 +518,12 @@ export const CLIENT_PRODUCTS_BOUGHT = _wrap([
   { client_id:'c7', sku:'VEL-RN-BLU-40',  product:'Running azul 40',         units_12m:  610, revenue_12m:  21400, last_order:'2026-02-09', frequency: 'trimestral' },
   // c8
   { client_id:'c8', sku:'ORB-WLT-BLK',    product:'Billetera negra',         units_12m:  320, revenue_12m:   7400, last_order:'2026-04-01', frequency: 'bi-mensual' },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // Legal entities & Operators (ENT_OPS_NODOS · owner ≠ operator)
 // ─────────────────────────────────────────────────────────
-export const LEGAL_ENTITIES = _wrap([
+export const LEGAL_ENTITIES = [
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e001', name: 'MWT México S. de R.L.',      short: 'MWT MX',      country: 'MX' },
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e002', name: 'MWT Perú S.A.C.',            short: 'MWT PE',      country: 'PE' },
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e003', name: 'MWT Colombia SAS',           short: 'MWT CO',      country: 'CO' },
@@ -536,9 +536,9 @@ export const LEGAL_ENTITIES = _wrap([
   // de inventario (nodos fiscales / 3PL en CR). UUID determinístico para que
   // el FK en BD (legal_entity_owner_id) no rote entre deploys.
   { id: '9a1e2bfc-7e4a-4b6a-93e1-01c1f2a0e009', name: 'MWT Costa Rica S.A.',        short: 'MWT CR',      country: 'CR' },
-]);
+];
 
-export const OPERATORS = _wrap([
+export const OPERATORS = [
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110001', name: 'MWT Operations',  kind: 'mwt'        },
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110002', name: 'Amazon FBA',      kind: '3pl'        },
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110003', name: 'Mercado Libre Fulfillment', kind: '3pl' },
@@ -551,7 +551,7 @@ export const OPERATORS = _wrap([
   // kind='brand_ops' diferencia este caso (operador = dueño de la marca) de
   // un 3PL puro. UUID determinístico para sincronía con BD.
   { id: '7c2ab401-aeb1-42f1-b1c0-111111110008', name: 'Marluvas',        kind: 'brand_ops'  },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // Nodos logísticos — estructura canónica ENT_OPS_NODOS
@@ -570,7 +570,7 @@ export const OPERATORS = _wrap([
 // Campos legacy (location, entity) se mantienen para no
 // romper consumidores existentes (Dashboard, Expedientes, etc.).
 // ─────────────────────────────────────────────────────────
-export const NODES = _wrap([
+export const NODES = [
   {
     id: '3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001',
     node_id: 'SHA-CN',
@@ -712,12 +712,12 @@ export const NODES = _wrap([
     capacity_units: 1200, capacity_used: 0,
     location: 'Alajuela, CR', entity: 'MWT PA',
   },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // Inventario por nodo (NODE_INVENTORY) — SKUs × nodo × días de stock
 // ─────────────────────────────────────────────────────────
-export const NODE_INVENTORY = _wrap([
+export const NODE_INVENTORY = [
   // FBA-US — surtido alto, rotación alta → días de stock variados
   { node_id: '3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', sku: 'BIS-OXF-BLK-42', qty: 420, days_stock: 42, value: 18900 },
   { node_id: '3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', sku: 'LEO-SN-WH-38',   qty: 380, days_stock: 28, value: 14300 },
@@ -739,24 +739,24 @@ export const NODE_INVENTORY = _wrap([
   { node_id: '3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001', sku: 'BIS-OXF-BLK-42', qty: 1400, days_stock: 60, value: 63000 },
   { node_id: '3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001', sku: 'LEO-SN-WH-38',   qty: 1100, days_stock: 55, value: 41500 },
   { node_id: '3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001', sku: 'VEL-RN-BLU-40',  qty:  780, days_stock: 40, value: 27300 },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // Transferencias entre nodos (ENT_OPS_TRANSFERS)
 // ─────────────────────────────────────────────────────────
-export const NODE_TRANSFERS = _wrap([
+export const NODE_TRANSFERS = [
   { id:'TR-2026-00421', date:'2026-04-18', from:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001', to:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', skus: 3, units: 820, status:'in_transit' },
   { id:'TR-2026-00419', date:'2026-04-15', from:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001', to:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e006', skus: 2, units: 410, status:'received'   },
   { id:'TR-2026-00418', date:'2026-04-14', from:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e006', to:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e009', skus: 1, units: 230, status:'approved'   },
   { id:'TR-2026-00415', date:'2026-04-10', from:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e002', to:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e003', skus: 4, units: 560, status:'received'   },
   { id:'TR-2026-00413', date:'2026-04-08', from:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e003', to:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e006', skus: 1, units: 120, status:'planned'    },
   { id:'TR-2026-00410', date:'2026-04-05', from:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e001', to:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e009', skus: 2, units: 340, status:'in_transit' },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // Automatizaciones ancladas a nodos (context anchors)
 // ─────────────────────────────────────────────────────────
-export const NODE_AUTOMATIONS = _wrap([
+export const NODE_AUTOMATIONS = [
   { id:'au1', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', name:'Sync FBA inbound shipments',   cadence:'cada 15 min', state:'active' },
   { id:'au2', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', name:'Cálculo restock semanal',       cadence:'lunes 07:00', state:'active' },
   { id:'au3', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008', name:'Alerta días de stock < 21',     cadence:'diario 08:00', state:'active' },
@@ -764,9 +764,9 @@ export const NODE_AUTOMATIONS = _wrap([
   { id:'au5', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e009', name:'Sugerencia reprecio',           cadence:'diario 06:00', state:'paused' },
   { id:'au6', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e003', name:'Cierre fiscal mensual',         cadence:'fin de mes',   state:'active' },
   { id:'au7', node_id:'3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e006', name:'Consolidación hub LatAm',        cadence:'diario 22:00', state:'active' },
-]);
+];
 
-export const PRODUCTS = _wrap([
+export const PRODUCTS = [
   { id: 'p1',  brand: 'Bison',   sku: 'BIS-OXF-BLK-42', name: 'Oxford cuero negro',  category: 'Calzado', desc: 'Oxford caballero cuero vacuno' },
   { id: 'p2',  brand: 'Bison',   sku: 'BIS-OXF-TAN-42', name: 'Oxford cuero tan',    category: 'Calzado', desc: 'Oxford caballero cuero vacuno' },
   { id: 'p3',  brand: 'Goliath', sku: 'GOL-BT-BLK-44',  name: 'Bota industrial',     category: 'Calzado', desc: 'Bota industrial puntera acero' },
@@ -775,7 +775,7 @@ export const PRODUCTS = _wrap([
   { id: 'p6',  brand: 'Velox',   sku: 'VEL-RN-BLU-40',  name: 'Running azul',        category: 'Calzado', desc: 'Zapatilla running' },
   { id: 'p7',  brand: 'Bison',   sku: 'BIS-BLT-BRN-L',  name: 'Cinturón cuero L',    category: 'Accesorios', desc: 'Cinturón cuero marrón' },
   { id: 'p8',  brand: 'Orbis',   sku: 'ORB-WLT-BLK',    name: 'Billetera negra',     category: 'Accesorios', desc: 'Billetera cuero slim' },
-]);
+];
 
 export const STATES = ['REGISTRO','PRODUCCION','PREPARACION','DESPACHO','TRANSITO','EN_DESTINO','CERRADO'];
 
@@ -794,8 +794,10 @@ export const PHASE_BASELINE = {
 
 function makeExpediente(n) {
   const status = pick(STATES.slice(0, 6)); // keep active
-  const client = CLIENTS[n % CLIENTS.length];
-  const brand  = BRANDS[(n+1) % BRANDS.length];
+  const clientList = (CLIENTS && CLIENTS.length > 0) ? CLIENTS : [{ id: 'c1', name: 'Cliente Demo', country: 'Perú', band: 'GREEN' }];
+  const brandList  = (BRANDS && BRANDS.length > 0) ? BRANDS : [{ id: 'bis', name: 'Bison' }];
+  const client = clientList[n % clientList.length] || { id: 'c1', name: 'Cliente Demo', country: 'Perú', band: 'GREEN' };
+  const brand  = brandList[(n+1) % brandList.length] || { id: 'bis', name: 'Bison' };
   const credit_days = Math.floor(rand(10, 95));
   const cost_total   = Math.round(rand(18000, 260000));
   const invoiced     = Math.round(cost_total * rand(1.10, 1.32));
@@ -828,7 +830,7 @@ function makeExpediente(n) {
   const phase_signal  = phase_ratio < 0.9 ? 'green' : phase_ratio < 1.2 ? 'green' : phase_ratio < 1.5 ? 'amber' : 'red';
   const destinos = {Perú:'Callao',Chile:'San Antonio',Argentina:'Buenos Aires',Colombia:'Buenaventura',México:'Manzanillo',Ecuador:'Guayaquil','R. Dominicana':'Caucedo'};
   const origenes = ['Shanghái','Ningbo','Qingdao','Shenzhen'];
-  const is_blocked_hard = credit_days > 75 || client.band === 'RED' && Math.random() < 0.35;
+  const is_blocked_hard = credit_days > 75 || ((client?.band || 'GREEN') === 'RED' && Math.random() < 0.35);
   const block_cause = is_blocked_hard
     ? (credit_days > 75 ? 'credit_75' : 'docs')
     : null;
@@ -839,14 +841,14 @@ function makeExpediente(n) {
     oc_client: 'PO-2026-' + String(4100 + n).padStart(5,'0'),
     sap: Math.random() < 0.85 ? 'SAP-' + String(50200 + n).padStart(6,'0') : null,
     proforma: 'PF-' + String(910 + n).padStart(4,'0'),
-    client: client.name,
-    client_country: client.country,
-    client_id: client.id,
-    brand: brand.name,
-    brand_id: brand.id,
+    client: client?.name || 'Cliente Demo',
+    client_country: client?.country || 'Perú',
+    client_id: client?.id || 'c1',
+    brand: brand?.name || 'Bison',
+    brand_id: brand?.id || 'bis',
     status,
     credit_days,
-    credit_band: client.band,
+    credit_band: client?.band || 'GREEN',
     is_blocked: is_blocked_hard,
     block_reason: is_blocked_hard
       ? (credit_days > 75 ? 'Reloj crédito > 75d (bloqueo)' : 'Documentos pendientes')
@@ -875,7 +877,7 @@ function makeExpediente(n) {
     freight_mode: pick(['SEA','AIR']),
     dispatch_mode: pick(['FCL','LCL']),
     origin: pick(origenes) + ', CN',
-    destination: destinos[client.country] + ', ' + client.country,
+    destination: (destinos[client?.country] || 'Callao') + ', ' + (client?.country || 'Perú'),
     shipment_date: randomRecentDate(-60, 40),
     eta: randomRecentDate(5, 55),
     created_at: randomRecentDate(-120, -20),
@@ -894,7 +896,7 @@ function randomRecentDate(daysFrom, daysTo) {
   return new Date(now + offset).toISOString();
 }
 
-export const EXPEDIENTES = _wrap(Array.from({length: 32}, (_, i) => makeExpediente(i)));
+export const EXPEDIENTES = Array.from({length: 32}, (_, i) => makeExpediente(i));
 
 // One hero expediente with rich detail
 export const HERO_ID = (EXPEDIENTES && EXPEDIENTES.length > 2 && EXPEDIENTES[2]?.id) ? EXPEDIENTES[2].id : 'EXP-1029';
@@ -933,15 +935,15 @@ if (EXPEDIENTES && EXPEDIENTES[2]) EXPEDIENTES[2] = {
 };
 
 // ── Product lines for the hero expediente ─────
-export const HERO_LINES = _wrap([
+export const HERO_LINES = [
   { id: 'l1', sku: 'BIS-OXF-BLK-42', name: 'Oxford cuero negro T.42', qty: 420, unit_cost: 48.50, unit_price: 69.90, margin: 0.306, container: 'MSCU-7821094' },
   { id: 'l2', sku: 'BIS-OXF-TAN-42', name: 'Oxford cuero tan T.42',   qty: 360, unit_cost: 48.50, unit_price: 69.90, margin: 0.306, container: 'MSCU-7821094' },
   { id: 'l3', sku: 'BIS-BLT-BRN-L',  name: 'Cinturón cuero marrón L', qty: 520, unit_cost: 12.20, unit_price: 24.90, margin: 0.510, container: 'MSCU-4398721' },
   { id: 'l4', sku: 'BIS-OXF-BLK-43', name: 'Oxford cuero negro T.43', qty: 280, unit_cost: 48.50, unit_price: 69.90, margin: 0.306, container: 'MSCU-4398721' },
-]);
+];
 
 // ── Costs for the hero expediente ─────
-export const HERO_COSTS = _wrap([
+export const HERO_COSTS = [
   { id: 'co1', date: '2026-01-14', type: 'Mercadería',         amount:  96420, currency: 'USD', visibility: 'CLIENT', supplier: 'Bison CN Ltd.',        doc: 'CI-88214' },
   { id: 'co2', date: '2026-01-22', type: 'Flete marítimo',     amount:  12800, currency: 'USD', visibility: 'CLIENT', supplier: 'MSC Line',             doc: 'BL-MSCU-99812' },
   { id: 'co3', date: '2026-01-22', type: 'Seguro',             amount:   1840, currency: 'USD', visibility: 'CLIENT', supplier: 'MAPFRE',               doc: 'POL-2026-4412' },
@@ -949,26 +951,26 @@ export const HERO_COSTS = _wrap([
   { id: 'co5', date: '2026-02-18', type: 'Aduana destino',     amount:   4850, currency: 'USD', visibility: 'CLIENT', supplier: 'Agencia Callao',       doc: 'INV-PE-2811' },
   { id: 'co6', date: '2026-02-20', type: 'Transporte interno', amount:   1900, currency: 'USD', visibility: 'INTERNAL', supplier: 'Transporte Rodríguez', doc: 'GRE-4422' },
   { id: 'co7', date: '2026-02-22', type: 'Almacenaje',         amount:   1290, currency: 'USD', visibility: 'CLIENT', supplier: 'Almacenes Callao',     doc: 'ALM-9921' },
-]);
+];
 
 // ── Pagos for the hero expediente ─────
-export const HERO_PAGOS = _wrap([
+export const HERO_PAGOS = [
   { id: 'pg1', date: '2026-01-12', amount: 47400, method: 'Movimiento', ref: 'TRX-88412', currency: 'USD', applied_to: 'PF-0942 · 50%',  status: 'APPLIED' },
   { id: 'pg2', date: '2026-02-04', amount: 47400, method: 'Movimiento', ref: 'TRX-91203', currency: 'USD', applied_to: 'PF-0942 · 50%',  status: 'APPLIED' },
-]);
+];
 
 // ── Artifacts (documents) ─────
-export const HERO_ARTIFACTS = _wrap([
+export const HERO_ARTIFACTS = [
   { id: 'a1', kind: 'Proforma Cliente',    code: 'PF-0942',        status: 'issued',  date: '2026-01-10', author: 'A. Mendoza' },
   { id: 'a2', kind: 'Proforma Fábrica',    code: 'PFF-BIS-1142',   status: 'issued',  date: '2026-01-12', author: 'Bison CN' },
   { id: 'a3', kind: 'Commercial Invoice',  code: 'CI-88214',       status: 'issued',  date: '2026-01-22', author: 'Bison CN' },
   { id: 'a4', kind: 'Packing List',        code: 'PL-88214',       status: 'issued',  date: '2026-01-22', author: 'Bison CN' },
   { id: 'a5', kind: 'Bill of Lading',      code: 'BL-MSCU-99812',  status: 'pending', date: null,         author: null },
   { id: 'a6', kind: 'Factura MWT',         code: null,             status: 'future',  date: null,         author: null },
-]);
+];
 
 // ── Activity feed for hero ─────
-export const HERO_ACTIVITY = _wrap([
+export const HERO_ACTIVITY = [
   { id: 'ev1', t: '2026-03-28T10:14:00Z', who: 'A. Mendoza',    what: 'Zarpe confirmado',               detail: 'Nave MSC Leone zarpó de Ningbo. ETA Callao 2026-04-22.' },
   { id: 'ev2', t: '2026-03-26T16:02:00Z', who: 'Sistema',       what: 'Artefacto recibido',             detail: 'Bill of Lading preliminar recibido de MSC.' },
   { id: 'ev3', t: '2026-03-21T09:41:00Z', who: 'L. Paredes',    what: 'Pago registrado',                detail: 'Movimiento USD 47,400 aplicada a PF-0942 (saldo 50%).' },
@@ -976,10 +978,10 @@ export const HERO_ACTIVITY = _wrap([
   { id: 'ev5', t: '2026-03-04T08:12:00Z', who: 'Bison CN',      what: 'Producción finalizada',          detail: 'Lote de 1,580 pares liberado para despacho.' },
   { id: 'ev6', t: '2026-02-22T11:45:00Z', who: 'Sistema',       what: 'Cost registrado',                detail: 'Almacenaje USD 1,290 asignado a EXP-1029.' },
   { id: 'ev7', t: '2026-01-14T14:05:00Z', who: 'A. Mendoza',    what: 'Expediente creado',              detail: 'EXP-1029 creado desde proforma PF-0942.' },
-]);
+];
 
 // ── Inventory ─────
-export const INVENTORY = _wrap([
+export const INVENTORY = [
   // node · sku · qty / reserved / vendidos / days_stock (para semáforo salud)
   { sku: 'BIS-OXF-BLK-42', product: 'Oxford cuero negro T.42', node: 'Callao CD',       qty: 248, reserved: 120, vendidos: 186, lot: 'BIS-L-24-01', received: '2026-02-22', days_stock: 38 },
   { sku: 'BIS-OXF-TAN-42', product: 'Oxford cuero tan T.42',   node: 'Callao CD',       qty: 210, reserved: 200, vendidos: 142, lot: 'BIS-L-24-01', received: '2026-02-22', days_stock: 12 },
@@ -993,13 +995,13 @@ export const INVENTORY = _wrap([
   { sku: 'LEO-SN-WH-38',   product: 'Sneaker blanco 38',       node: 'Amazon FBA USA',  qty: 380, reserved: 140, vendidos: 622, lot: 'LEO-L-24-02', received: '2026-02-08', days_stock: 26 },
   { sku: 'GOL-BT-BLK-44',  product: 'Bota industrial 44',      node: 'Amazon FBA USA',  qty:  95, reserved:  40, vendidos:  82, lot: 'GOL-L-24-01', received: '2026-02-12', days_stock: 14 },
   { sku: 'VEL-RN-BLU-40',  product: 'Running azul 40',         node: 'Mercado Libre Full MX', qty: 220, reserved:  80, vendidos: 156, lot: 'VEL-L-24-02', received: '2026-03-01', days_stock: 22 },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // TRANSFERS_IN_TRANSIT — transferencias activas (mock)
 //   legal_context: internal | nationalization | reexport | distribution | consignment
 // ─────────────────────────────────────────────────────────
-export const TRANSFERS_IN_TRANSIT = _wrap([
+export const TRANSFERS_IN_TRANSIT = [
   {
     id: 'TRF-2026-0018', origen:'Shanghái DC', destino:'Callao CD',
     legal_context: 'nationalization', ref_tracking: 'BL-COSCO-88421',
@@ -1021,7 +1023,7 @@ export const TRANSFERS_IN_TRANSIT = _wrap([
     created: '2026-04-12', eta: '2026-04-19',
     status: 'TRANSITO',
   },
-]);
+];
 
 // Helpers del módulo Inventario
 export function getDaysStockTier(d) {
@@ -1040,7 +1042,7 @@ export function getDaysStockTier(d) {
 //     qty_reserve     unidades pre-comprometidas del total transferido
 //     qty_received    null hasta que se reciba, luego cantidad validada en destino
 // ─────────────────────────────────────────────────────────
-export const TRANSFERS = _wrap([
+export const TRANSFERS = [
   // ── PLANNED (pendientes de aprobación / alistamiento) ─────
   {
     id: 'TRF-2026-0024',
@@ -1296,7 +1298,7 @@ export const TRANSFERS = _wrap([
       { sku:'BIS-BLT-BRN-L', product:'Cinturón cuero marrón L', qty_transfer: 180, qty_reserve: 80, qty_received: 180 },
     ],
   },
-]);
+];
 
 // Meta del state machine — (sólo strings/hex, sin JSX)
 export const TRANSFER_STATUS_META = {
@@ -1329,7 +1331,7 @@ export function getTransferTotals(t) {
 }
 
 // ── Dashboard KPIs ─────
-export const DASHBOARD = _wrap({
+export const DASHBOARD = {
   kpi: {
     active: EXPEDIENTES.length,
     total_cost:       EXPEDIENTES.reduce((a,e)=>a+e.total_cost,0),
@@ -1354,7 +1356,7 @@ export const DASHBOARD = _wrap({
     {month:'Mar', invoiced: 248000, paid: 210000},
     {month:'Abr', invoiced: 312000, paid: 165000}, // projected
   ],
-}, _emptyObj);
+};
 
 // ══════════════════════════════════════════════════════════════
 // PURCHASE ORDERS (OC) — client-facing document, contains many lines
@@ -1382,8 +1384,9 @@ function buildOCs() {
     slice.forEach((exp, si) => {
       const product_count = 2 + Math.floor(Math.random()*3);
       const brandProducts = PRODUCTS.filter(p => p.brand === exp.brand);
+      const fallbackProduct = { sku: 'SKU-DEMO', name: 'Producto Demo', unit_cost_fob: 25.00, list_price: 60.00 };
       for (let li = 0; li < product_count; li++) {
-        const p = brandProducts[li % brandProducts.length] || PRODUCTS[li % PRODUCTS.length];
+        const p = (brandProducts && brandProducts.length > 0 ? brandProducts[li % brandProducts.length] : null) || (PRODUCTS && PRODUCTS.length > 0 ? PRODUCTS[li % PRODUCTS.length] : null) || fallbackProduct;
         const sizes = ['38','39','40','41','42','43','44','L','M','S','U'];
         const size = sizes[(li + si) % sizes.length];
         const qty = Math.round(rand(80, 520));
@@ -1417,7 +1420,7 @@ function buildOCs() {
       const orphanCount = 1 + Math.floor(Math.random()*2);
       const brandProducts = PRODUCTS.filter(p => p.brand === first.brand);
       for (let oi = 0; oi < orphanCount; oi++) {
-        const p = brandProducts[oi % brandProducts.length] || PRODUCTS[oi];
+        const p = (brandProducts && brandProducts.length > 0 ? brandProducts[oi % brandProducts.length] : null) || (PRODUCTS && PRODUCTS.length > 0 ? PRODUCTS[oi % PRODUCTS.length] : null) || fallbackProduct;
         lines.push({
           id: 'L-' + oc_code + '-' + (lineCounter++),
           sku: p.sku,
@@ -1491,7 +1494,7 @@ function buildOCs() {
   return ocs;
 }
 
-export const OCS = _wrap(buildOCs());
+export const OCS = buildOCs();
 
 // Pick a hero OC: the one containing HERO_ID
 export const HERO_OC_ID = (OCS && OCS.length > 0 ? (OCS.find(oc => oc.expedientes && oc.expedientes.includes(HERO_ID))?.id || OCS[0]?.id) : '') || 'PO-2026-00001';
@@ -1562,7 +1565,7 @@ export const ARTIFACT_CATALOG = [
 
 // ── Seed records for the hero expediente ─────
 // Map: artifactId → [records]
-export const HERO_ARTIFACT_RECORDS = _wrap({
+export const HERO_ARTIFACT_RECORDS = {
   'AC-01': [{ id:'R-1',  created:'2026-01-09', author:'A. Mendoza', oc_number:'PO-2026-04128', date:'2026-01-08', amount:189600, file:'OC_AndesRetail.pdf' }],
   'AC-02': [{ id:'R-2',  created:'2026-01-10', author:'A. Mendoza', pf_code:'PF-0942',         date:'2026-01-10', amount:189600, valid_until:'2026-01-31', file:'PF-0942.pdf' }],
   'AC-03': [{ id:'R-3',  created:'2026-01-12', author:'A. Mendoza', amount:47400, method:'Movimiento', ref:'TRX-88412', date:'2026-01-12' }],
@@ -1583,7 +1586,7 @@ export const HERO_ARTIFACT_RECORDS = _wrap({
     { id:'R-15a', created:'2026-04-05', author:'MSC Tracking', date:'2026-04-05', location:'Pacífico · Singapur',   status:'En ruta',    notes:'Trasbordo completo' },
     { id:'R-15b', created:'2026-04-14', author:'MSC Tracking', date:'2026-04-14', location:'Pacífico sur',          status:'En tiempo',  notes:'' },
   ],
-}, _emptyObj);
+};
 
 // ═══════════════════════════════════════════════════════════
 // MÓDULO PRODUCTOS + MOTOR DE TALLAS
@@ -1644,7 +1647,7 @@ export const SIZES = [
 // ─────────────────────────────────────────────────────────
 // PRODUCT_SIZES — qué tallas maneja cada producto (por SKU)
 // ─────────────────────────────────────────────────────────
-export const PRODUCT_SIZES = _wrap([
+export const PRODUCT_SIZES = [
   { sku: 'MLV-50S29-BLK-42',   sizes: ['sz-eu-38','sz-eu-39','sz-eu-40','sz-eu-41','sz-eu-42','sz-eu-43','sz-eu-44'] },
   { sku: 'MLV-40S18-BRN-41',   sizes: ['sz-eu-39','sz-eu-40','sz-eu-41','sz-eu-42','sz-eu-43','sz-eu-44','sz-eu-45'] },
   { sku: 'MLV-EVA-AST-BLK-40', sizes: ['sz-eu-38','sz-eu-39','sz-eu-40','sz-eu-41','sz-eu-42','sz-eu-43'] },
@@ -1654,14 +1657,14 @@ export const PRODUCT_SIZES = _wrap([
   { sku: 'GOL-BT-BLK-44',      sizes: ['sz-eu-40','sz-eu-41','sz-eu-42','sz-eu-43','sz-eu-44','sz-eu-45','sz-eu-46'] },
   { sku: 'LEO-SN-WH-38',       sizes: ['sz-eu-38','sz-eu-39','sz-eu-40','sz-eu-41','sz-eu-42'] },
   { sku: 'VEL-RN-BLU-40',      sizes: ['sz-eu-39','sz-eu-40','sz-eu-41','sz-eu-42','sz-eu-43'] },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // PRODUCT_CLIENT_VISIBILITY — gobernanza de visibilidad
 //   visible_to_all   master toggle
 //   client_overrides { [client_id]: true|false }  solo aplica si visible_to_all=false
 // ─────────────────────────────────────────────────────────
-export const PRODUCT_CLIENT_VISIBILITY = _wrap([
+export const PRODUCT_CLIENT_VISIBILITY = [
   { sku: 'MLV-50S29-BLK-42',   visible_to_all: true,  client_overrides: {} },
   { sku: 'MLV-40S18-BRN-41',   visible_to_all: false, client_overrides: { c1:true, c2:true, c3:false, c4:false, c5:true,  c6:false, c7:false, c8:false } },
   { sku: 'MLV-EVA-AST-BLK-40', visible_to_all: true,  client_overrides: {} },
@@ -1671,12 +1674,12 @@ export const PRODUCT_CLIENT_VISIBILITY = _wrap([
   { sku: 'GOL-BT-BLK-44',      visible_to_all: false, client_overrides: { c1:false, c2:true,  c3:true,  c4:false, c5:true,  c6:false, c7:false, c8:false } },
   { sku: 'LEO-SN-WH-38',       visible_to_all: true,  client_overrides: {} },
   { sku: 'VEL-RN-BLU-40',      visible_to_all: true,  client_overrides: {} },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // PRODUCT_NODE_ASSIGNMENTS — qué nodos logísticos operan cada SKU
 // ─────────────────────────────────────────────────────────
-export const PRODUCT_NODE_ASSIGNMENTS = _wrap([
+export const PRODUCT_NODE_ASSIGNMENTS = [
   { sku: 'MLV-50S29-BLK-42',   node_ids: ['3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e003','3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e004'] },
   { sku: 'MLV-40S18-BRN-41',   node_ids: ['3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e003','3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e005'] },
   { sku: 'MLV-EVA-AST-BLK-40', node_ids: ['3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e003'] },
@@ -1686,7 +1689,7 @@ export const PRODUCT_NODE_ASSIGNMENTS = _wrap([
   { sku: 'GOL-BT-BLK-44',      node_ids: ['3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008'] },
   { sku: 'LEO-SN-WH-38',       node_ids: ['3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e008','3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e009'] },
   { sku: 'VEL-RN-BLU-40',      node_ids: ['3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e009','3d2a1c5f-4c18-4b6b-9f10-a1b2c3d4e005'] },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // PRODUCT_EXPEDIENTE_LINES — trazabilidad de ventas históricas
@@ -1697,7 +1700,7 @@ export const PRODUCT_NODE_ASSIGNMENTS = _wrap([
 //   size_breakdown   { [size_id]: qty }
 //   estado           fase textual
 // ─────────────────────────────────────────────────────────
-export const PRODUCT_EXPEDIENTE_LINES = _wrap([
+export const PRODUCT_EXPEDIENTE_LINES = [
   // BIS-OXF-BLK-42 — hero + históricos
   { id:'pl-001', sku:'BIS-OXF-BLK-42', expediente_ref:'EXP-1029', client_id:'c1', estado:'TRANSITO',    qty:420, unit_price_sold: 69.90, size_breakdown:{ 'sz-eu-40':60,'sz-eu-41':80,'sz-eu-42':140,'sz-eu-43':90,'sz-eu-44':50 } },
   { id:'pl-002', sku:'BIS-OXF-BLK-42', expediente_ref:'EXP-1015', client_id:'c3', estado:'CERRADO',     qty:220, unit_price_sold: 68.00, size_breakdown:{ 'sz-eu-41':50,'sz-eu-42':90,'sz-eu-43':60,'sz-eu-44':20 } },
@@ -1730,7 +1733,7 @@ export const PRODUCT_EXPEDIENTE_LINES = _wrap([
 
   // MLV-EVA-AST-BLK-40
   { id:'pl-070', sku:'MLV-EVA-AST-BLK-40', expediente_ref:'EXP-1048', client_id:'c8', estado:'CERRADO', qty:140, unit_price_sold: 43.00, size_breakdown:{ 'sz-eu-39':30,'sz-eu-40':50,'sz-eu-41':30,'sz-eu-42':20,'sz-eu-43':10 } },
-]);
+];
 
 // ═══════════════════════════════════════════════════════════
 // MÓDULO PROVEEDORES · ENT_PROV_MAESTRO · ISO 9001 Compliance
@@ -1744,7 +1747,7 @@ export const PRODUCT_EXPEDIENTE_LINES = _wrap([
 //   lead_time_*   días prometido vs. real promedio
 //   certs         ['CE','RoHS','FCC','ISO 9001']
 // ─────────────────────────────────────────────────────────
-export const SUPPLIERS = _wrap([
+export const SUPPLIERS = [
   {
     id: 'SUP-001', uuid: '1b2c3d4e-5f60-71a2-b3c4-d5e6f7000001',
     nombre_comercial: 'Marluvas',   razon_social: 'Marluvas Calçados de Segurança Ltda.',
@@ -1857,12 +1860,12 @@ export const SUPPLIERS = _wrap([
     onboarded: '2023-09-01',
     categoria_desc: 'Descartado tras 3 NCs por desviación dimensional',
   },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // SUPPLIER_PRODUCTS — SKUs proveídos por cada supplier
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_PRODUCTS = _wrap([
+export const SUPPLIER_PRODUCTS = [
   // SUP-001 Marluvas
   { supplier_id:'SUP-001', sku:'MLV-50S29-BLK-42',   units_12m: 2400, last_purchase_price: 18.50, last_po_date:'2026-03-18' },
   { supplier_id:'SUP-001', sku:'MLV-40S18-BRN-41',   units_12m: 1860, last_purchase_price: 24.80, last_po_date:'2026-02-22' },
@@ -1882,12 +1885,12 @@ export const SUPPLIER_PRODUCTS = _wrap([
   { supplier_id:'SUP-005', sku:'ORT-INS-PU-42',      units_12m: 2100, last_purchase_price:  6.20, last_po_date:'2026-03-15' },
   // SUP-008 Yunnan (histórico descartado)
   { supplier_id:'SUP-008', sku:'RAW-STEEL-1100N',    units_12m:   85, last_purchase_price: 11.80, last_po_date:'2025-06-10' },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // SUPPLIER_EXPEDIENTE_REFS — expedientes asociados a cada supplier
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_EXPEDIENTE_REFS = _wrap([
+export const SUPPLIER_EXPEDIENTE_REFS = [
   { supplier_id:'SUP-001', expediente_ref:'EXP-1029', estado:'TRANSITO',    fecha:'2026-01-09', monto: 189600 },
   { supplier_id:'SUP-001', expediente_ref:'EXP-1037', estado:'PRODUCCION',  fecha:'2026-03-14', monto: 142800 },
   { supplier_id:'SUP-001', expediente_ref:'EXP-1048', estado:'CERRADO',     fecha:'2025-11-22', monto:  86400 },
@@ -1902,13 +1905,13 @@ export const SUPPLIER_EXPEDIENTE_REFS = _wrap([
   { supplier_id:'SUP-004', expediente_ref:'EXP-1038', estado:'CERRADO',     fecha:'2025-12-14', monto:  48800 },
   { supplier_id:'SUP-005', expediente_ref:'EXP-1042', estado:'TRANSITO',    fecha:'2026-03-22', monto:  18400 },
   { supplier_id:'SUP-005', expediente_ref:'EXP-1034', estado:'PREPARACION', fecha:'2026-03-22', monto:  22200 },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // SUPPLIER_PROMO_CODES — rebates, volume discounts, marketing
 //   scope: 'ALL' | ['sku1','sku2']
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_PROMO_CODES = _wrap([
+export const SUPPLIER_PROMO_CODES = [
   {
     id: 'PC-001', supplier_id:'SUP-001', codigo:'MLV-SUMMER-5',
     descripcion:'Rebaja verano 2026', scope:'ALL',
@@ -1958,14 +1961,14 @@ export const SUPPLIER_PROMO_CODES = _wrap([
     start:'2026-03-01', end:'2026-12-31', status:'ACTIVO',
     ahorro_total: 2420,
   },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // SUPPLIER_AUDIT_SCORES — radar ISO 9001 (última auditoría)
 //   Calidad 30% · Entregas 25% · Comunicación 15% · Técnica 15% · Precio 15%
 //   Todas las dimensiones en escala 1.0–5.0
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_AUDIT_SCORES = _wrap({
+export const SUPPLIER_AUDIT_SCORES = {
   'SUP-001': { audit_date:'2026-03-15', auditor:'K. Vargas',
     dimensions: { calidad: 4.6, entregas: 4.2, comunicacion: 4.5, tecnica: 4.8, precio: 3.9 },
     history: [
@@ -2020,13 +2023,13 @@ export const SUPPLIER_AUDIT_SCORES = _wrap({
       { date:'2025-05-10', score: 2.4 },
     ],
   },
-}, _emptyObj);
+};
 
 // ─────────────────────────────────────────────────────────
 // SUPPLIER_INCIDENTS — NC log · ISO 9001 8.7 control de no conformes
 //   impacto: BAJO | MEDIO | ALTO | CRITICO
 // ─────────────────────────────────────────────────────────
-export const SUPPLIER_INCIDENTS = _wrap([
+export const SUPPLIER_INCIDENTS = [
   { id:'NC-2026-001', supplier_id:'SUP-001', date:'2026-02-12',
     descripcion:'Variación de tono en lote T.42 TAN (MLV-50S29 batch BC-142)',
     impacto:'MEDIO', accion:'Inspección 100% · aprobado con observación por cliente Andes',
@@ -2063,7 +2066,7 @@ export const SUPPLIER_INCIDENTS = _wrap([
     descripcion:'Documentación de origen inconsistente',
     impacto:'ALTO', accion:'Supplier marcado DESCARTADO · cierre auditoría',
     ref_nc:'NC-YUN-2025-0007' },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // Helpers de agregación para el módulo Productos
@@ -2106,7 +2109,7 @@ export const EMAIL_LANGUAGES = [
   { value:'PT-BR', label:'Português (BR)' },
 ];
 
-export const EMAIL_TEMPLATES = _wrap([
+export const EMAIL_TEMPLATES = [
   {
     id:'tpl-001',
     name:'Aviso de Despacho',
@@ -2296,7 +2299,7 @@ Marluvas · MWT.ONE`,
     updated_at:'2026-04-02',
     sent_count_30d: 9,
   },
-]);
+];
 
 // ─────────────────────────────────────────────────────────
 // NOTIFICATION LOG — bitácora envíos transaccionales
@@ -2824,7 +2827,7 @@ export function comexResolvePriceMock({ sku, comision_pct = 0, dias_pago = 0, me
 const _now = Date.now();
 const _ago = (mins) => new Date(_now - mins * 60_000).toISOString();
 
-export const MOCK_AI_THREADS = _wrap([
+export const MOCK_AI_THREADS = [
   {
     id: 'mock-th-pricing-bisontes',
     titulo: 'Lista de precios Bisontes 2026 — revisión de margen',
@@ -2937,7 +2940,7 @@ export const MOCK_AI_THREADS = _wrap([
     tokens_out_total: 11_440,
     mock_only: true,
   },
-]);
+];
 
 // Helpers para construir mensajes con metadata consistente
 function _msg(id, threadId, sender, text, opts = {}) {
