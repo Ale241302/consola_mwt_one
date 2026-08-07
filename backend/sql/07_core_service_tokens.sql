@@ -41,7 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_service_token_created_by
 
 -- Trigger updated_at: reusa la función global tg_set_updated_at() si existe.
 -- Si no existe, se define una local mínima.
-DO $$
+DO $DO$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_proc WHERE proname = 'tg_set_updated_at'
@@ -62,7 +62,7 @@ BEGIN
             BEFORE UPDATE ON core.service_token
             FOR EACH ROW EXECUTE FUNCTION tg_set_updated_at();
     END IF;
-END $$;
+END $DO$;
 
 -- ─────────────────────────────────────────────────────────────────────
 -- core.service_token_scope
