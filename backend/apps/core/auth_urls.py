@@ -3,7 +3,7 @@ from django.urls import path
 
 from .auth_views import (
     LoginView, LogoutView, MeView, RefreshView,
-    PasswordResetConfirmView,
+    PasswordResetConfirmView, McpTokenView,
 )
 
 
@@ -12,6 +12,7 @@ urlpatterns = [
     path("logout/",  LogoutView.as_view(),  name="auth-logout"),
     path("refresh/", RefreshView.as_view(), name="auth-refresh"),
     path("me/",      MeView.as_view(),      name="auth-me"),
+    path("mcp-token/", McpTokenView.as_view(), name="auth-mcp-token"),
     path("password-reset-confirm/",
          PasswordResetConfirmView.as_view(),
          name="auth-password-reset-confirm"),

@@ -4,8 +4,9 @@ version = "1.0.0"
 description = "Servidor MCP para la Consola MWT.ONE — expone la operación completa (clientes, productos, expedientes, SAP, inventario, transferencias, pagos) como herramientas MCP."
 requires-python = ">=3.10"
 dependencies = [
-    "mcp>=1.2.0,<2.0",
+    "mcp>=1.3.0,<2.0",
     "httpx>=0.27.0",
+    "uvicorn>=0.30.0",
 ]
 
 [project.scripts]

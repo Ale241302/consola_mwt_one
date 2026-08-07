@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from .config import settings
+from .jwt_minter import get_identity_token
 
 
 class MwtApiError(Exception):
@@ -26,7 +27,7 @@ class MwtApiError(Exception):
 
 
 def _auth_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {settings.require_token()}"}
+    return {"Authorization": f"Bearer {get_identity_token()}"}
 
 
 def _parse(resp: httpx.Response) -> Any:

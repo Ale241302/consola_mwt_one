@@ -38,7 +38,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 
 # ---------------------------------------------------------------------
@@ -471,3 +471,178 @@ class MeView(APIView):
                 user["legal_entity_ids"] = user.get("legal_entity_ids") or []
 
         return Response(_serialize_user(user), status=200)
+
+
+class McpTokenView(APIView):
+    """
+    POST /api/auth/mcp-token/
+
+    Emite un AccessToken JWT para un usuario MWT a partir de la identidad
+    propagada por el gateway MCP (headers X-Forwarded-User-*). El caller
+    debe estar autenticado con el token de servicio MCP (claim mcp:true)
+    o con un usuario admin/superadmin.
+
+    Request headers:
+      X-Forwarded-User-Email: <email del usuario objetivo>
+      X-Forwarded-User-Id:    <uuid del usuario objetivo> (fallback)
+    O body JSON:
+      { "email": "...", "user_id": "..." }
+
+    Response:
+      { "access": "<jwt>", "user": { ... } }
+
+    El token de servicio nunca se expone al frontend; este endpoint solo
+    es consumido por el MCP server interno.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _is_authorized(self, request):
+        """Solo el token de servicio MCP o un admin/superadmin pueden mintear."""
+        try:
+            is_mcp_service = bool(request.auth.get("mcp"))
+        except Exception:
+            is_mcp_service = False
+        role = ""
+        try:
+            role = request.auth.get("role", "")
+        except Exception:
+            role = getattr(getattr(request, "user", None), "role", "") or ""
+        return is_mcp_service or role in ("admin", "superadmin", "ceo")
+
+    def _target_email(self, request):
+        email = (
+            request.META.get("HTTP_X_FORWARDED_USER_EMAIL")
+            or request.data.get("email")
+            or request.data.get("target_email")
+        )
+        return (email or "").strip().lower()
+
+    def _target_id(self, request):
+        uid = (
+            request.META.get("HTTP_X_FORWARDED_USER_ID")
+            or request.data.get("user_id")
+            or request.data.get("target_id")
+        )
+        return (uid or "").strip().lower()
+
+    def _fetch_target(self, email, uid):
+        with connection.cursor() as cur:
+            if email:
+                cur.execute(
+                    """
+                    SELECT u.id, u.email_plain, u.full_name, u.role, u.is_active,
+                           u.is_staff, u.last_login_at,
+                           COALESCE(r.slug, u.role)        AS role_slug,
+                           COALESCE(r.name, u.role)        AS role_name,
+                           COALESCE(r.permissions, '{}'::jsonb) AS permissions
+                      FROM core.users u
+                      LEFT JOIN core.user_roles ur ON ur.user_uuid = u.id
+                      LEFT JOIN core.roles      r  ON r.id         = ur.role_uuid
+                     WHERE lower(u.email_plain) = %s
+                       AND u.deleted_at IS NULL
+                     ORDER BY ur.granted_at ASC NULLS LAST
+                     LIMIT 1
+                    """,
+                    [email],
+                )
+                row = cur.fetchone()
+                if row:
+                    return row
+            if uid:
+                cur.execute(
+                    """
+                    SELECT u.id, u.email_plain, u.full_name, u.role, u.is_active,
+                           u.is_staff, u.last_login_at,
+                           COALESCE(r.slug, u.role)        AS role_slug,
+                           COALESCE(r.name, u.role)        AS role_name,
+                           COALESCE(r.permissions, '{}'::jsonb) AS permissions
+                      FROM core.users u
+                      LEFT JOIN core.user_roles ur ON ur.user_uuid = u.id
+                      LEFT JOIN core.roles      r  ON r.id         = ur.role_uuid
+                     WHERE u.id = %s::uuid
+                       AND u.deleted_at IS NULL
+                     ORDER BY ur.granted_at ASC NULLS LAST
+                     LIMIT 1
+                    """,
+                    [uid],
+                )
+                row = cur.fetchone()
+                if row:
+                    return row
+        return None
+
+    def _normalize_permissions(self, permissions):
+        if isinstance(permissions, dict):
+            return permissions
+        if isinstance(permissions, str):
+            try:
+                return json.loads(permissions)
+            except Exception:
+                return {}
+        return {}
+
+    def post(self, request):
+        if not self._is_authorized(request):
+            return Response(
+                {"detail": "No autorizado para emitir tokens MCP"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        email = self._target_email(request)
+        uid = self._target_id(request)
+        if not email and not uid:
+            return Response(
+                {"detail": "Falta X-Forwarded-User-Email o user_id"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        row = self._fetch_target(email, uid)
+        if not row:
+            return Response(
+                {"detail": "Usuario objetivo no encontrado"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        (
+            uid,
+            email_plain,
+            full_name,
+            _role_str,
+            is_active,
+            is_staff,
+            last_login_at,
+            role_slug,
+            role_name,
+            permissions,
+        ) = row
+        if not is_active:
+            return Response(
+                {"detail": "Usuario objetivo inactivo"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        role = role_slug or _role_str
+        access = AccessToken()
+        access["user_uuid"] = str(uid)
+        access["email"] = email_plain
+        access["role"] = role
+        access["mcp"] = True
+        access.set_exp(lifetime=timedelta(hours=1))
+
+        user = {
+            "id": str(uid),
+            "email_plain": email_plain,
+            "full_name": full_name,
+            "role": role,
+            "role_slug": role,
+            "role_name": role_name,
+            "is_active": is_active,
+            "is_staff": is_staff,
+            "last_login_at": last_login_at,
+            "permissions": self._normalize_permissions(permissions),
+        }
+        return Response({
+            "access": str(access),
+            "user": _serialize_user(user),
+        }, status=status.HTTP_200_OK)
