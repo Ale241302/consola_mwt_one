@@ -1,4 +1,12 @@
 // Mock data for MWT ONE prototype
+// Sprint 2026-08-07 · Ola 1 F2: guard para aislar datos mock en producción.
+const USE_MOCKS = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_USE_MOCKS === 'true') ||
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.DEV && import.meta.env.VITE_USE_MOCKS !== 'false');
+
+const _emptyArr = [];
+const _emptyObj = {};
+const _wrap = (val, fallback = _emptyArr) => (USE_MOCKS ? val : fallback);
+
 // Expedientes, clients, brands, products, pagos, artifacts, activity...
 
 // ─────────────────────────────────────────────────────────
