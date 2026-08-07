@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
-from .identity import set_identity
+from .identity import current_identity, set_identity
 
 
 class IdentityPropagationMiddleware:
