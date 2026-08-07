@@ -23,10 +23,11 @@ from __future__ import annotations
 import os
 import secrets
 import uuid
-from datetime import timedelta, timezone
+from datetime import timedelta
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
+from django.utils import timezone
 
 
 DEFAULT_SCOPES = "mcp:read,mcp:token_exchange"
