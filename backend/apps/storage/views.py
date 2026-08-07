@@ -16,6 +16,7 @@ Reglas:
 """
 import base64
 import logging
+import mimetypes
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -23,7 +24,7 @@ from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, StreamingHttpResponse
 from django.conf import settings
 
 from .services import (
@@ -86,6 +87,39 @@ def _is_public_key(key: str) -> bool:
         return False
     prefixes = getattr(settings, "STORAGE_PUBLIC_KEY_PREFIXES", [])
     return any(key.startswith(prefix) for prefix in prefixes)
+
+
+def _stream_object_response(key: str):
+    """Devuelve un StreamingHttpResponse con el contenido del objeto MinIO.
+
+    Hotfix para evitar mixed-content / ERR_SSL_PROTOCOL_ERROR cuando MinIO
+    no tiene certificado válido: en vez de redirigir al navegador a una URL
+    firmada (que puede ser HTTP), Django stremea los bytes por HTTPS.
+    """
+    from .services import get_object_stream
+
+    try:
+        resp = get_object_stream(key)
+    except Exception as e:
+        err = str(e)
+        if "NoSuchKey" in err or "NoSuchBucket" in err:
+            return Response({"detail": "No encontrado"}, status=404)
+        log.error("download stream get_object failed for %s: %s", key, e)
+        return Response({"detail": "storage_unavailable"}, status=503)
+
+    if resp is None:
+        return Response({"detail": "storage_unavailable"}, status=503)
+
+    content_type = (
+        resp.headers.get("Content-Type")
+        or mimetypes.guess_type(key)[0]
+        or "application/octet-stream"
+    )
+    django_resp = StreamingHttpResponse(resp.stream(), content_type=content_type)
+    content_length = resp.headers.get("Content-Length")
+    if content_length:
+        django_resp["Content-Length"] = content_length
+    return django_resp
 
 
 class StorageViewSet(viewsets.ViewSet):
@@ -179,10 +213,12 @@ class StorageViewSet(viewsets.ViewSet):
         result["size"]         = f.size
         return Response(result, status=200 if result.get("ok") else 502)
 
-    # ── Download: redirect a URL firmada de corta vida (HTTPS).
-    #    Permite acceso anónimo a activos públicos (imágenes de productos,
-    #    fichas, logos de clientes). Documentos y otros activos privados
-    #    requieren autenticación + scoping. El bucket nunca viene del cliente.
+    # ── Download: sirve el objeto por HTTPS vía Django stream.
+    #    Evita mixed-content / ERR_SSL_PROTOCOL_ERROR cuando MinIO no tiene
+    #    certificado válido. Permite acceso anónimo a activos públicos
+    #    (imágenes de productos, fichas, logos de clientes). Documentos y
+    #    otros activos privados requieren autenticación + scoping. El bucket
+    #    nunca viene del cliente.
     @action(detail=False, methods=["get"], url_path="download",
             permission_classes=[AllowAny], throttle_classes=[])
     def download(self, request):
@@ -190,20 +226,16 @@ class StorageViewSet(viewsets.ViewSet):
         GET /api/storage/download/?key=<key>
 
         - Si el key pertenece a un prefijo público (STORAGE_PUBLIC_KEY_PREFIXES),
-          redirige a una URL firmada sin pedir autenticación.
+          stremea el objeto sin pedir autenticación.
         - Para el resto requiere autenticación, verifica que el key pertenezca a
-          un objeto visible por el usuario y devuelve una URL firmada de
-          5 minutos redirigiendo con HTTP 302. El cliente no puede elegir bucket.
+          un objeto visible por el usuario y luego stremea el objeto.
         """
         key = request.query_params.get("key")
         if not key:
             return Response({"detail": "Falta 'key'"}, status=400)
 
         if _is_public_key(key):
-            signed = generate_signed_url(key, kind="get", ttl=300)
-            if not signed.get("available"):
-                return Response({"detail": "storage_unavailable"}, status=503)
-            return HttpResponseRedirect(signed["url"])
+            return _stream_object_response(key)
 
         if not request.user or not getattr(request.user, "is_authenticated", False):
             return Response({"detail": "Las credenciales de autenticación no se proveyeron."}, status=401)
@@ -211,11 +243,7 @@ class StorageViewSet(viewsets.ViewSet):
         if not _user_can_access_key(request.user, key):
             return Response({"detail": "No autorizado"}, status=403)
 
-        signed = generate_signed_url(key, kind="get", ttl=300)
-        if not signed.get("available"):
-            return Response({"detail": "storage_unavailable"}, status=503)
-
-        return HttpResponseRedirect(signed["url"])
+        return _stream_object_response(key)
 
     # ── DELETE genérico: borra un objeto del bucket por su key.
     #    El llamador (Producto/Expediente/etc.) es responsable de
