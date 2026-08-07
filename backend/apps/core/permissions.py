@@ -155,7 +155,13 @@ def _permissions_for_role(role_slug: str) -> dict:
             return {"modules": ["*"]} if role_slug in ("admin", "superadmin") else {}
         # row[0] puede venir como dict (JSONB) o str (TEXT) segun el
         # schema del entorno. _normalize_perms acepta ambos.
-        return _normalize_perms(row[0])
+        perms = _normalize_perms(row[0])
+        # Los roles admin/superadmin deben tener acceso total. Si el JSON
+        # de core.roles no incluye modules (caso post-A6 con solo actions),
+        # forzamos wildcard para no bloquear a usuarios administrativos.
+        if role_slug in ("admin", "superadmin"):
+            perms["modules"] = ["*"]
+        return perms
     except Exception as exc:  # noqa: BLE001 - blindaje contra HTML 500
         log.exception(
             "[_permissions_for_role] DB query failed for role_slug=%r: %s",
