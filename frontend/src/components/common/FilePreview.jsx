@@ -68,16 +68,25 @@ export default function FilePreview({
   const finalMime  = (mime || guessMime(keyOrUrl) || "").toLowerCase();
   const fname      = filename || basename(keyOrUrl);
 
+  // Prefijos públicos configurados en STORAGE_PUBLIC_KEY_PREFIXES.
+  const isPublicKey = typeof keyOrUrl === "string" && (
+    keyOrUrl.startsWith("producto/") || keyOrUrl.startsWith("cliente/")
+  );
+
   useEffect(() => {
     setError(null);
     if (!keyOrUrl) { setSignedUrl(null); return; }
     if (isAbsolute) { setSignedUrl(keyOrUrl); return; }
     // Stream proxy a través de Django (HTTPS, sin mixed-content).
-    // El endpoint /api/storage/download/ es AllowAny (la key UUID actúa
-    // como secret) — necesario para que <img src=...> y <iframe src=...>
-    // funcionen sin necesidad de mandar Authorization header.
-    setSignedUrl(`${window.location.origin}/api/storage/download/?key=${encodeURIComponent(keyOrUrl)}`);
-  }, [keyOrUrl, isAbsolute]);
+    let url = `${window.location.origin}/api/storage/download/?key=${encodeURIComponent(keyOrUrl)}`;
+    // Para activos privados el backend requiere auth; <img>/<iframe> no pueden
+    // mandar Authorization header, así que pasamos el JWT por query param.
+    const token = getToken();
+    if (token && !isPublicKey) {
+      url += `&token=${encodeURIComponent(token)}`;
+    }
+    setSignedUrl(url);
+  }, [keyOrUrl, isAbsolute, isPublicKey]);
 
   if (!keyOrUrl) {
     return (

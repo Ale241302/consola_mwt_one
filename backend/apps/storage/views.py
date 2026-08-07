@@ -89,6 +89,31 @@ def _is_public_key(key: str) -> bool:
     return any(key.startswith(prefix) for prefix in prefixes)
 
 
+def _authenticate_token_from_query(request):
+    """Autentica al usuario desde ?token=<JWT> si no hay Authorization header.
+
+    Necesario para que <img>, <iframe> y <a href> puedan descargar activos
+    privados (documentos, expedientes, artefactos) sin mandar header
+    Authorization. El token sigue siendo un access JWT normal de DRF.
+    """
+    from rest_framework_simplejwt.authentication import JWTAuthentication
+    from rest_framework_simplejwt.exceptions import InvalidToken, AuthenticationFailed, TokenError
+
+    if getattr(request.user, "is_authenticated", False):
+        return
+    token = request.query_params.get("token")
+    if not token:
+        return
+    try:
+        auth = JWTAuthentication()
+        validated_token = auth.get_validated_token(token)
+        user = auth.get_user(validated_token)
+        request.user = user
+        request.auth = validated_token
+    except (InvalidToken, AuthenticationFailed, TokenError):
+        pass
+
+
 def _stream_object_response(key: str, public: bool = False):
     """Devuelve un StreamingHttpResponse con el contenido del objeto MinIO.
 
@@ -286,6 +311,8 @@ class StorageViewSet(viewsets.ViewSet):
 
         if _is_public_key(key):
             return _stream_object_response(key, public=True)
+
+        _authenticate_token_from_query(request)
 
         if not request.user or not getattr(request.user, "is_authenticated", False):
             return Response({"detail": "Las credenciales de autenticación no se proveyeron."}, status=401)
