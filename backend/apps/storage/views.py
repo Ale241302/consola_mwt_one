@@ -21,9 +21,10 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from django.http import HttpResponseRedirect
+from django.conf import settings
 
 from .services import (
     generate_signed_url, paperless_ingest, ensure_bucket,
@@ -70,6 +71,21 @@ def _user_can_access_key(user, key: str) -> bool:
     # Fallback: permitir a staff autenticado para otros tipos de objeto.
     # Esto cubre productos, marcas, logos, etc. hasta que se añada scoping.
     return True
+
+
+def _is_public_key(key: str) -> bool:
+    """Devuelve True si el key corresponde a un activo público del sitio.
+
+    Ola 0 hotfix: imágenes de productos, fichas técnicas y logos de clientes
+    se sirven sin autenticación porque el frontend las renderiza en <img>
+    y el navegador no envía el header Authorization. Los documentos de
+    expedientes y otros activos privados siguen requiriendo auth + scoping.
+    La lista es configurable vía STORAGE_PUBLIC_KEY_PREFIXES.
+    """
+    if not key:
+        return False
+    prefixes = getattr(settings, "STORAGE_PUBLIC_KEY_PREFIXES", [])
+    return any(key.startswith(prefix) for prefix in prefixes)
 
 
 class StorageViewSet(viewsets.ViewSet):
@@ -164,21 +180,33 @@ class StorageViewSet(viewsets.ViewSet):
         return Response(result, status=200 if result.get("ok") else 502)
 
     # ── Download: redirect a URL firmada de corta vida (HTTPS).
-    #    Requiere autenticación y verifica que el key pertenezca al scope
-    #    del usuario. El bucket nunca viene del cliente.
+    #    Permite acceso anónimo a activos públicos (imágenes de productos,
+    #    fichas, logos de clientes). Documentos y otros activos privados
+    #    requieren autenticación + scoping. El bucket nunca viene del cliente.
     @action(detail=False, methods=["get"], url_path="download",
-            permission_classes=[IsAuthenticated])
+            permission_classes=[AllowAny])
     def download(self, request):
         """
         GET /api/storage/download/?key=<key>
 
-        Requiere autenticación. Verifica que el key pertenezca a un objeto
-        visible por el usuario y devuelve una URL firmada de 5 minutos,
-        redirigiendo con HTTP 302. El cliente no puede elegir bucket.
+        - Si el key pertenece a un prefijo público (STORAGE_PUBLIC_KEY_PREFIXES),
+          redirige a una URL firmada sin pedir autenticación.
+        - Para el resto requiere autenticación, verifica que el key pertenezca a
+          un objeto visible por el usuario y devuelve una URL firmada de
+          5 minutos redirigiendo con HTTP 302. El cliente no puede elegir bucket.
         """
         key = request.query_params.get("key")
         if not key:
             return Response({"detail": "Falta 'key'"}, status=400)
+
+        if _is_public_key(key):
+            signed = generate_signed_url(key, kind="get", ttl=300)
+            if not signed.get("available"):
+                return Response({"detail": "storage_unavailable"}, status=503)
+            return HttpResponseRedirect(signed["url"])
+
+        if not request.user or not getattr(request.user, "is_authenticated", False):
+            return Response({"detail": "Las credenciales de autenticación no se proveyeron."}, status=401)
 
         if not _user_can_access_key(request.user, key):
             return Response({"detail": "No autorizado"}, status=403)

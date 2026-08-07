@@ -346,6 +346,16 @@ MINIO_SECRET_KEY      = os.environ.get("MINIO_SECRET_KEY", "")
 MINIO_BUCKET          = os.environ.get("MINIO_BUCKET", "mwt-one")
 MINIO_SECURE          = os.environ.get("MINIO_SECURE", "1") == "1"
 
+# Activos de storage que se sirven sin autenticación (el frontend los pone en
+# <img> y el navegador no envía Authorization). Lista de prefijos separados por
+# coma, sin espacios. Ej: "producto/,cliente/,marca/"
+_STOR_PUB_RAW = os.environ.get("STORAGE_PUBLIC_KEY_PREFIXES", "producto/,cliente/")
+STORAGE_PUBLIC_KEY_PREFIXES = [
+    p.strip().strip("/") + "/"
+    for p in _STOR_PUB_RAW.split(",")
+    if p.strip()
+]
+
 # --------------------------------------------------------------------
 # Paperless-ngx (gestión documental, opcional)
 # --------------------------------------------------------------------
