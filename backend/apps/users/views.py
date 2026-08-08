@@ -180,6 +180,20 @@ class MwtUserViewSet(viewsets.ModelViewSet):
                 user_uuid  = data["id"],
             )
 
+        # AUTO-SYNC con Authentik (IdP del MCP) · la consola es la fuente de
+        # verdad: mismo usuario, misma password, is_active. Fail-safe: si no
+        # está configurado (AUTHENTIK_API_URL/TOKEN) no rompe el create.
+        try:
+            from .authentik_sync import ensure_user  # noqa: PLC0415
+            ensure_user(
+                email     = data.get("email_plain") or "",
+                full_name = data.get("full_name") or "",
+                is_active = True,
+                password  = raw_pwd,
+            )
+        except Exception as e:  # noqa: BLE001 - nunca romper el create
+            log.exception("authentik sync on create failed: %s", e)
+
         # Re-leer la instancia para que la respuesta incluya addresses.
         instance = MwtUser.objects.get(pk=data["id"])
         out = self.get_serializer(instance).data
@@ -227,6 +241,25 @@ class MwtUserViewSet(viewsets.ModelViewSet):
                 user_uuid = str(instance.id),
             )
 
+        # AUTO-SYNC con Authentik (IdP del MCP). Fail-safe: nunca rompe el update.
+        try:
+            from .authentik_sync import ensure_user, set_active, set_password  # noqa: PLC0415
+            new_email = ser.data.get("email_plain") or instance.email_plain
+            new_name  = ser.data.get("full_name") or instance.full_name or ""
+            if raw_pwd:
+                # Password nueva → replicar en Authentik (misma password).
+                set_password(new_email, raw_pwd)
+            else:
+                # Sin password: asegurar existencia + name/is_active (el is_active
+                # ya se manejó en toggle/soft-delete si cambió por ahí).
+                ensure_user(
+                    email     = new_email,
+                    full_name = new_name,
+                    is_active = instance.is_active,
+                )
+        except Exception as e:  # noqa: BLE001 - nunca romper el update
+            log.exception("authentik sync on update failed: %s", e)
+
         # Re-leer para devolver addresses actualizadas (las del SerializerMethodField).
         instance.refresh_from_db()
         return Response(self.get_serializer(instance).data)
@@ -248,6 +281,12 @@ class MwtUserViewSet(viewsets.ModelViewSet):
             is_active = False,
             soft_delete = True,
         )
+        # Deshabilitar en Authentik (IdP MCP) · fail-safe.
+        try:
+            from .authentik_sync import set_active  # noqa: PLC0415
+            set_active(instance.email_plain, False)
+        except Exception as e:  # noqa: BLE001
+            log.exception("authentik disable on delete failed: %s", e)
 
     # ── POST /api/users/<id>/reset-password/ ───────────────────
     @action(detail=True, methods=["post"], url_path="reset-password")
@@ -283,6 +322,13 @@ class MwtUserViewSet(viewsets.ModelViewSet):
             is_active   = u.is_active,
             soft_delete = not u.is_active,   # al desactivar, marcamos deleted_at
         )
+
+        # Replicar el estado a Authentik (IdP del MCP) · fail-safe.
+        try:
+            from .authentik_sync import set_active  # noqa: PLC0415
+            set_active(u.email_plain, u.is_active)
+        except Exception as e:  # noqa: BLE001
+            log.exception("authentik toggle_active failed: %s", e)
 
         return Response({"ok": True, "id": str(u.id), "is_active": u.is_active})
 
