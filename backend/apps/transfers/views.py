@@ -30,6 +30,8 @@ from rest_framework.response import Response
 log = logging.getLogger(__name__)
 
 from apps.storage.services import delete_object as _storage_delete
+# Ola 2 · 2.20 - idempotencia server-side sobre core.idempotency_store.
+from apps.core.services import dedup_get, dedup_put
 
 from .models import (
     Transferencia, Linea, Evento, TransferenciaDocumento,
@@ -530,6 +532,14 @@ class TransferenciaViewSet(viewsets.ViewSet):
             data["origen_id"]  = data.pop("nodo_origen_id")
         if "nodo_destino_id" in data and "destino_id" not in data:
             data["destino_id"] = data.pop("nodo_destino_id")
+        # Ola 2 · 2.20 - idempotencia: si el cliente reintenta la MISMA
+        # creacion (mismo idempotency_key), devolvemos el resultado cacheado.
+        _idem_key = data.get("idempotency_key")
+        if _idem_key:
+            _cached = dedup_get(_idem_key)
+            if _cached is not None:
+                return Response(_cached["payload"], status=_cached["status"])
+
         data.pop("has_discrepancy", None)
 
         # Sprint Transfer Engine v2 — el FE manda 'lineas' y 'cost_lines'
@@ -588,6 +598,10 @@ class TransferenciaViewSet(viewsets.ViewSet):
                 {"detail": f"{type(e).__name__}: {e}"},
                 status=500,
             )
+        # Ola 2 · 2.20 - cachear respuesta para reintentos idempotentes.
+        if _idem_key:
+            dedup_put(_idem_key, tool="transferencia_crear",
+                      target_id=str(new_id), response_payload=s.data, status=201)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):

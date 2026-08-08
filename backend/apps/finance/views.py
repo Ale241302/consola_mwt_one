@@ -23,6 +23,8 @@ import logging
 import uuid
 
 from django.db import IntegrityError
+# Ola 2 · 2.20 — idempotencia server-side sobre core.idempotency_store.
+from apps.core.services import dedup_get, dedup_put
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
@@ -285,6 +287,14 @@ class PaymentViewSet(viewsets.ViewSet):
         actor_id   = _safe_user_uuid(request)
         actor_role = (request.auth.get("role") if request.auth else None)
 
+        # Ola 2 · 2.20 — idempotencia: reintento con el MISMO idempotency_key
+        # devuelve el pago cacheado sin duplicar.
+        _idem_key = request.data.get("idempotency_key")
+        if _idem_key:
+            _cached = dedup_get(_idem_key)
+            if _cached is not None:
+                return Response(_cached["payload"], status=_cached["status"])
+
         # Feature C: si viene pre_verdict del análisis previo, pasarlo a register()
         pre_verdict = s.validated_data.get("pre_verdict") or None
 
@@ -332,6 +342,10 @@ class PaymentViewSet(viewsets.ViewSet):
                 "Pago registrado en estado PENDIENTE_AI. La validación IA "
                 "del comprobante se conecta en Fase 3 (ai_analyzer_task)."
             )
+        # Ola 2 · 2.20 — cachear respuesta para reintentos idempotentes.
+        if _idem_key:
+            dedup_put(_idem_key, tool="pago_registrar",
+                      target_id=body.get("id"), response_payload=body, status=201)
         return Response(body, status=201)
 
     # ── Selects (catálogos) ───────────────────────────────
