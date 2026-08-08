@@ -603,6 +603,48 @@ class McpTokenView(APIView):
         return (uid or "").strip().lower()
 
     def _fetch_target(self, email, uid):
+        # Nota de seguridad (Fugu · Ola 2 - 2.15): el legal_entity_ids del
+        # usuario objetivo se obtiene de users.mwtuser (misma fuente que
+        # LoginView/MeView). Antes el JWT emitido heredaba los client_ids del
+        # ServiceToken, no los tenants reales del usuario → posible ampliación
+        # o vaciado de tenants. Ahora la intersección se hace contra el
+        # usuario real.
+        def _finish(cursor, row):
+            if not row:
+                return None
+            data = dict(
+                zip(
+                    ["id", "email_plain", "full_name", "role", "is_active",
+                     "is_staff", "last_login_at", "role_slug", "role_name",
+                     "permissions"],
+                    row,
+                )
+            )
+            data["legal_entity_ids"] = []
+            try:
+                email_low = (data["email_plain"] or "").strip().lower()
+                if email_low:
+                    cursor.execute(
+                        """
+                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                          FROM users.mwtuser
+                         WHERE lower(trim(email_plain)) = %s
+                            OR lower(trim(COALESCE(contact_email, ''))) = %s
+                         ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                                  cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
+                                  updated_at DESC NULLS LAST
+                         LIMIT 1
+                        """,
+                        [email_low, email_low],
+                    )
+                    mrow = cursor.fetchone()
+                    if mrow and mrow[0]:
+                        data["legal_entity_ids"] = [str(x) for x in mrow[0] if x]
+            except Exception:  # noqa: BLE001
+                # users.mwtuser puede no existir en ambientes legacy.
+                data["legal_entity_ids"] = data.get("legal_entity_ids") or []
+            return data
+
         with connection.cursor() as cur:
             if email:
                 cur.execute(
@@ -624,7 +666,7 @@ class McpTokenView(APIView):
                 )
                 row = cur.fetchone()
                 if row:
-                    return row
+                    return _finish(cur, row)
             if uid:
                 cur.execute(
                     """
@@ -645,7 +687,7 @@ class McpTokenView(APIView):
                 )
                 row = cur.fetchone()
                 if row:
-                    return row
+                    return _finish(cur, row)
         return None
 
     def _normalize_permissions(self, permissions):
@@ -681,18 +723,18 @@ class McpTokenView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        (
-            uid,
-            email_plain,
-            full_name,
-            _role_str,
-            is_active,
-            is_staff,
-            last_login_at,
-            role_slug,
-            role_name,
-            permissions,
-        ) = row
+        uid = row["id"]
+        email_plain = row["email_plain"]
+        full_name = row["full_name"]
+        is_active = row["is_active"]
+        is_staff = row["is_staff"]
+        last_login_at = row["last_login_at"]
+        role_slug = row["role_slug"]
+        role_name = row["role_name"]
+        _role_str = row["role"]
+        permissions = row["permissions"]
+        target_legal_ids = row.get("legal_entity_ids") or []
+
         if not is_active:
             return Response(
                 {"detail": "Usuario objetivo inactivo"},
@@ -702,8 +744,12 @@ class McpTokenView(APIView):
         role = role_slug or _role_str
         perms = self._normalize_permissions(permissions)
 
-        # Intersectar legal_entity_ids del usuario con los del ServiceToken.
-        user_legal_ids = set(request.user.legal_entity_ids or [])
+        # Nota de seguridad (Fugu · Ola 2 - 2.15): los legal_entity_ids se
+        # toman del USUARIO OBJETIVO (users.mwtuser vía _fetch_target), NO de
+        # request.user (que es el ServiceTokenUser). Se intersectan contra los
+        # client_ids del ServiceToken cuando existan. El JWT emitido NUNCA
+        # amplía tenants, solo los restringe.
+        user_legal_ids = set(target_legal_ids)
         service_legal_ids = set(st.client_ids or [])
         if service_legal_ids:
             user_legal_ids = user_legal_ids & service_legal_ids
