@@ -278,6 +278,14 @@ class PaymentViewSet(viewsets.ViewSet):
 
     # ── Create (multipart, drawer v2.0) ───────────────────
     def create(self, request):
+        # Ola 2 · 2.20 — idempotencia: reintento con el MISMO idempotency_key
+        # devuelve el pago cacheado sin duplicar (sin revalidar ni re-registrar).
+        _idem_key = request.data.get("idempotency_key")
+        if _idem_key:
+            _cached = dedup_get(_idem_key)
+            if _cached is not None:
+                return Response(_cached["payload"], status=_cached["status"])
+
         s = PaymentRegisterSerializer(data=request.data)
         s.is_valid(raise_exception=True)
 
@@ -286,14 +294,6 @@ class PaymentViewSet(viewsets.ViewSet):
         # en modo claim-only, lo leemos del payload.
         actor_id   = _safe_user_uuid(request)
         actor_role = (request.auth.get("role") if request.auth else None)
-
-        # Ola 2 · 2.20 — idempotencia: reintento con el MISMO idempotency_key
-        # devuelve el pago cacheado sin duplicar.
-        _idem_key = request.data.get("idempotency_key")
-        if _idem_key:
-            _cached = dedup_get(_idem_key)
-            if _cached is not None:
-                return Response(_cached["payload"], status=_cached["status"])
 
         # Feature C: si viene pre_verdict del análisis previo, pasarlo a register()
         pre_verdict = s.validated_data.get("pre_verdict") or None
