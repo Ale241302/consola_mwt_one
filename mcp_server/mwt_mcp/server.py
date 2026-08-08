@@ -18,6 +18,12 @@ from mcp.server.fastmcp import FastMCP
 from . import client as api
 from .client import MwtApiError
 from .config import settings
+from .schemas import (
+    pydantic_available,
+    validate_aplicaciones,
+    validate_cost_lines,
+    validate_lines,
+)
 
 mcp = FastMCP("mwt-one")
 
@@ -43,6 +49,145 @@ def _wguard():
     return None
 
 
+# Ola 2 · 2.21 — decorador estructural de escritura.
+# Centraliza _wguard() en UN solo punto y evita que una tool de escritura
+# olvide el guard manual (`g = _wguard(); if g: return g`). Si
+# MWT_MCP_READONLY=1, NINGÚN POST/PATCH/PUT/DELETE puede salir.
+from functools import wraps as _wraps
+
+# Ola 2 · 2.20 — auditoría JSON por escritura (observabilidad + trazabilidad).
+# Campos sensibles que NUNCA se vuelcan a los logs (se marcan como "<redactado>").
+_AUDIT_REDACT = {
+    "file_path", "filename", "key", "storage_url", "evidencia", "documento_sap",
+    "idempotence_token", "idempotency_key", "token", "password", "secret",
+}
+
+
+def _audit_sanitize(value, key: str = ""):
+    """Recurs(a|ivamente) sanea un valor antes de loguearlo: trunca strings largos
+    y redacta todo lo que contenga una clave de la lista _AUDIT_REDACT."""
+    if isinstance(value, dict):
+        return {k: _audit_sanitize(v, _audit_key(k)) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_audit_sanitize(v, key) for v in value]
+    if isinstance(value, str):
+        if any(red in key.lower() for red in _AUDIT_REDACT):
+            return "<redactado>"
+        return value if len(value) <= 200 else value[:200] + "…<truncado>"
+    return value
+
+
+def _audit_key(k: str) -> str:
+    return (k or "").lower()
+
+
+def _log_mcp_audit(tool: str, args, result, duration_ms: float, identity: dict | None = None, event: str = "write"):
+    """Emite un log JSON estructura por tool-call de escritura.
+
+    Un observador (típicamente el proceso del MCP) registra en una sola línea:
+    {event, at, tool, identity{sub, roles}, args_sanitized, ok, http_status, duration_ms}.
+    Al vuelcar a stdout en una sesión MCP eso puede mezclarse con el protocolo JSON-RPC;
+    por eso se emite por stderr (canal de logs del servidor MCP). La retención y el
+    almacenamiento durable se centralizan en la tabla `mcp_audit` del backend (DDL
+    versionado — ver database/mcp_audit.sql), que el gateway puede alimentar también."""
+    import json as _json
+    import time as _time
+
+    if isinstance(result, dict):
+        ok = not bool(result.get("error"))
+        status = result.get("status")
+    else:
+        ok = True
+        status = None
+    ident = identity or {}
+    rec = {
+        "event": event,
+        "at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "tool": tool,
+        "identity": {"sub": ident.get("sub"), "roles": ident.get("roles")},
+        "args_sanitized": _audit_sanitize(args),
+        "ok": ok,
+        "http_status": status,
+        "duration_ms": duration_ms,
+    }
+    try:
+        import sys as _sys
+        print(_json.dumps(rec, ensure_ascii=False), file=_sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001 - nunca romper la tool por un log fallido
+        pass
+
+
+def write_tool(func):
+    """Marca y blinda una tool de escritura del MCP.
+
+    Aplica _wguard() de forma estructural ANTES de ejecutar el cuerpo y
+    marca la función con `._mwt_write = True` para auditoría/detección.
+    Además emite un log JSON por llamada (Ola 2 · 2.20) con args saneados."""
+    import time as _time
+
+    @_wraps(func)
+    def wrapper(*args, **kwargs):
+        g = _wguard()
+        if g:
+            return g
+        t0 = _time.monotonic()
+        try:
+            result = func(*args, **kwargs)
+            _log_mcp_audit(func.__name__, kwargs, result,
+                           int((_time.monotonic() - t0) * 1000))
+            return result
+        except Exception as e:  # noqa: BLE001
+            _log_mcp_audit(func.__name__, kwargs,
+                           {"error": True, "detail": str(e), "status": 500},
+                           int((_time.monotonic() - t0) * 1000))
+            raise
+
+    wrapper._mwt_write = True
+    return wrapper
+
+
+def _is_write_tool(func) -> bool:
+    """Devuelve True si la tool está marcada como de escritura."""
+    return bool(getattr(func, "_mwt_write", False))
+
+
+# Listado nominal de tools que, aunque siguen siendo "preview"/"dry-run",
+# ejecutan POST en el backend. Son las 2 fugas detectadas en la auditoría
+# 2.2-B. El decorador @write_tool las blinda en readonly; este registro queda
+# para trazabilidad y para mwt_audit_write_registry.
+WRITE_TOOLS_WITH_POST = {
+    "expediente_resolve_oc_preview": "POST /expedientes/resolve-oc-preview/",
+    "pago_dry_run": "POST /finance/payments/dry-run/",
+}
+
+
+def _paging(limit, offset, default: int = 50, max_limit: int = 200):
+    """Coerce de paginación para las tools de listado.
+
+    Devuelve (limit_coerced, offset_coerced). Valores seguros:
+      - limit: 1..max_limit (default limit=default). Si el caller pasa 0 o
+        negativo, se usa el default.
+      - offset: >= 0 (default 0).
+    El backend puede capar a su propio máximo; aquí solo saneamos la entrada
+    del agente para evitar saturar el contexto con respuestas enormes.
+    """
+    try:
+        lim = int(limit) if limit is not None else default
+    except (TypeError, ValueError):
+        lim = default
+    if lim < 1:
+        lim = default
+    if lim > max_limit:
+        lim = max_limit
+    try:
+        off = int(offset) if offset is not None else 0
+    except (TypeError, ValueError):
+        off = 0
+    if off < 0:
+        off = 0
+    return lim, off
+
+
 def _params(**kwargs) -> dict:
     return {k: v for k, v in kwargs.items() if v is not None}
 
@@ -62,6 +207,32 @@ def _as_rows(data: Any) -> list:
     return []
 
 
+# Ola 2 · 2.17 — proyección cliente-lado (`campos`).
+# El backend no expone `?fields=`; aquí recortamos la respuesta a solo los
+# campos pedidos para ahorrar contexto del agente. Ej.: campos="id,codigo,estado".
+# Si `campos` es None/vacío devuelve `data` sin cambios (compatibilidad total).
+def _project(campos: str | None, data: Any) -> Any:
+    if not campos:
+        return data
+    keep = [c.strip() for c in str(campos).split(",") if c.strip()]
+    if not keep:
+        return data
+
+    def _pick(row):
+        if isinstance(row, dict):
+            return {k: row[k] for k in keep if k in row}
+        return row
+
+    # Wrapper paginado DRF: {results:[...], count, next, previous}
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        out = dict(data)
+        out["results"] = [_pick(r) for r in out["results"]]
+        return out
+    if isinstance(data, list):
+        return [_pick(r) for r in data]
+    return _pick(data)
+
+
 # --------------------------------------------------------------------------- #
 # Salud / introspección
 # --------------------------------------------------------------------------- #
@@ -70,6 +241,72 @@ def mwt_whoami() -> Any:
     """Devuelve la identidad y permisos del token actual (GET /auth/me/).
     Útil para verificar que el token MCP es válido y tiene rol CEO/ADMIN."""
     return _safe(lambda: api.get("auth/me/"))
+
+
+# Ola 2 · 2.22 — health check independiente de datos de negocio.
+# Verifica conectividad con el backend y el estado del token sin tocar
+# expedientes/pagos/etc. Si falla la red o expiró/auth del token, devuelve
+# un diagnóstico claro con `ok:false` y la razón.
+@mcp.tool()
+def mwt_health(timeout: float | None = None) -> Any:
+    """Diagnóstico de conectividad y autenticación del MCP (NO toca datos).
+
+    Comprueba que el servidor MCP alcanza al backend y que el token de
+    identidad (Servicio o usuario vía token exchange) sigue siendo válido.
+    Devuelve `{ok, api_base, http_status, latency_ms, message}`.
+    Útil antes de una sesión larga para detectar lentitud, token expirado o
+    red caída. No consume datos de negocio (usa un endpoint saludable)."""
+    import time as _time
+
+    # healthz no requiere auth pero existe claramente en storage; es un GET
+    # barato que valida red + procesado del backend sin datos de dominio.
+    t0 = _time.monotonic()
+    try:
+        data = api.get("storage/healthz/")
+        elapsed_ms = int((_time.monotonic() - t0) * 1000)
+    except MwtApiError as e:
+        return {
+            "ok": False,
+            "api_base": settings.api_base,
+            "http_status": e.status,
+            "latency_ms": int((_time.monotonic() - t0) * 1000),
+            "message": f"Backend respondió {e.status}. {str(e)[:200]}",
+            "detail": e.payload if isinstance(e.payload, str) else None,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False,
+            "api_base": settings.api_base,
+            "http_status": None,
+            "latency_ms": int((_time.monotonic() - t0) * 1000),
+            "message": f"Sin conexión al backend: {e}",
+        }
+
+    if isinstance(data, dict):
+        return {"ok": True, "api_base": settings.api_base, "http_status": 200,
+                "latency_ms": elapsed_ms, "healthz": data, "message": "backend accesible"}
+    return {"ok": True, "api_base": settings.api_base, "http_status": 200,
+            "latency_ms": elapsed_ms, "message": "backend accesible"}
+
+
+# Ola 2 · 2.21-a — herramienta de auditoría que informa a los agentes qué
+# tools son de escritura y cuáles hacen POST. Ayuda a verificar que el guard
+# estructural está aplicado sin leer el código fuente.
+@mcp.tool()
+def mwt_audit_write_registry() -> Any:
+    """(Meta) Lista nominal de herramientas de escritura y de las tools con POST.
+
+    Devuelve dos listas: `escritura_protegidas` (tools decoradas con @write_tool,
+    bloqueadas en MWT_MCP_READONLY=1) y `post_pendientes` (preview/dry-run que
+    ejecutan POST — ya blindadas por @write_tool pero de utilidad informativa).
+    Útil para validar que ninguna tool de escritura queda sin guard."""
+    return {
+        "readonly": bool(settings.readonly),
+        "aclaracion": "Las tools de la lista `post_pendientes` ejecutan POST en el backend "
+                      "pero NO crean datos (son preview/dry-run). En modo readonly quedan "
+                      "bloqueadas por el decorador @write_tool.",
+        "preview_dry_run_con_post": list(WRITE_TOOLS_WITH_POST),
+    }
 
 
 # =========================================================================== #
@@ -84,16 +321,26 @@ def cliente_listar(
     segmento: str | None = None,
     pais: str | None = None,
     canal: str | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+    campos: str | None = None,
 ) -> Any:
     """Lista clientes. Filtros opcionales: q (texto en razón social), is_parent
-    (true/false/all), tipo, estado, segmento, pais (ISO-2), canal."""
-    return _safe(
+    (true/false/all), tipo, estado, segmento, pais (ISO-2), canal.
+    `limit`/`offset`: paginación (default limit=50, máx 200).
+    `campos`: lista separada por comas (ej. "id,razon_social,estado") para proyectar
+    solo esos atributos y ahorrar contexto (Ola 2 · 2.17)."""
+    lim, off = _paging(limit, offset)
+    data = _safe(
         lambda: api.get(
             "clientes/",
             _params(q=q, is_parent=is_parent, tipo=tipo, estado=estado,
-                    segmento=segmento, pais=pais, canal=canal),
+                    segmento=segmento, pais=pais, canal=canal,
+                    limit=lim, offset=off),
         )
     )
+    return _project(campos, data)
+
 
 
 @mcp.tool()
@@ -231,10 +478,17 @@ def oc_listar(
     client: str | None = None,
     estado: str | None = None,
     credit_band: str | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+    campos: str | None = None,
 ) -> Any:
-    """Lista órdenes de compra (OC). Filtros: q, client (UUID), estado, credit_band (GREEN/AMBER/RED)."""
-    return _safe(
-        lambda: api.get("ocs/", _params(q=q, client=client, estado=estado, credit_band=credit_band))
+    """Lista órdenes de compra (OC). Filtros: q, client (UUID), estado, credit_band (GREEN/AMBER/RED).
+    `limit`/`offset`: paginación (default limit=50, máx 200).
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    lim, off = _paging(limit, offset)
+    return _project(
+        campos,
+        _safe(lambda: api.get("ocs/", _params(q=q, client=client, estado=estado, credit_band=credit_band, limit=lim, offset=off)))
     )
 
 
@@ -284,21 +538,33 @@ def expediente_listar(
     estado: str | None = None,
     phase_signal: str | None = None,
     q: str | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+    campos: str | None = None,
 ) -> Any:
     """Lista expedientes. Filtros: oc (UUID de la OC), client, estado
-    (REGISTRO/PRODUCCION/PREPARACION/DESPACHO/TRANSITO/EN_DESTINO/CERRADO), phase_signal, q."""
-    return _safe(
-        lambda: api.get(
-            "expedientes/",
-            _params(oc=oc, client=client, estado=estado, phase_signal=phase_signal, q=q),
+    (REGISTRO/PRODUCCION/PREPARACION/DESPACHO/TRANSITO/EN_DESTINO/CERRADO), phase_signal, q.
+    `limit`/`offset`: paginación (default limit=50, máx 200).
+    `campos`: lista separada por comas (ej. "id,codigo,estado") para proyectar y ahorrar contexto
+    (Ola 2 · 2.17)."""
+    lim, off = _paging(limit, offset)
+    return _project(
+        campos,
+        _safe(
+            lambda: api.get(
+                "expedientes/",
+                _params(oc=oc, client=client, estado=estado, phase_signal=phase_signal, q=q, limit=lim, offset=off),
+            )
         )
     )
 
 
 @mcp.tool()
-def expediente_obtener(expediente_id: str) -> Any:
-    """Detalle de un expediente (acepta UUID o código, p.ej. EXP-1027)."""
-    return _safe(lambda: api.get(f"expedientes/{expediente_id}/"))
+def expediente_obtener(expediente_id: str, campos: str | None = None) -> Any:
+    """Detalle de un expediente (acepta UUID o código, p.ej. EXP-1027).
+    `campos`: lista separada por comas (ej. "id,codigo,estado,client_id") para devolver
+    solo esos atributos y ahorrar contexto (Ola 2 · 2.17)."""
+    return _project(campos, _safe(lambda: api.get(f"expedientes/{expediente_id}/")))
 
 
 @mcp.tool()
@@ -348,10 +614,12 @@ def expediente_lineas(expediente_id: str) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def expediente_resolve_oc_preview(client_id: str, lines: list) -> Any:
     """Paso 2 del wizard: resuelve precios/matching de líneas SIN crear nada.
     `lines`: lista de {client_part_number?, sku?, size, qty}. Devuelve líneas con
-    producto_id, unit_price y needs_review."""
+    producto_id, unit_price y needs_review. Aunque no persiste, ejecuta POST, así
+    que en modo readonly queda bloqueada (guard estructural @write_tool)."""
     return _safe(
         lambda: api.post("expedientes/resolve-oc-preview/", {"client_id": client_id, "lines": lines})
     )
@@ -407,6 +675,10 @@ def expediente_crear(
     _real = [l for l in _lines if str(l.get("sku") or l.get("sku_text") or "").strip().upper() not in ("", "PENDING", "PENDIENTE", "TBD", "NONE")]
     if not _real:
         return {"error": True, "detail": "ocr_payload.lines vacío o dummy (PENDING/sin SKU). Parsea la matriz de tallas de la proforma/OC y envía una línea por SKU×talla REAL (ej. size='39', NUNCA 'UNICA' ni 'PENDING') antes de crear el expediente."}
+    # Ola 2 · 2.16 · validación estructural previa (Pydantic) si está disponible.
+    _verr = validate_lines(_lines)
+    if _verr:
+        return {"error": True, "detail": _verr}
     data = _params(
         client_id=client_id,
         operating_company_id=operating_company_id,
@@ -560,12 +832,17 @@ def documento_subir(
 
 @mcp.tool()
 def documento_listar(
-    expediente: str | None = None, oc: str | None = None, kind: str | None = None
+    expediente: str | None = None, oc: str | None = None, kind: str | None = None,
+    limit: int | None = None, offset: int | None = None,
+    campos: str | None = None,
 ) -> Any:
     """Lista documentos por expediente, oc o kind (respeta visibilidad por audience).
     Revisa `storage_url` y `file_size_bytes`: si `storage_url=null` o `file_size_bytes=0`
-    el documento NO tiene archivo (registro roto) → bórralo con `documento_eliminar` y re-súbelo."""
-    return _safe(lambda: api.get("documentos/", _params(expediente=expediente, oc=oc, kind=kind)))
+    el documento NO tiene archivo (registro roto) → bórralo con `documento_eliminar` y re-súbelo.
+    `limit`/`offset`: paginación (default limit=50, máx 200).
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    lim, off = _paging(limit, offset)
+    return _project(campos, _safe(lambda: api.get("documentos/", _params(expediente=expediente, oc=oc, kind=kind, limit=lim, offset=off))))
 
 
 @mcp.tool()
@@ -576,6 +853,58 @@ def documento_eliminar(documento_id: str) -> Any:
     if g:
         return g
     return _safe(lambda: api.delete(f"documentos/{documento_id}/"))
+
+
+# Ola 2 · 2.18 — descarga firma el acceso al binario almacenado.
+# El MCP autentica a través del token exchange; llamamos a /storage/signed_url/
+# del backend (que ya valida scoping+audience del documento vía su storage_url)
+# para obtener una URL firmada de lectura válida por defecto 15 min (max 60).
+@mcp.tool()
+def documento_descargar(documento_id: str, ttl_minutes: int | None = None) -> Any:
+    """Devuelve una URL firmada para DESCARGAR el binario de un documento.
+
+    Requiere el `documento_id` y que el documento tenga `storage_url` (no esté roto).
+    Llama a /storage/signed_url/ del backend, que aplica el scoping de visibilidad
+    del documento (expediente + audience) antes de firmar. Devuelve
+    `{url, key, method:"GET", expires_at, bucket, available}`. Si el documento no
+    tiene archivo (`storage_url` nulo/vacío) devuelve error claro — usa
+    `documento_subir` para almacenarlo primero.
+    `ttl_minutes`: vigencia de la URL (default 15, máx 60)."""
+    import json as _json
+
+    if ttl_minutes is not None:
+        try:
+            ttl_minutes = max(1, min(int(ttl_minutes), 60))
+        except (TypeError, ValueError):
+            ttl_minutes = 15
+    else:
+        ttl_minutes = 15
+
+    # 1) obtener el documento para saber su storage_url.
+    doc = _safe(lambda: api.get(f"documentos/{documento_id}/"))
+    if isinstance(doc, dict) and doc.get("error"):
+        return doc
+    storage_url = None
+    if isinstance(doc, dict):
+        storage_url = doc.get("storage_url")
+    if not storage_url:
+        return {"error": True, "detail": "El documento no tiene archivo almacenado (storage_url vacío). Sube el binario con documento_subir o un flujo match_subir/sap_confirmar."}
+    # storage_url suele ser la clave MinIO; si es una URL absoluta, extraer la parte de key.
+    key = storage_url
+    if "download/?key=" in str(key):
+        key = str(key).split("download/?key=")[-1]
+    elif key.startswith("http"):
+        # fallback: puede ser una URL firmada ya; si no es MinIO key legible, error.
+        return {"error": True, "detail": f"storage_url no parece una clave MinIO: {storage_url[:80]}"}
+
+    # 2) firmar la lectura.
+    try:
+        return _safe(lambda: api.post(
+            "storage/signed_url/",
+            {"key": key, "kind": "get", "ttl": ttl_minutes * 60},
+        ))
+    except MwtApiError as e:
+        return {"error": True, "status": e.status, "detail": e.payload, "url": e.url}
 
 
 @mcp.tool()
@@ -781,9 +1110,12 @@ def expediente_eventos(expediente_id: str, limit: int = 200) -> Any:
 # D) NODOS
 # =========================================================================== #
 @mcp.tool()
-def nodo_listar(tipo: str | None = None, pais: str | None = None, status: str | None = None, q: str | None = None) -> Any:
-    """Lista nodos (almacenes/oficinas/hubs). Filtros: tipo, pais (ISO-2), status, q."""
-    return _safe(lambda: api.get("nodos/", _params(tipo=tipo, pais=pais, status=status, q=q)))
+def nodo_listar(tipo: str | None = None, pais: str | None = None, status: str | None = None, q: str | None = None, limit: int | None = None, offset: int | None = None, campos: str | None = None) -> Any:
+    """Lista nodos (almacenes/oficinas/hubs). Filtros: tipo, pais (ISO-2), status, q.
+    `limit`/`offset`: paginación (default limit=50, máx 200).
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    lim, off = _paging(limit, offset)
+    return _project(campos, _safe(lambda: api.get("nodos/", _params(tipo=tipo, pais=pais, status=status, q=q, limit=lim, offset=off))))
 
 
 @mcp.tool()
@@ -812,9 +1144,12 @@ def nodo_editar(nodo_id: str, cambios: dict) -> Any:
 
 
 @mcp.tool()
-def nodo_artefactos_listar(nodo_id: str, template_id: int | None = None) -> Any:
-    """Lista los artefactos (Builder) registrados en un nodo."""
-    return _safe(lambda: api.get(f"nodos/{nodo_id}/builder-artifacts/", _params(template_id=template_id)))
+def nodo_artefactos_listar(nodo_id: str, template_id: int | None = None, limit: int | None = None, offset: int | None = None, campos: str | None = None) -> Any:
+    """Lista los artefactos (Builder) registrados en un nodo.
+    `limit`/`offset`: paginación (default limit=50, máx 200).
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    lim, off = _paging(limit, offset)
+    return _project(campos, _safe(lambda: api.get(f"nodos/{nodo_id}/builder-artifacts/", _params(template_id=template_id, limit=lim, offset=off))))
 
 
 @mcp.tool()
@@ -841,16 +1176,52 @@ def nodo_artefacto_crear(nodo_id: str, template_id: int, template_title: str, da
     return _safe(lambda: api.post(f"nodos/{nodo_id}/builder-artifacts/", body))
 
 
+# Ola 2 · 2.19 — editar/publicar artefactos del Builder.
+# El backend ya expone PATCH en /nodos/{nodo}/builder-artifacts/{id}/ con los
+# campos `data`, `structure_snapshot` y `publicado` (visibilidad cliente B2B).
+
+@mcp.tool()
+@write_tool
+def artefacto_editar(nodo_id: str, artifact_id: str, cambios: dict) -> Any:
+    """Edita un artefacto del Builder de un nodo (PATCH parcial).
+
+    `cambios` admite un subconjunto de: `data` (valores por field.id),
+    `structure_snapshot` (snapshot del template) y `lines`. Para el flag de
+    visibilidad cliente usa `artefacto_publicar`. Devuelve el artefacto completo
+    con líneas."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe(lambda: api.patch(f"nodos/{nodo_id}/builder-artifacts/{artifact_id}/", cambios))
+
+
+@mcp.tool()
+@write_tool
+def artefacto_publicar(nodo_id: str, artifact_id: str, publicado: bool = True) -> Any:
+    """Publica/despublica la visibilidad cliente B2B de un artefacto del Builder.
+
+    Con `publicado=true` el artefacto se vuelve visible para clientes (roles
+    client_b2b) en el nodo; con `false` queda solo visible internamente.
+    Devuelve el artefacto actualizado. Es un PATCH del campo `publicado`."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe(lambda: api.patch(f"nodos/{nodo_id}/builder-artifacts/{artifact_id}/", {"publicado": bool(publicado)}))
+
+
 # =========================================================================== #
 # E) INVENTARIO / RECEPCIÓN
 # =========================================================================== #
 @mcp.tool()
-def stock_listar(nodo: str | None = None, producto: str | None = None, solo_disponible: bool | None = None) -> Any:
-    """Lista stock por nodo/producto. `solo_disponible`: solo filas con cantidad>0."""
-    params = _params(nodo=nodo, producto=producto)
+def stock_listar(nodo: str | None = None, producto: str | None = None, solo_disponible: bool | None = None, limit: int | None = None, offset: int | None = None, campos: str | None = None) -> Any:
+    """Lista stock por nodo/producto. `solo_disponible`: solo filas con cantidad>0.
+    `limit`/`offset`: paginación (default limit=50, máx 200).
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    lim, off = _paging(limit, offset)
+    params = _params(nodo=nodo, producto=producto, limit=lim, offset=off)
     if solo_disponible:
         params["solo_disponible"] = 1
-    return _safe(lambda: api.get("stock/", params))
+    return _project(campos, _safe(lambda: api.get("stock/", params)))
 
 
 @mcp.tool()
@@ -888,6 +1259,9 @@ def recepcion_crear(items: list, cost_lines: list | None = None, recepcion_id: s
     g = _wguard()
     if g:
         return g
+    _cerr = validate_cost_lines(cost_lines)
+    if _cerr:
+        return {"error": True, "detail": _cerr}
     body = _params(items=items, cost_lines=cost_lines, recepcion_id=recepcion_id)
     return _safe(lambda: api.post("inventario/nodo-assignments/bulk/", body))
 
@@ -913,11 +1287,14 @@ def inventario_artefactos_expediente(expediente_id: str) -> Any:
 # F) TRANSFERENCIAS (MOVIMIENTOS)
 # =========================================================================== #
 @mcp.tool()
-def transferencia_listar(origen: str | None = None, destino: str | None = None, estado: str | None = None, legal_context: str | None = None, q: str | None = None) -> Any:
+def transferencia_listar(origen: str | None = None, destino: str | None = None, estado: str | None = None, legal_context: str | None = None, q: str | None = None, limit: int | None = None, offset: int | None = None, campos: str | None = None) -> Any:
     """Lista movimientos/transferencias. Filtros: origen, destino (UUID nodo),
     estado (PLANNED/APPROVED/IN_TRANSIT/RECEIVED/RECONCILED/CLOSED/CANCELLED),
-    legal_context (INTERNAL/NATIONALIZATION/EXPORT/DISTRIBUTION/CONSIGNMENT), q."""
-    return _safe(lambda: api.get("transferencias/", _params(origen=origen, destino=destino, estado=estado, legal_context=legal_context, q=q)))
+    legal_context (INTERNAL/NATIONALIZATION/EXPORT/DISTRIBUTION/CONSIGNMENT), q.
+    `limit`/`offset`: paginación (default limit=50, máx 200).
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    lim, off = _paging(limit, offset)
+    return _project(campos, _safe(lambda: api.get("transferencias/", _params(origen=origen, destino=destino, estado=estado, legal_context=legal_context, q=q, limit=lim, offset=off))))
 
 
 @mcp.tool()
@@ -937,18 +1314,24 @@ def transferencia_crear(
     ref_tracking: str | None = None,
     context_data: dict | None = None,
     notes: str | None = None,
+    idempotency_key: str | None = None,
 ) -> Any:
     """Crea un movimiento entre nodos. `origen_id`/`destino_id`: UUID de nodos.
     `legal_context`: INTERNAL/NATIONALIZATION/EXPORT/DISTRIBUTION/CONSIGNMENT.
     `lineas`: [{producto_id, sku, size, qty_transfer, unit_cost, unit_value}].
     `cost_lines`: costos DUA iniciales (ver transfer_costo_agregar).
-    `context_data`: metadata legal (p.ej. bl_awb_number, dua_number, transfer_pricing_amount)."""
+    `context_data`: metadata legal (p.ej. bl_awb_number, dua_number, transfer_pricing_amount).
+    `idempotency_key`: token opcional para que reintentos tras timeout NO dupliquen
+    el movimiento (Ola 2 · 2.20); reutilízalo al reintentar el MISMO movimiento."""
     g = _wguard()
     if g:
         return g
+    _cerr = validate_cost_lines(cost_lines)
+    if _cerr:
+        return {"error": True, "detail": _cerr}
     body = _params(origen_id=origen_id, destino_id=destino_id, legal_context=legal_context,
                    lineas=lineas, cost_lines=cost_lines, ref_tracking=ref_tracking,
-                   context_data=context_data, notes=notes)
+                   context_data=context_data, notes=notes, idempotency_key=idempotency_key)
     return _safe(lambda: api.post("transferencias/", body))
 
 
@@ -1056,6 +1439,19 @@ def transfer_costo_agregar(
     g = _wguard()
     if g:
         return g
+    if kind is None or str(kind).strip().upper() not in {
+            "DAI", "IVA", "ALMACENAJE", "AGENCIAMIENTO", "MANIPULEO", "FLETE", "SEGURO",
+            "CONSOLIDACION", "PROCOMER", "LEY_6946", "TIMBRE_ARCHIVO", "TIMBRE_AGENTES",
+            "TIMBRE_CONTADORES", "OTRO"}:
+        return {"error": True, "detail": f"kind inválido '{kind}'. Válidos: DAI, IVA, ALMACENAJE, AGENCIAMIENTO, MANIPULEO, FLETE, SEGURO, CONSOLIDACION, PROCOMER, LEY_6946, TIMBRE_ARCHIVO, TIMBRE_AGENTES, TIMBRE_CONTADORES, OTRO."}
+    if amount is None or float(amount) <= 0:
+        return {"error": True, "detail": "amount debe ser > 0."}
+    if scope_json:
+        scope_json = dict(scope_json)
+        if scope_json.get("applies_to_all") in (False, 0, "false", "False"):
+            scope_json["applies_to_all"] = False
+        elif not scope_json.get("lines") and not scope_json.get("expediente_ids"):
+            scope_json.setdefault("applies_to_all", True)
     body = _params(kind=kind, amount=amount, label=label, currency=currency, fx_to_usd=fx_to_usd,
                    price_view=price_view, scope_json=scope_json, source=source, document_id=document_id, notes=notes)
     return _safe(lambda: api.post(f"transferencias/{transferencia_id}/cost-lines/", body))
@@ -1156,10 +1552,13 @@ def pago_applicables(
 
 
 @mcp.tool()
-def pago_listar(expediente_id: str | None = None, estado: str | None = None, transferencia_id: str | None = None, q: str | None = None) -> Any:
+def pago_listar(expediente_id: str | None = None, estado: str | None = None, transferencia_id: str | None = None, q: str | None = None, limit: int | None = None, offset: int | None = None, campos: str | None = None) -> Any:
     """Lista pagos. Filtros: expediente_id, estado (PENDIENTE_AI/CONFIRMADO_AI/NEEDS_REVIEW/
-    CONFIRMADO_HUMANO/RECHAZADO/REVERTIDO), transferencia_id, q."""
-    return _safe(lambda: api.get("finance/payments/", _params(expediente_id=expediente_id, estado=estado, transferencia_id=transferencia_id, q=q)))
+    CONFIRMADO_HUMANO/RECHAZADO/REVERTIDO), transferencia_id, q.
+    `limit`/`offset`: paginación (default limit=50, máx 200).
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    lim, off = _paging(limit, offset)
+    return _project(campos, _safe(lambda: api.get("finance/payments/", _params(expediente_id=expediente_id, estado=estado, transferencia_id=transferencia_id, q=q, limit=lim, offset=off))))
 
 
 @mcp.tool()
@@ -1169,9 +1568,12 @@ def pago_obtener(pago_id: str) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def pago_dry_run(expediente_id: str, monto: float, direction: str, aplicaciones: list, counterparty_type: str | None = None, counterparty_id: str | None = None) -> Any:
     """Simula un pago sin persistir: valida y previsualiza el efecto sobre el crédito.
-    `direction`: IN (entrante, cliente→MWT) u OUT (saliente, MWT→proveedor)."""
+    `direction`: IN (entrante, cliente→MWT) u OUT (saliente, MWT→proveedor).
+    Aunque no persiste, ejecuta POST, así que en modo readonly queda bloqueada
+    (guard estructural @write_tool)."""
     body = _params(expediente_id=expediente_id, monto=monto, direction=direction,
                    aplicaciones=aplicaciones, counterparty_type=counterparty_type, counterparty_id=counterparty_id)
     return _safe(lambda: api.post("finance/payments/dry-run/", body))
@@ -1190,9 +1592,12 @@ def pago_registrar(
     notas: str | None = None,
     file_path: str | None = None,
     event_id: str | None = None,
+    idempotency_key: str | None = None,
 ) -> Any:
     """Registra un pago (entrante o saliente). Queda en estado borrador (PENDIENTE_AI/
     NEEDS_REVIEW) y NO afecta saldos ni crédito hasta conciliar (ver pago_conciliar).
+    `idempotency_key`: token opcional para que reintentos tras timeout NO registren
+    el mismo pago dos veces (Ola 2 · 2.20); reutilízalo al reintentar el MISMO pago.
 
     - `metodo`: TRANSFERENCIA_BANCARIA o NOTA_CREDITO.
     - `tipo_pago`: PARCIAL o COMPLETO. `referencia`: nº de referencia (3-64 chars).
@@ -1204,9 +1609,13 @@ def pago_registrar(
     g = _wguard()
     if g:
         return g
+    _aerr = validate_aplicaciones(aplicaciones)
+    if _aerr:
+        return {"error": True, "detail": _aerr}
     data = _params(expediente_id=expediente_id, monto=monto, moneda=moneda, fecha=fecha,
                    metodo=metodo, tipo_pago=tipo_pago, referencia=referencia,
-                   aplicaciones=aplicaciones, notas=notas, event_id=event_id)
+                   aplicaciones=aplicaciones, notas=notas, event_id=event_id,
+                   idempotency_key=idempotency_key)
     return _safe(lambda: api.post_multipart("finance/payments/", data, file_path, file_field="evidencia"))
 
 
@@ -1264,6 +1673,44 @@ def storage_subir_archivo(file_path: str, scope: str = "artifact-field/misc", fi
     if filename:
         data["filename"] = filename
     return _safe(lambda: api.post_multipart("storage/upload-proxy/", data, file_path, file_field="file"))
+
+
+# Ola 2 · 2.18 — descarga de un binario con key de MinIO (campos de archivo
+# de artefactos, evidencia de pago, etc.). Aprovecha el endpoint signed_url
+# del backend, que aplica el scoping adecuado según el key.
+@mcp.tool()
+def artefacto_archivo_descargar(key: str, ttl_minutes: int | None = None) -> Any:
+    """Devuelve una URL firmada para DESCARGAR un binario a partir de su key MinIO.
+
+    Útil para los CAMBOS de archivo de un artefacto del Builder (AWB/BL, factura),
+    evidencias de pago, etc.: obtienes el `key` desde el detalle/proyección y aquí
+    se firma una URL GET (léete) temporal. El backend valida el acceso según el key
+    (documentos respetan expediente+audience; otros activos, staff autenticado).
+    `ttl_minutes`: vigencia (default 15, máx 60). Si `key` es un objeto con la clave
+    `key` (como el valor de un campo file), se extrae automáticamente."""
+    import json as _json
+
+    if isinstance(key, dict):
+        key = key.get("key") or key.get("url")
+    if not key:
+        return {"error": True, "detail": "Falta 'key' de MinIO."}
+
+    if ttl_minutes is not None:
+        try:
+            ttl_minutes = max(1, min(int(ttl_minutes), 60))
+        except (TypeError, ValueError):
+            ttl_minutes = 15
+    else:
+        ttl_minutes = 15
+
+    clean = key
+    if "download/?key=" in str(key):
+        clean = str(key).split("download/?key=")[-1]
+
+    return _safe(lambda: api.post(
+        "storage/signed_url/",
+        {"key": clean, "kind": "get", "ttl": ttl_minutes * 60},
+    ))
 
 
 # =========================================================================== #
