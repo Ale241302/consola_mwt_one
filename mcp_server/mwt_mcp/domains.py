@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from mcp.server.fastmcp import FastMCP
+from .tool_rbac import RbacFastMCP
 
 # --------------------------------------------------------------------------- #
 # Dominio -> tools (nombre final tal como se registra).
@@ -142,17 +142,18 @@ def _tool_fns(names: Iterable[str]) -> dict:
     return out
 
 
-def build(domain: str) -> FastMCP:
-    """Devuelve una instancia FastMCP de dominio con SOLO sus tools (+shared).
+def build(domain: str) -> RbacFastMCP:
+    """Devuelve una instancia RbacFastMCP de dominio con SOLO sus tools (+shared).
 
     Si `domain` no está en DOMAINS, lanza ValueError. El nombre del servidor es
     el rótulo de dominio (ej. 'mwt-comercial') para montarlos por separado en
-    ContextForge.
+    ContextForge. Igual que el monolito, el filtrado por rol aplica en
+    list_tools (Ola 2 · RBAC por usuario conectado).
     """
     if domain not in DOMAINS:
         raise ValueError(f"Dominio desconocido: {domain!r}. Válidos: {sorted(DOMAIN_NAMES)}.")
 
-    mcp = FastMCP(SERVER_LABELS[domain])
+    mcp = RbacFastMCP(SERVER_LABELS[domain])
     try:
         mcp.description = BRIEF_DESC[domain]
     except Exception:  # noqa: BLE001 - ajuste de metadato opcional

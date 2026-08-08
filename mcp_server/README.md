@@ -4,9 +4,15 @@ Servidor **MCP (Model Context Protocol)** que expone la operación completa de l
 Consola MWT.ONE como herramientas para que un agente de IA externo (Antigravity,
 Kimi CLI, Claude Desktop, Cursor, etc.) opere sobre la plataforma vía su API REST.
 
-Autentica con un **token de servicio de larga vida** (≈100 años) generado contra
-el backend. No guarda estado local: cada herramienta es una llamada autenticada a
+Autentica con un **token de servicio** (`manage.py mint_mcp_token`) contra el
+backend. No guarda estado local: cada herramienta es una llamada autenticada a
 `https://consola.mwt.one/api`.
+
+Cuando el MCP corre detrás del gateway (ContextForge → Authentik en
+`mcp.mwt.one`), la identidad del usuario OAuth se propaga (`X-Forwarded-User-*`),
+el MCP pide un JWT de ese usuario al backend y **las tools se filtran por su
+rol** (ver §1.1). El token de servicio solo se usa si NO hay identidad
+propagada (acceso directo / stdio).
 
 ---
 
@@ -32,34 +38,54 @@ el backend. No guarda estado local: cada herramienta es una llamada autenticada 
 | **Pagos** | `pago_applicables`, `pago_listar`, `pago_obtener`, `pago_dry_run`, `pago_registrar`, `pago_conciliar`, `pago_liberar_credito`, `pago_rechazar` |
 | **Salud** | `mwt_whoami` |
 
+### 1.1 Filtrado de tools por rol (RBAC) y fail-closed
+
+- **1 solo servidor MCP** (`mwt-one`) con las 105 tools. No se parte en 3
+  dominios; la reducción de contexto se logra ocultando al agente las tools que
+  su rol no puede usar (`mcp_server/mwt_mcp/tool_rbac.py`).
+- `list_tools` consulta el perfil del usuario (rol + `permissions` de
+  `core.roles.permissions`) vía `POST /api/auth/mcp-token/` y devuelve solo las
+  tools del mapa `TOOL_MODULES` cuyo `(módulo, acción)` el rol permite.
+  Ejemplo: un usuario sin `clientes.create` no ve `cliente_crear`.
+- Sin identidad (ServiceToken puro / stdio / registro del server) → se listan
+  las 105. Admin/superadmin o `modules=["*"]` → las 105.
+- **Fail-closed:** si hay identidad propagada pero el backend no emite JWT
+  (usuario inactivo/borrado), `list_tools` devuelve `[]` y cada llamada a la API
+  falla con 401 — **nunca** se cae al token de servicio admin. Esto cierra la
+  fuga "borro un usuario de la consola y sigue entrando por el MCP".
+- Flag: `MWT_MCP_RBAC=0` desactiva el filtro de listado (el enforcement real
+  siempre vive en el backend, no en el MCP).
+
 ---
 
-## 2. Generar el token (sin vencimiento)
+## 2. Generar el token de servicio
 
 El backend ya incluye el comando `mint_mcp_token`. Córrelo **en el VPS** contra el
-contenedor `django` (firma con el `DJANGO_SECRET_KEY` de producción):
+contenedor `django`:
 
 ```bash
 ssh -p 2222 root@187.77.218.102
 cd /opt/consola-mwt-one
 docker exec -i consola-mwt-one-django python manage.py mint_mcp_token \
-  --email alejandro@muitowork.com
+  --name mcp-gateway-prod --scopes mcp:*,mcp:token_exchange --expires-days 30
 ```
 
 Salida (ejemplo):
 
 ```
-== MWT.ONE — MCP service token ==
-  usuario : alejandro@muitowork.com
-  rol     : superadmin
-  vida    : 36500 dias
+== MWT.ONE — ServiceToken emitido ==
+  id         : <uuid>
+  name       : mcp-gateway-prod
+  scopes     : mcp:*, mcp:token_exchange
+  expires_at : 2026-09-06T...
   TOKEN (guardalo como MWT_MCP_TOKEN en el .env del MCP):
 
-  eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9....<token largo>....
+  <token opaco de 64 hex>
 ```
 
-> Para capturar solo el token (sin banner): añade `--quiet`.
-> Para revocarlo: rota `DJANGO_SECRET_KEY` o desactiva el usuario en `core.users`.
+> Para capturar solo el token: añade `--quiet`. Vida default 30 días, máximo 90.
+> Para revocarlo (sin rotar `DJANGO_SECRET_KEY`):
+> `python manage.py revoke_service_token <id>`
 
 Copia ese token: es tu `MWT_MCP_TOKEN`.
 
@@ -93,7 +119,8 @@ docker run -d --name mwt-mcp -p 8765:8765 \
 Variables de entorno (ver `.env.example`): `MWT_API_BASE`, `MWT_MCP_TOKEN`,
 `MWT_MCP_TRANSPORT` (`stdio`|`http`), `MWT_MCP_HOST`, `MWT_MCP_PORT`,
 `MWT_HTTP_TIMEOUT`, `MWT_MCP_READONLY` (`1` = solo lectura),
-`MWT_MCP_DOMAIN` (`comercial`|`logistica`|`finanzas`; vacío = monolito).
+`MWT_MCP_DOMAIN` (`comercial`|`logistica`|`finanzas`; vacío = monolito),
+`MWT_MCP_RBAC` (`1` default = filtra tools por rol; `0` = lista las 105).
 
 ---
 

@@ -205,8 +205,9 @@ export default function RolesPermissions() {
   }, [matrix]);
 
   // Sprint 2026-05-21 · A5 RBAC redesign: categorias alineadas al sidebar.
-  // Orden: CORE → COMERCIAL → ALMACEN → COMUNICACIONES → SOPORTE → ADMINISTRACION.
-  const CAT_ORDER = ["CORE","COMERCIAL","ALMACEN","COMUNICACIONES","SOPORTE","ADMINISTRACION","OTROS"];
+  // Ola 2 · A7: se añaden FINANCIERO (pagos) y CATALOGOS (sizing) que usa el MCP.
+  // Orden: CORE → COMERCIAL → CATALOGOS → ALMACEN → FINANCIERO → COMUNICACIONES → SOPORTE → ADMINISTRACION.
+  const CAT_ORDER = ["CORE","COMERCIAL","CATALOGOS","ALMACEN","FINANCIERO","COMUNICACIONES","SOPORTE","ADMINISTRACION","OTROS"];
   const orderedCats = CAT_ORDER.filter((c) => grouped[c]?.length > 0);
 
   // ── Render ──────────────────────────────────────────────

@@ -13,8 +13,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-
 from . import client as api
 from .client import MwtApiError
 from .config import settings
@@ -24,8 +22,12 @@ from .schemas import (
     validate_cost_lines,
     validate_lines,
 )
+from .tool_rbac import RbacFastMCP
 
-mcp = FastMCP("mwt-one")
+# Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con las 105 tools.
+# El filtrado por rol del usuario conectado se hace en list_tools vía
+# RbacFastMCP (tool_rbac.py), NO partiendo el server en 3 dominios.
+mcp = RbacFastMCP("mwt-one")
 
 
 # --------------------------------------------------------------------------- #

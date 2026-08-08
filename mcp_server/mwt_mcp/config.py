@@ -23,6 +23,11 @@ class Settings:
         # Vacío/None => monolito completo (mwt-one). Se lee por env; el CLI
         # --domain tiene PRIORIDAD sobre esta variable (ver __main__).
         self.env_domain: str = (os.environ.get("MWT_MCP_DOMAIN") or "").strip().lower()
+        # Ola 2 · filtrado de tools por rol del usuario conectado (Rol basado).
+        # Default ON. Con MWT_MCP_RBAC=0 el list_tools devuelve todas las tools
+        # (comportamiento anterior, solo ServiceToken). El enforcement real de
+        # permisos siempre vive en el backend; esto reduce lo que ve el agente.
+        self.rbac_filter: bool = _truthy(os.environ.get("MWT_MCP_RBAC", "1"))
 
     def require_token(self) -> str:
         if not self.token:

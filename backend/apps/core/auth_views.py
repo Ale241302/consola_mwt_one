@@ -603,46 +603,63 @@ class McpTokenView(APIView):
         return (uid or "").strip().lower()
 
     def _fetch_target(self, email, uid):
-        # Nota de seguridad (Fugu · Ola 2 - 2.15): el legal_entity_ids del
-        # usuario objetivo se obtiene de users.mwtuser (misma fuente que
-        # LoginView/MeView). Antes el JWT emitido heredaba los client_ids del
-        # ServiceToken, no los tenants reales del usuario → posible ampliación
-        # o vaciado de tenants. Ahora la intersección se hace contra el
-        # usuario real.
+        """Resuelve el usuario objetivo (core.users) con sus permisos reales.
+
+        Fugu · Ola 2 · 2.15-fix — RBAC por rol, no por bridge:
+          El JWT emitido debe reflejar los permisos del ROL del usuario tal como
+          los lee el enforcement (`RoleBasedPermission._permissions_for_role`).
+          Antes se resolvía por `core.user_roles` (LEFT JOIN): si el usuario no
+          tenía fila en el bridge (caso normal: solo hay 1 bridge en producción)
+          el JWT salía con `permissions={}` → el filtrado de tools por rol del
+          MCP ocultaba TODO para ese usuario. Ahora:
+            - role_slug se resuelve del bridge SI existe, si no de `u.role`.
+            - permissions se calcula SIEMPRE desde core.roles.permissions por
+              role_slug (misma fuente que el enforcement), con wildcard para
+              admin/superadmin.
+        """
+        from .permissions import _permissions_for_role
+
+        def _legal_ids(cursor, email_plain):
+            ids = []
+            try:
+                email_low = (email_plain or "").strip().lower()
+                if not email_low:
+                    return ids
+                cursor.execute(
+                    """
+                    SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                      FROM users.mwtuser
+                     WHERE lower(trim(email_plain)) = %s
+                        OR lower(trim(COALESCE(contact_email, ''))) = %s
+                     ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                              cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
+                              updated_at DESC NULLS LAST
+                     LIMIT 1
+                    """,
+                    [email_low, email_low],
+                )
+                mrow = cursor.fetchone()
+                if mrow and mrow[0]:
+                    ids = [str(x) for x in mrow[0] if x]
+            except Exception:  # noqa: BLE001
+                # users.mwtuser puede no existir en ambientes legacy.
+                pass
+            return ids
+
         def _finish(cursor, row):
             if not row:
                 return None
             data = dict(
                 zip(
                     ["id", "email_plain", "full_name", "role", "is_active",
-                     "is_staff", "last_login_at", "role_slug", "role_name",
-                     "permissions"],
+                     "is_staff", "last_login_at", "role_slug", "role_name"],
                     row,
                 )
             )
-            data["legal_entity_ids"] = []
-            try:
-                email_low = (data["email_plain"] or "").strip().lower()
-                if email_low:
-                    cursor.execute(
-                        """
-                        SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
-                          FROM users.mwtuser
-                         WHERE lower(trim(email_plain)) = %s
-                            OR lower(trim(COALESCE(contact_email, ''))) = %s
-                         ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
-                                  cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
-                                  updated_at DESC NULLS LAST
-                         LIMIT 1
-                        """,
-                        [email_low, email_low],
-                    )
-                    mrow = cursor.fetchone()
-                    if mrow and mrow[0]:
-                        data["legal_entity_ids"] = [str(x) for x in mrow[0] if x]
-            except Exception:  # noqa: BLE001
-                # users.mwtuser puede no existir en ambientes legacy.
-                data["legal_entity_ids"] = data.get("legal_entity_ids") or []
+            role_slug = data.get("role_slug") or data.get("role") or ""
+            # Permisos SIEMPRE desde core.roles por slug (fuente del enforcement).
+            data["permissions"] = _permissions_for_role(str(role_slug))
+            data["legal_entity_ids"] = _legal_ids(cursor, data.get("email_plain"))
             return data
 
         with connection.cursor() as cur:
@@ -651,9 +668,8 @@ class McpTokenView(APIView):
                     """
                     SELECT u.id, u.email_plain, u.full_name, u.role, u.is_active,
                            u.is_staff, u.last_login_at,
-                           COALESCE(r.slug, u.role)        AS role_slug,
-                           COALESCE(r.name, u.role)        AS role_name,
-                           COALESCE(r.permissions, '{}'::jsonb) AS permissions
+                           COALESCE(r.slug, u.role)  AS role_slug,
+                           COALESCE(r.name, u.role)  AS role_name
                       FROM core.users u
                       LEFT JOIN core.user_roles ur ON ur.user_uuid = u.id
                       LEFT JOIN core.roles      r  ON r.id         = ur.role_uuid
@@ -672,9 +688,8 @@ class McpTokenView(APIView):
                     """
                     SELECT u.id, u.email_plain, u.full_name, u.role, u.is_active,
                            u.is_staff, u.last_login_at,
-                           COALESCE(r.slug, u.role)        AS role_slug,
-                           COALESCE(r.name, u.role)        AS role_name,
-                           COALESCE(r.permissions, '{}'::jsonb) AS permissions
+                           COALESCE(r.slug, u.role)  AS role_slug,
+                           COALESCE(r.name, u.role)  AS role_name
                       FROM core.users u
                       LEFT JOIN core.user_roles ur ON ur.user_uuid = u.id
                       LEFT JOIN core.roles      r  ON r.id         = ur.role_uuid

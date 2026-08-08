@@ -13,7 +13,7 @@ from typing import Any
 import httpx
 
 from .config import settings
-from .jwt_minter import get_identity_token
+from .jwt_minter import IdentityMintingError, get_identity_token
 
 
 class MwtApiError(Exception):
@@ -27,7 +27,17 @@ class MwtApiError(Exception):
 
 
 def _auth_headers() -> dict[str, str]:
-    token = get_identity_token()
+    try:
+        token = get_identity_token()
+    except IdentityMintingError as e:
+        # Fail-closed: hay identidad propagada (usuario OAuth) pero el backend
+        # no emite JWT (inactivo/borrado). El tool debe fallar con 401 claro,
+        # NUNCA ejecutar con el token de servicio admin.
+        raise MwtApiError(
+            401,
+            {"detail": f"Autenticación denegada: {e}"},
+            settings.api_base,
+        )
     # Sprint 2026-08-07 · Ola 1 F3: Bearer para JWT legacy, ServiceToken para
     # tokens de servicio opacos emitidos por manage.py mint_mcp_token.
     if token.startswith("eyJ"):
