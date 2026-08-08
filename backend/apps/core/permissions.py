@@ -128,6 +128,40 @@ def _normalize_perms(value) -> dict:
     return {}
 
 
+def permissions_for_role_exact(role_slug: str) -> dict:
+    """Devuelve el JSONB `permissions` de core.roles tal cual está en la BD.
+
+    A diferencia de `_permissions_for_role`, NO fuerza `modules=["*"]` para
+    admin/superadmin: respeta la matriz real que el CEO configura en
+    /roles (users.role_permission → sync → core.roles.permissions).
+
+    Usado por McpTokenView (JWT del MCP) para que el filtrado de tools del
+    MCP refleje EXACTAMENTE lo que la matriz de roles permite — si el CEO
+    deshabilita `clientes.create`, la tool `cliente_crear` deja de aparecer
+    aunque el usuario sea admin.
+
+    Fail-closed: si el rol no existe o hay error de DB → {} (sin wildcard).
+    """
+    if not role_slug:
+        return {}
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT permissions FROM core.roles WHERE slug = %s LIMIT 1",
+                [role_slug],
+            )
+            row = cur.fetchone()
+        if not row:
+            return {}
+        return _normalize_perms(row[0])
+    except Exception as exc:  # noqa: BLE001 - blindaje contra HTML 500
+        log.exception(
+            "[permissions_for_role_exact] DB query failed for role_slug=%r: %s",
+            role_slug, exc,
+        )
+        return {}
+
+
 def _permissions_for_role(role_slug: str) -> dict:
     """Devuelve el JSONB permissions de core.roles para un slug.
 

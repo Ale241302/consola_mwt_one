@@ -176,17 +176,20 @@ def _normalize_permissions(user: dict) -> dict:
 def allowed_tool_names(user: dict) -> set[str] | None:
     """Devuelve el set de tools permitidas para el usuario, o None si todas.
 
-    None significa "sin restricción" (sin identidad, rol admin, o modules=["*"]).
+    None significa "sin restricción" (sin identidad, o modules=["*"] explícito
+    en la matriz). Admin/superadmin NO reciben wildcard automático: se respeta
+    la matriz real de core.roles.permissions que configura el CEO en /roles
+    (si deshabilitó clientes.create para admin, la tool cliente_crear no
+    aparece).
     """
     if not user:
         return None
 
-    role = str(user.get("role") or user.get("role_slug") or "").strip().lower()
     perms = _normalize_permissions(user)
     modules = perms.get("modules") or []
     actions = perms.get("actions") or []
 
-    if role in _WILDCARD_ROLES or "*" in modules:
+    if "*" in modules:
         return None
     if not modules:
         # Rol sin matriz materializada: solo tools de introspección (seguro).

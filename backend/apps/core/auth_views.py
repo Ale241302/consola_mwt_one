@@ -617,7 +617,7 @@ class McpTokenView(APIView):
               role_slug (misma fuente que el enforcement), con wildcard para
               admin/superadmin.
         """
-        from .permissions import _permissions_for_role
+        from .permissions import permissions_for_role_exact
 
         def _legal_ids(cursor, email_plain):
             ids = []
@@ -657,8 +657,11 @@ class McpTokenView(APIView):
                 )
             )
             role_slug = data.get("role_slug") or data.get("role") or ""
-            # Permisos SIEMPRE desde core.roles por slug (fuente del enforcement).
-            data["permissions"] = _permissions_for_role(str(role_slug))
+            # Permisos desde core.roles por slug, TAL CUAL están en la matriz
+            # (sin wildcard forzado para admin/superadmin). Así el JWT del MCP
+            # refleja lo que el CEO configura en /roles: si deshabilita
+            # clientes.create, la tool cliente_crear no aparece ni para admin.
+            data["permissions"] = permissions_for_role_exact(str(role_slug))
             data["legal_entity_ids"] = _legal_ids(cursor, data.get("email_plain"))
             return data
 
