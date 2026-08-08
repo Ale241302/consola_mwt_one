@@ -1,40 +1,137 @@
 # =====================================================================
 # MWT.ONE · MCP Gateway Stack
 # Expone el mcp_server de MWT como Remote MCP para Claude.ai/Cowork/Desktop.
-# Componentes:
-#   - pocket-id: proveedor OIDC/OAuth 2.1 (idp.mwt.one)
-#   - contextforge: gateway MCP con OAuth resource server (mcp.consola.mwt.one)
+#
+# Stack de identidad REAL: Authentik (goauthentik). El gateway contextforge
+# usa Authentik como OIDC/OAuth resource server de producción en mcp.mwt.one.
+# La migración planeada a Pocket-ID queda documentada e INACTIVA en
+# docker-compose.pocketid.yml (no activarla sin su propia ventana OAuth).
+#
+# Componentes (alineado al runtime de producción):
+#   authentik-postgresql · authentik-redis · authentik-server · authentik-worker
+#   contextforge (MCP gateway / OAuth resource server)
 # =====================================================================
 
 name: mcp-gateway
 
 services:
   # -----------------------------------------------------------------
-  # Pocket-ID — OIDC/OAuth 2.1 provider (passkeys + password fallback)
+  # Authentik — PostgreSQL 16 (datos OAuth: usuarios, flows, outposts)
   # -----------------------------------------------------------------
-  pocket-id:
-    image: ghcr.io/pocket-id/pocket-id:latest
-    container_name: mcp-gateway-pocket-id
+  authentik-postgresql:
+    image: postgres:16-alpine
+    container_name: mcp-gateway-authentik-postgresql
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      APP_URL: https://idp.mwt.one
-      TRUST_PROXY: "true"
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data
     volumes:
-      - ./data/pocket-id:/app/data
+      - ./data/authentik/postgresql:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik -d authentik"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
     networks:
       - mcp-gateway-net
       - consola-mwt-one-net
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:1411/healthz"]
-      interval: 20s
-      timeout: 5s
-      retries: 5
-      start_period: 15s
 
   # -----------------------------------------------------------------
-  # ContextForge — MCP gateway, registry and proxy
+  # Authentik — Redis (cache/session)
+  # -----------------------------------------------------------------
+  authentik-redis:
+    image: redis:alpine
+    container_name: mcp-gateway-authentik-redis
+    restart: unless-stopped
+    command: --save 60 1 --loglevel warning
+    volumes:
+      - ./data/authentik/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 5s
+    networks:
+      - mcp-gateway-net
+      - consola-mwt-one-net
+
+  # -----------------------------------------------------------------
+  # Authentik — Server (IdP)
+  # -----------------------------------------------------------------
+  authentik-server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2025.6.3}
+    container_name: mcp-gateway-authentik-server
+    restart: unless-stopped
+    command: server
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_LISTEN__HTTP: 0.0.0.0:9000
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:-admin@mwt.one}
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_ADMIN_PASSWORD}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "ak healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - mcp-gateway-net
+      - consola-mwt-one-net
+
+  # -----------------------------------------------------------------
+  # Authentik — Worker
+  # -----------------------------------------------------------------
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2025.6.3}
+    container_name: mcp-gateway-authentik-worker
+    restart: unless-stopped
+    command: worker
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD}
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+      AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "ak healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - mcp-gateway-net
+      - consola-mwt-one-net
+
+  # -----------------------------------------------------------------
+  # ContextForge — MCP gateway, registry and proxy (OAuth -> Authentik)
   # -----------------------------------------------------------------
   contextforge:
     image: ghcr.io/ibm/mcp-context-forge:latest
@@ -42,7 +139,8 @@ services:
     restart: unless-stopped
     entrypoint: ["/patch/entrypoint.sh"]
     depends_on:
-      pocket-id: { condition: service_healthy }
+      authentik-server:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -51,14 +149,13 @@ services:
       APP_DOMAIN: https://mcp.mwt.one
       DATABASE_URL: sqlite:////data/mcp.db
       MCPGATEWAY_UI_ENABLED: "true"
-      MCPGATEWAY_ADMIN_API_ENABLED: "true"
+      # Fugu · Ola 2 - 2.15 · hardening producción.
+      MCPGATEWAY_ADMIN_API_ENABLED: "false"
       SSO_ENABLED: "true"
       AUTH_REQUIRED: "true"
-      SECURE_COOKIES: "false"
-      LOG_LEVEL: DEBUG
-      # ContextForge no permite por defecto llamar a backends en IPs privadas.
-      # Ajustar a la CIDR real de consola-mwt-one-net (ver docker network inspect).
-      SSRF_ALLOWED_NETWORKS: '["172.21.0.0/16"]'  # actualizar si cambia
+      SECURE_COOKIES: "true"
+      LOG_LEVEL: INFO
+      SSRF_ALLOWED_NETWORKS: '["172.21.0.0/16"]'
     volumes:
       - ./data/contextforge:/data
       - ./patch:/patch
@@ -75,8 +172,8 @@ services:
 # ---------------------------------------------------------------------
 # Volúmenes / datos persistentes
 # ---------------------------------------------------------------------
-# ./data/pocket-id     -> usuarios, clients OIDC, config
-# ./data/contextforge  -> SQLite mcp.db
+# ./data/authentik/postgresql · ./data/authentik/redis · ./data/contextforge
+# ./patch -> entrypoint wrapper + patches de ContextForge
 
 # ---------------------------------------------------------------------
 # Redes

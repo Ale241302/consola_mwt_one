@@ -1,0 +1,22 @@
+# =====================================================================
+# MWT.ONE · MCP Gateway — Pocket-ID stack (INACTIVO / DOCUMENTACIÓN)
+# =====================================================================
+# ESTE ARCHIVO ESTÁ INACTIVO. NO CORRER `docker compose -f este up`.
+#
+# Razón: la migración Authentik → Pocket-ID es un proyecto OAuth de alto
+# riesgo. Fugu (auditoría Ola 2 · 2.15) recomendó NO completarla sin su
+# propia ventana de migración, porque rompería el login OIDC de mcp.mwt.one.
+# El stack de identidad real y activo es AUTHENTIK (ver docker-compose.yml).
+#
+# Este archivo conserva el estado "experimental Pocket-ID" por si en el
+# futuro se decide retomar la migración, con los pasos de corte ya planteados:
+#   1. Crear clients OIDC en Pocket-ID y migrar usuarios/grupos.
+#   2. Reconfigurar contextforge (SSO) para apuntar a Pocket-ID (idp.mwt.one).
+#   3. Cortar DNS idp.mwt.one desde Authentik hacia Pocket-ID.
+#   4. Validar login MCP completo antes de eliminar Authentik.
+#
+# Continuar solo bajo plan de migración específico y ventana programada.
+# =====================================================================
+
+# (Definición conservada del estado anterior — consulte el historial de git /
+#  docker-compose.yml.bak.pocketid_active en el VPS para el contenido exacto.)
