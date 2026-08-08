@@ -10,12 +10,13 @@ el backend. No guarda estado local: cada herramienta es una llamada autenticada 
 
 ---
 
-## 1. Qué puede hacer (99 herramientas)
+## 1. Qué puede hacer (105 herramientas)
 
-| Dominio | Herramientas |
-|---|---|
+| Dominio      | Herramientas                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------- |
 | **Clientes** | `cliente_listar`, `cliente_obtener`, `cliente_crear`, `cliente_editar`, `cliente_subsidiarias`, `cliente_kpis_pool` |
-| **Productos** | `producto_listar`, `producto_obtener`, `producto_crear`, `producto_editar`, `ncm_listar` |
+
+| **Productos** | `producto_listar`, `producto_obtener`, `producto_crear`, `producto_editar`, `producto_alias_crear`, `ncm_listar`, `tallas_listar` |
 | **OC / Expedientes** | `oc_listar`, `oc_obtener`, `expediente_listar`, `expediente_obtener`, `expediente_buscar` (anti-duplicados), `expediente_lineas`, `expediente_resolve_oc_preview`, `expediente_crear`, `lineas_actualizar_precios`, `expediente_apply_pronto_pago`, `expediente_edit_full_get/patch` |
 | **Documentos** | `documento_subir`, `documento_listar` |
 | **SAP** | `sap_analizar`, `sap_confirmar`, `sap_upsert`, `sap_obtener`, `sap_editar`, `sap_sincronizar_discrepancias` |
@@ -29,7 +30,6 @@ el backend. No guarda estado local: cada herramienta es una llamada autenticada 
 | **Costos / impuestos / gastos** | `transfer_costos_listar`, `transfer_costo_agregar`, `transfer_costo_editar`, `transfer_costo_eliminar`, `transfer_artefacto_crear` |
 | **Landed cost / factura** | `transfer_liquidacion_preview`, `transfer_liquidar`, `transfer_factura_payload`, `transfer_notas_listar`, `transfer_nota_crear` |
 | **Pagos** | `pago_applicables`, `pago_listar`, `pago_obtener`, `pago_dry_run`, `pago_registrar`, `pago_conciliar`, `pago_liberar_credito`, `pago_rechazar` |
-| **Builder** | `builder_templates_listar`, `builder_template_obtener` |
 | **Salud** | `mwt_whoami` |
 
 ---
@@ -92,7 +92,8 @@ docker run -d --name mwt-mcp -p 8765:8765 \
 
 Variables de entorno (ver `.env.example`): `MWT_API_BASE`, `MWT_MCP_TOKEN`,
 `MWT_MCP_TRANSPORT` (`stdio`|`http`), `MWT_MCP_HOST`, `MWT_MCP_PORT`,
-`MWT_HTTP_TIMEOUT`, `MWT_MCP_READONLY` (`1` = solo lectura).
+`MWT_HTTP_TIMEOUT`, `MWT_MCP_READONLY` (`1` = solo lectura),
+`MWT_MCP_DOMAIN` (`comercial`|`logistica`|`finanzas`; vacío = monolito).
 
 ---
 

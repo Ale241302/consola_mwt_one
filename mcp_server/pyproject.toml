@@ -11,6 +11,10 @@ dependencies = [
 
 [project.scripts]
 mwt-mcp = "mwt_mcp.__main__:main"
+# Ola 2 · 2.14 — servidores por dominio (cada uno monta solo su subset de tools).
+mwt-mcp-comercial = "mwt_mcp.domains_cli:main_comercial"
+mwt-mcp-logistica = "mwt_mcp.domains_cli:main_logistica"
+mwt-mcp-finanzas = "mwt_mcp.domains_cli:main_finanzas"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -18,3 +22,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["mwt_mcp"]
+
