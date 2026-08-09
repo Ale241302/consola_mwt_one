@@ -9416,3 +9416,105 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
     padding: 8px 6px;
   }
 }
+
+/* =====================================================================
+   Ola 3 · 3.25 · Accesibilidad — .mwt-modal* y .mwt-field*
+   Shell reutilizable de modal accesible (ui/Modal.jsx) y campo con
+   label (ui/Field.jsx). El overlay NO se imprime; el diálogo hereda
+   los estilos de la app.
+   ===================================================================== */
+.mwt-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(11, 30, 58, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.mwt-modal {
+  background: white;
+  border-radius: 14px;
+  max-height: 90vh;
+  box-shadow: 0 30px 60px -20px rgba(15, 27, 61, 0.55);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  outline: none;
+  width: min(560px, 96vw);
+}
+.mwt-modal--sm { width: min(400px, 96vw); }
+.mwt-modal--lg { width: min(760px, 96vw); }
+.mwt-modal--xl { width: min(960px, 96vw); }
+.mwt-modal-head {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: linear-gradient(135deg, rgba(48, 131, 254, 0.04), rgba(0, 178, 134, 0.03));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mwt-modal-title {
+  margin: 0;
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+.mwt-modal-close {
+  background: transparent;
+  border: 0;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.mwt-modal-close:hover { color: var(--text-primary); background: var(--border-subtle); }
+.mwt-modal-body { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.mwt-modal-foot {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-subtle);
+  background: color-mix(in oklab, var(--text-primary) 2%, transparent);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.mwt-field { display: flex; flex-direction: column; gap: 6px; }
+.mwt-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+.mwt-field-hint { font-size: 11px; color: var(--text-tertiary); margin: 0; line-height: 1.4; }
+.mwt-field.is-error .mwt-field-label,
+.mwt-field.is-error .mwt-field-hint { color: var(--danger, #DC2626); }
+
+@media print {
+  .mwt-modal-overlay { display: none !important; }
+}
+
+/* =====================================================================
+   Ola 3 · 3.27 · Virtualización — .mwt-vtable*
+   El scroll solo envuelve el cuerpo virtualizado. En print se anula el
+   max-height y el overflow para que salgan TODAS las filas.
+   ===================================================================== */
+.mwt-vtable-scroll { position: relative; }
+.mwt-vtable-scroll table { table-layout: auto; }
+.mwt-table th.right,
+.mwt-table td.right { text-align: right; }
+.mwt-table th.center,
+.mwt-table td.center { text-align: center; }
+.mwt-table th.num,
+.mwt-table td.num { font-variant-numeric: tabular-nums; text-align: right; }
+.mwt-table th.sticky { position: sticky; top: 0; z-index: 1; background: inherit; }
+.mwt-table .mwt-table-empty { text-align: center; color: var(--text-tertiary); padding: 24px 12px; }
+@media print {
+  .mwt-vtable-scroll { max-height: none !important; overflow: visible !important; }
+}

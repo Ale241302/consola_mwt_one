@@ -21,7 +21,7 @@
 // La seguridad real vive en el backend (apps.portal + ClientScopedManager).
 // Este componente solo oculta UI para dar la experiencia correcta.
 // =====================================================================
-import React, { useState, useMemo, useEffect, useCallback, Fragment } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import OcChoiceModal from "../components/portal/OcChoiceModal.jsx";
@@ -41,9 +41,14 @@ import {
 // no confundir con datos reales cuando el backend falla.
 // Sprint 2026-07-30 · Fases visuales: Preparación + Despacho → Preparación de despacho.
 import { DISPLAY_STAGES, displayStage, displayStageIndex } from "../lib/phaseDisplay.js";
-import { expedientesApi, ocsApi, clientesApi, marcasApi, lineasApi, productosApi } from "../lib/api.js";
+import { expedientesApi, clientesApi, marcasApi } from "../lib/api.js";
 import { readCache, writeCache } from "../lib/swrCache.js";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
+// Ola 3 · 3.26 · React Query — estado servidor (api.js sigue siendo transporte).
+import { useExpedientesData } from "../hooks/queries/useExpedientesData.js";
+import { useClientesMap } from "../hooks/queries/useClientesMap.js";
+// Ola 3 · 3.27 · Virtualización compartida (threshold 60 + print + fallback).
+import VirtualTable from "../components/ui/VirtualTable.jsx";
 // Sprint 2026-05-20 · Fusión Pipeline → Expedientes.
 // Tabla/Kanban toggle reemplaza Vista Financial/Ops/Fleet. El render del
 // Kanban delega 100% al ScreenPipeline (mismo fetch, mismo UX, sin reescritura).
@@ -167,6 +172,10 @@ export default function ScreenExpedientes() {
   // ── Data desde API (con caché stale-while-revalidate) ────────
   // Auditoría de carga 2026-06-14: sembramos el último snapshot conocido
   // para pintar la tabla AL INSTANTE en vez de dejarla en blanco 1-2 s.
+  // Ola 3 · 3.26 · React Query es el estado servidor (api.js es transporte);
+  // el seed-cache de la pantalla se conserva para el instant-paint y se
+  // revalida en background. Los 4 listados viajan en paralelo y el N+1 de
+  // clientes lo mata useClientesMap (1 request batch en vez de N gets).
   const cacheKey = `expedientes:${user?.id || "me"}:${isClient ? "c" : "a"}`;
   const _seed = readCache(cacheKey);
   const [apiExpedientes, setApiExpedientes] = useState(() => _seed?.exp || []);
@@ -174,149 +183,122 @@ export default function ScreenExpedientes() {
   const [loading,        setLoading]        = useState(() => !_seed);
   const [loadError,      setLoadError]      = useState(null);
 
-  const load = useCallback(async (signal) => {
-    // Spinner solo si no hay snapshot cacheado que mostrar mientras revalida.
-    setLoading(!readCache(cacheKey));
-    try {
-      // ── Sprint 2026-06-14: matamos el waterfall. `lineas` y `productos`
-      // son listados independientes del resultado de expedientes, así que
-      // viajan en el MISMO Promise.all (4 en paralelo) en lugar de en serie.
-      // Solo el enriquecimiento de clientes espera (depende de los client_id).
-      const [expRaw, ocRaw, lnRaw, prodRaw] = await Promise.all([
-        // Sprint 2026-08-07 · Ola 1 F2: ya no se esconden errores con .catch(() => []).
-        // Si el backend falla, el usuario ve el error y puede reintentar.
-        expedientesApi.list(undefined, { signal }),
-        ocsApi.list(undefined, { signal }),
-        lineasApi.list({ is_active: true }, { signal }),
-        productosApi.list(undefined, { signal }),
-      ]);
-      setLoadError(null);
-      const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
-      const ocItems  = Array.isArray(ocRaw)  ? ocRaw  : (ocRaw?.results  || []);
-      const mapped   = expItems.map(mapExpedienteFromApi);
+  const expQuery = useExpedientesData(undefined);
 
-      // Lineas activas + catalogo de productos para computar order_value por
-      // expediente (alimenta receivables cuando total_invoiced = 0).
-      const lineasArr = Array.isArray(lnRaw) ? lnRaw : (lnRaw?.results || []);
+  // Los expedientes mapeados del último fetch RQ (para derivar client_ids).
+  const mappedFromRq = useMemo(() => {
+    const expRaw = expQuery.data?.expRaw;
+    if (!expRaw) return [];
+    const expItems = Array.isArray(expRaw) ? expRaw : (expRaw?.results || []);
+    return expItems.map(mapExpedienteFromApi);
+  }, [expQuery.data]);
 
-      // Productos para resolver precio cuando linea.unit_price = 0.
-      // El ProductoListSerializer ya incluye `precio_lista` y `especificaciones`.
-      const productMap = {};
-      {
-        const arr = Array.isArray(prodRaw) ? prodRaw : (prodRaw?.results || []);
-        for (const p of arr) {
-          if (p?.id) productMap[p.id] = p;
-        }
-      }
+  // Ids únicos (cliente + operador) → useClientesMap hace UN list() batch.
+  const uniqueClientIds = useMemo(() => Array.from(new Set([
+    ...mappedFromRq.map(e => e.client_id).filter(Boolean),
+    ...mappedFromRq.map(e => e.operating_company_id).filter(Boolean),
+  ])), [mappedFromRq]);
 
-      // ── Enriquecimiento batch: hidratar nombre de cliente y días
-      // de crédito desde /api/clientes (un fetch por client_id único).
-      // Sin esto el listado mostraba "🌐" (CountryFlag con país vacío)
-      // y "0d" para los días de crédito porque expedientes.expediente
-      // no guarda esos campos — viven en clientes.cliente.
-      // Sprint 2026-08-02: también operating_company_id (el operador es
-      // un cliente) para alimentar la columna OPERADOR.
-      const uniqueClientIds = Array.from(new Set([
-        ...mapped.map(e => e.client_id).filter(Boolean),
-        ...mapped.map(e => e.operating_company_id).filter(Boolean),
-      ]));
-      let clientMap = {};
-      if (uniqueClientIds.length > 0) {
-        try {
-          const cliResults = await Promise.all(
-            uniqueClientIds.map(id => clientesApi.get(id, { signal }).catch(() => null))
-          );
-          clientMap = cliResults.reduce((acc, c) => {
-            if (c?.id) acc[c.id] = c;
-            return acc;
-          }, {});
-        } catch { clientMap = {}; }
-      }
-      const enriched = mapped.map(e => {
-        const cli = clientMap[e.client_id];
-        // ── Calcular order_value sumando lineas de este expediente.
-        //    Para cada linea: usar unit_price si > 0, sino caer al
-        //    catalogo via especificaciones.client_prices[client_id]
-        //    o precio_lista. Mismo enfoque que OCDetail.
-        const expLines = lineasArr.filter(
-          l => l.expediente_id === e._raw.id
-        );
-        let orderValue = 0;
-        let totalClientVal = Number(e._raw?.balance || e._raw?.total_invoiced || 0);
-        let totalMwtVal = Number(e._raw?.total_cost || 0);
-        let sumClient = 0;
-        let sumMwt = 0;
+  const clientQuery = useClientesMap(uniqueClientIds);
 
-        for (const ln of expLines) {
-          const qty = Number(ln.qty || 0);
-          const priceClient = Number(ln.unit_price_client || ln.unit_price || 0);
-          const priceMwt = Number(ln.unit_price_mwt || ln.unit_price || 0);
-          sumClient += qty * priceClient;
-          sumMwt += qty * priceMwt;
-          let unit  = Number(ln.unit_price || 0);
-          if (unit === 0 && ln.producto_id) {
-            const p = productMap[ln.producto_id];
-            if (p) {
-              const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
-              const override = Number(cliMap[e.client_id] || 0);
-              const lista    = Number(p.precio_lista || 0);
-              unit = override > 0 ? override : lista;
-            }
-          }
-          orderValue += qty * unit;
-        }
-
-        if (sumClient > 0) totalClientVal = sumClient;
-        if (sumMwt > 0) totalMwtVal = sumMwt;
-
-        const enrichedExp = {
-          ...e,
-          order_value: orderValue,
-          total_client: totalClientVal,
-          total_mwt: totalMwtVal,
-          // Sprint 2026-08-02 · nombre del operador (operating_company_id
-          // es un cliente; se hidrata con el mismo clientMap). Se resuelve
-          // ANTES del early-return de `cli` para no depender del cliente.
-          operator: (() => {
-            const op = e.operating_company_id ? clientMap[e.operating_company_id] : null;
-            return op ? (op.razon_social || op.nombre_comercial || op.nombre || op.codigo || '') : '';
-          })(),
-        };
-        if (!cli) return enrichedExp;
-        return {
-          ...enrichedExp,
-          client:         cli.razon_social || cli.nombre || cli.codigo || e.client,
-          client_country: cli.pais_iso2 || e.client_country,
-          credit_days:    Number(
-            cli.dias_credito ?? cli.credit_days ?? cli.credito_dias ?? e.credit_days ?? 0
-          ),
-        };
-      });
-
-      if (signal?.aborted) return;
-      writeCache(cacheKey, { exp: enriched, ocs: ocItems });
-      setApiExpedientes(enriched);
-      setApiOcs(ocItems);
-    } catch (e) {
-      if (e?.name === "AbortError" || signal?.aborted) return;
-      setLoadError(e);
-      // No pisamos con [] si ya teníamos datos cacheados en pantalla.
-      if (!readCache(cacheKey)) {
-        setApiExpedientes([]);
-        setApiOcs([]);
-      }
-    } finally {
-      if (!signal?.aborted) setLoading(false);
+  // Enriquecimiento derivado (order_value, client, operator, credit_days).
+  const enriched = useMemo(() => {
+    const data = expQuery.data;
+    if (!data) return null;
+    const ocItems = Array.isArray(data.ocRaw) ? data.ocRaw : (data.ocRaw?.results || []);
+    const lineasArr = Array.isArray(data.lnRaw) ? data.lnRaw : (data.lnRaw?.results || []);
+    const productMap = {};
+    {
+      const arr = Array.isArray(data.prodRaw) ? data.prodRaw : (data.prodRaw?.results || []);
+      for (const p of arr) if (p?.id) productMap[p.id] = p;
     }
-  }, [cacheKey]);
+    const clientMap = clientQuery.data || {};
 
-  // Sprint 2026-06-13 · AbortController: cancela los fetches (lineas/productos/
-  // N·clientes) al navegar fuera, liberando el pool de conexiones.
+    const enrichedList = mappedFromRq.map(e => {
+      const cli = clientMap[e.client_id];
+      // ── Calcular order_value sumando lineas de este expediente.
+      //    Para cada linea: usar unit_price si > 0, sino caer al
+      //    catalogo via especificaciones.client_prices[client_id]
+      //    o precio_lista. Mismo enfoque que OCDetail.
+      const expLines = lineasArr.filter(
+        l => l.expediente_id === e._raw.id
+      );
+      let orderValue = 0;
+      let totalClientVal = Number(e._raw?.balance || e._raw?.total_invoiced || 0);
+      let totalMwtVal = Number(e._raw?.total_cost || 0);
+      let sumClient = 0;
+      let sumMwt = 0;
+
+      for (const ln of expLines) {
+        const qty = Number(ln.qty || 0);
+        const priceClient = Number(ln.unit_price_client || ln.unit_price || 0);
+        const priceMwt = Number(ln.unit_price_mwt || ln.unit_price || 0);
+        sumClient += qty * priceClient;
+        sumMwt += qty * priceMwt;
+        let unit  = Number(ln.unit_price || 0);
+        if (unit === 0 && ln.producto_id) {
+          const p = productMap[ln.producto_id];
+          if (p) {
+            const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
+            const override = Number(cliMap[e.client_id] || 0);
+            const lista    = Number(p.precio_lista || 0);
+            unit = override > 0 ? override : lista;
+          }
+        }
+        orderValue += qty * unit;
+      }
+
+      if (sumClient > 0) totalClientVal = sumClient;
+      if (sumMwt > 0) totalMwtVal = sumMwt;
+
+      const enrichedExp = {
+        ...e,
+        order_value: orderValue,
+        total_client: totalClientVal,
+        total_mwt: totalMwtVal,
+        // Sprint 2026-08-02 · nombre del operador (operating_company_id
+        // es un cliente; se hidrata con el mismo clientMap). Se resuelve
+        // ANTES del early-return de `cli` para no depender del cliente.
+        operator: (() => {
+          const op = e.operating_company_id ? clientMap[e.operating_company_id] : null;
+          return op ? (op.razon_social || op.nombre_comercial || op.nombre || op.codigo || '') : '';
+        })(),
+      };
+      if (!cli) return enrichedExp;
+      return {
+        ...enrichedExp,
+        client:         cli.razon_social || cli.nombre || cli.codigo || e.client,
+        client_country: cli.pais_iso2 || e.client_country,
+        credit_days:    Number(
+          cli.dias_credito ?? cli.credit_days ?? cli.credito_dias ?? e.credit_days ?? 0
+        ),
+      };
+    });
+
+    return { enriched: enrichedList, ocItems };
+  }, [expQuery.data, clientQuery.data, mappedFromRq]);
+
+  // Sincronizar el resultado RQ → estado de la pantalla + seed-cache.
   useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
+    if (!enriched) return;
+    setApiExpedientes(enriched.enriched);
+    setApiOcs(enriched.ocItems);
+    setLoadError(null);
+    writeCache(cacheKey, { exp: enriched.enriched, ocs: enriched.ocItems });
+  }, [enriched, cacheKey]);
+
+  // Loading: solo si no hay seed que mostrar mientras revalida.
+  useEffect(() => {
+    setLoading(!_seed && expQuery.isLoading);
+  }, [_seed, expQuery.isLoading]);
+
+  // Error: solo si RQ falló (y no había seed → no se pisa con []).
+  useEffect(() => {
+    if (expQuery.error) setLoadError(expQuery.error);
+  }, [expQuery.error]);
+
+  // reload para mutaciones (bulk delete, fuse, etc.) → refetch RQ.
+  const load = useCallback(() => expQuery.refetch(), [expQuery]);
 
   // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
   // Si el backend devuelve [] mostramos estado vacío real, no demo.
@@ -659,6 +641,10 @@ export default function ScreenExpedientes() {
     return out;
   }, [filtered, fusionGroups, fusionOpen]);
 
+  // Ola 3 · 3.27 · Virtualización delegada a ui/VirtualTable (threshold 60 +
+  // desactivación en print + fallback a tabla normal). El cuerpo virtual lo
+  // maneja el componente compartido; aquí solo alimentamos rows + renderRow.
+
   // ── CEO KPIs (live) ─────
   const kpi = useMemo(() => {
     const N = EXPEDIENTES.length || 1; // evitar div/0 en porcentajes
@@ -739,6 +725,390 @@ export default function ScreenExpedientes() {
     // Sprint 2026-05-22 · copy honesto: el backend filtra por legal_entity_ids
     // para roles non-bypass; "globales" miente cuando el manager solo ve su pool.
     : `${tr(lang,'ceo_overview')} · ${EXPEDIENTES.length} ${lang==='es'?'expedientes':'files'}`;
+
+
+  const renderMasterRow = (e) => {
+                            // ── Fila padre de una fusión (sprint 2026-06-11) ──────
+              // Agrupación SOLO visual: click expande/colapsa los
+              // miembros (filas normales debajo). Desfusionar es CEO-only.
+              if (e.__fusionHeader) {
+                const open = fusionOpen.has(e.fid);
+                const members = e.members;
+                const label = members[0].fusion_label
+                  || ((members[0].oc_codigos || []).find(c =>
+                        members.every(m => (m.oc_codigos || []).includes(c)))
+                  || (lang === 'es' ? 'Fusión' : 'Merged'));
+                const totalInv  = members.reduce((a, m) => a + (m.total_invoiced || 0), 0);
+                const totalPaid = members.reduce((a, m) => a + (m.total_paid || 0), 0);
+                const maxCredit = Math.max(...members.map(m => m.credit_days || 0));
+                const sts = Array.from(new Set(members.map(m => m.status)));
+                const toggleFusion = () => setFusionOpen(prev => {
+                  const next = new Set(prev);
+                  if (next.has(e.fid)) next.delete(e.fid); else next.add(e.fid);
+                  return next;
+                });
+                // Misma estructura de celdas que una fila normal para que
+                // las columnas alineen; la flecha navega al detalle fusionado.
+                return (
+                  <tr
+                    key={`fusion-${e.fid}`}
+                    data-selected={open}
+                    style={{ cursor: 'pointer' }}
+                    onClick={toggleFusion}
+                  >
+                    {isAdmin && <td style={{ borderLeft: '3px solid var(--brand-accent)' }}/>}
+                    <td>
+                      <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{label}</span>
+                        <span className="caption">
+                          {lang === 'es'
+                            ? `Fusión · ${members.length} expedientes`
+                            : `Merged · ${members.length} expedientes`}
+                        </span>
+                      </div>
+                      <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap', marginTop: 4 }}>
+                        {/* Fable5-QA 2026-06-12 · R3: los chips de miembros
+                            mostraban el codigo interno EXP- a TODOS los roles.
+                            Identificacion por rol (spec de la fusion):
+                            ADMIN/CEO -> numero de proforma (o SAP); CLIENT ->
+                            su numero de PO. Sin valor -> el chip no se pinta;
+                            duplicados (PO compartida) se deduplican. */}
+                        {Array.from(new Set(members.map(m => (
+                          isAdmin
+                            ? ((m.proforma_codigos || [])[0] || m.proforma || m.sap || '')
+                            : ((m.oc_codigos || [])[0] || '')
+                        )).filter(Boolean))).map(tag => (
+                          <span
+                            key={tag}
+                            style={{
+                              fontFamily: 'JetBrains Mono, monospace', fontSize: 11,
+                              padding: '2px 8px', borderRadius: 6,
+                              background: 'var(--surface-raised)',
+                              border: '1px solid var(--border-subtle)',
+                            }}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            disabled={fusing}
+                            onClick={(ev) => { ev.stopPropagation(); handleUnfuse(e.fid); }}
+                            style={{
+                              border: 0, background: 'transparent',
+                              color: 'var(--text-tertiary)', fontSize: 11,
+                              textDecoration: 'underline', padding: 0,
+                              cursor: fusing ? 'not-allowed' : 'pointer',
+                              opacity: fusing ? 0.5 : 1,
+                            }}
+                          >
+                            {lang === 'es' ? 'Desfusionar' : 'Unmerge'}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <span style={{ fontWeight: 500 }}>{members[0].client || '—'}</span>
+                    </td>
+                    {/* Columna OPERADOR (fusión): solo si todos los miembros
+                        comparten el mismo operador; si difieren, "—".
+                        Solo staff (rev2). */}
+                    {!isClient && (
+                      <td>
+                        <span style={{ fontWeight: 400 }}>
+                          {(() => {
+                            const ops = Array.from(new Set(members.map(m => m.operator || '')));
+                            return ops.length === 1 && ops[0] ? ops[0] : '—';
+                          })()}
+                        </span>
+                      </td>
+                    )}
+                    <td>
+                      <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
+                        {sts.map(s => <StatusBadge key={s} status={s} lang={lang}/>)}
+                      </div>
+                    </td>
+                    {effectiveView === 'ops' && <>
+                      <td><span className="caption">—</span></td>
+                      <td style={{ textAlign: 'right' }}><span className="caption">—</span></td>
+                    </>}
+                    {effectiveView === 'financial' && <>
+                      <td className="td-money">{fmtMoney(totalInv)}</td>
+                      {!isClient && (
+                        <td className="td-money" style={{ textAlign: 'right' }}>
+                          {fmtMoney(members.reduce((a, m) => a + (Boolean(m.operating_company_id && m.operating_company_id !== m.client_id) ? (m.total_mwt || m.total_cost || 0) : 0), 0))}
+                        </td>
+                      )}
+                      <td className="td-num">
+                        <div className="flex ai-center gap-2" style={{ justifyContent: 'flex-end' }}>
+                          <CreditDot band={maxCredit > 75 ? 'RED' : maxCredit > 60 ? 'AMBER' : 'GREEN'}/>
+                          <span className="tabular">{maxCredit}d</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="caption tabular">
+                          {fmtMoney(totalPaid)} / {fmtMoney(totalInv)}
+                        </span>
+                      </td>
+                    </>}
+                    {effectiveView === 'fleet' && <>
+                      {!isClient && <td><span className="caption">—</span></td>}
+                      {!isClient && <td style={{ textAlign: 'right' }}><span className="caption">—</span></td>}
+                      {isAdmin && (
+                        <td className="td-num">
+                          <div className="flex ai-center gap-2" style={{ justifyContent: 'flex-end' }}>
+                            <CreditDot band={maxCredit > 75 ? 'RED' : maxCredit > 60 ? 'AMBER' : 'GREEN'}/>
+                            <span className="tabular">{maxCredit}d</span>
+                          </div>
+                        </td>
+                      )}
+                      {!isClient && <td className="td-money">{fmtMoney(totalInv)}</td>}
+                    </>}
+                    {isAdmin && <td><span className="caption">—</span></td>}
+                    <td onClick={(ev) => {
+                          ev.stopPropagation();
+                          navigate(`/expedientes/fusion/${e.fid}`);
+                        }}
+                        title={lang === 'es' ? 'Detalle fusionado' : 'Merged detail'}>
+                      <IconChevRight size={14} style={{ color: 'var(--text-tertiary)' }}/>
+                    </td>
+                    {isAdmin && <td/>}
+                  </tr>
+                );
+              }
+              const driftE = e.real_margin - e.projected_margin;
+              const stIdx = displayStageIndex(e.status);
+              return (
+                
+                  <tr data-selected={!!(e.uuid && selected.has(e.uuid))} style={{ cursor:'pointer' }}
+                      onClick={() => {
+                        // Para CLIENT, el click directo en la fila abre el
+                        // detalle de la OC (no hay expandible con data interna).
+                        if (isClient) {
+                          if (e.oc_id && (ocExpCount[e.oc_id] || 0) > 1) { onOpenExpediente(e.id); return; }
+                          const oc = OCS.find(o => o.code === e.oc_client)
+                                  || OCS.find(o => o.id === e.oc_id)
+                                  || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
+                          if (oc) navigate(`/expedientes/${oc.id}`);
+                          else if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
+                          else onOpenExpediente(e.id);
+                          return;
+                        }
+                        // Sprint 2026-07-18 · la fila expandida inline (costos
+                        // internos + deferred + Guardar) se eliminó: el click
+                        // en la fila navega siempre al detalle de la OC.
+                        if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
+                        else onOpenExpediente(e.id);
+                      }}>
+                    {isAdmin && (
+                      <td
+                        style={{ textAlign: 'center' }}
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!(e.uuid && selected.has(e.uuid))}
+                          disabled={!e.uuid}
+                          onChange={(ev) => {
+                            ev.stopPropagation();
+                            if (e.uuid) toggleOne(e.uuid);
+                          }}
+                          onClick={(ev) => ev.stopPropagation()}
+                          title={
+                            !e.uuid
+                              ? (lang === 'es' ? 'Sin UUID — no eliminable' : 'No UUID — not deletable')
+                              : (lang === 'es' ? 'Seleccionar' : 'Select')
+                          }
+                          style={{ accentColor: 'var(--brand-primary)', cursor: e.uuid ? 'pointer' : 'not-allowed' }}
+                        />
+                      </td>
+                    )}
+                    <td>
+                      {/* Sprint 2026-05-17 · Celda REF role-aware.
+                          ADMIN/CEO  → REF + chips de Proforma(s) + OC(s) + SAP(s)
+                          CLIENT_*   → REF + chips de OC(s) (sus propias POs)
+                          Los chips vienen del backend (R4 policy-driven). Si el
+                          serializer devuelve [], el chip no se renderiza. */}
+                      <RefCell
+                        lang={lang}
+                        isAdmin={isAdmin}
+                        expediente={{
+                          codigo:           e.ref,
+                          is_blocked:       e.is_blocked,
+                          // Fallback al string legacy si los arrays no llegaron.
+                          proforma_codigos: (e.proforma_codigos && e.proforma_codigos.length)
+                            ? e.proforma_codigos
+                            : (e.proforma ? [e.proforma] : []),
+                          oc_codigos:       (e.oc_codigos && e.oc_codigos.length)
+                            ? e.oc_codigos
+                            : (e.oc_client ? [e.oc_client] : []),
+                          sap_codigos:      (e.sap_codigos && e.sap_codigos.length)
+                            ? e.sap_codigos
+                            : (e.sap ? [e.sap] : []),
+                        }}
+                        onClickOc={(code) => {
+                          const oc = OCS.find(o => o.code === code)
+                                  || OCS.find(o => o.codigo === code);
+                          if (oc && onOpenOC) onOpenOC(oc.id);
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <div className="flex ai-center gap-2">
+                        {/* CountryFlag quitado: el avión que veías era el
+                            placeholder cuando no había country_iso2 en la
+                            data del expediente. Ahora mostramos solo el
+                            nombre del cliente, que viene hidratado desde
+                            /api/clientes/<id> en el batch enrich. */}
+                        <span style={{fontWeight: 500}}>{e.client || '—'}</span>
+                      </div>
+                      {e.destination && (
+                        <div className="caption" style={{ marginTop: 2 }}>{e.destination}</div>
+                      )}
+                    </td>
+                    {/* Columna OPERADOR (Sprint 2026-08-02) — solo staff. */}
+                    {!isClient && (
+                      <td>
+                        <span style={{fontWeight: 400}}>{e.operator || '—'}</span>
+                      </td>
+                    )}
+                    {/* Columna MARCA eliminada (header y body). */}
+                    <td><StatusBadge status={e.status} lang={lang}/></td>
+
+                    {effectiveView === 'ops' && <>
+                      <td>
+                        <div className="mini-timeline">
+                          {DISPLAY_STAGES.map((s, i) => {
+                            const cls = i < stIdx ? 'done' : i === stIdx ? 'cur ' + e.phase_signal : 'future';
+                            return <div key={s} className={`seg ${cls}`} title={tr(lang,s)}/>;
+                          })}
+                        </div>
+                        <div className="caption" style={{marginTop:6}}>
+                          {e.time_in_phase}d / {e.baseline_days}d {tr(lang,'vs_historical')}
+                        </div>
+                      </td>
+                      <td style={{textAlign:'right'}}>
+                        <span className="signal-bar">
+                          <span className={e.phase_signal==='green'?'on-green':(e.phase_signal==='amber'||e.phase_signal==='red'?'':'')}/>
+                          <span className={e.phase_signal==='amber'?'on-amber':(e.phase_signal==='red'?'':'')}/>
+                          <span className={e.phase_signal==='red'?'on-red':''}/>
+                        </span>
+                      </td>
+                    </>}
+
+                    {effectiveView === 'financial' && <>
+                      <td className="td-money">
+                        {fmtMoney(e.total_invoiced > 0 ? e.total_invoiced : (e.total_client || e.order_value || 0))}
+                      </td>
+                      {!isClient && (
+                        <td className="td-money" style={{ textAlign: 'right' }}>
+                          {Boolean(e.operating_company_id && e.operating_company_id !== e.client_id)
+                            ? fmtMoney(e.total_mwt || e.total_cost || 0)
+                            : '$0'}
+                        </td>
+                      )}
+                      <td className="td-num">
+                        <div className="flex ai-center gap-2" style={{justifyContent:'flex-end'}}>
+                          <CreditDot band={e.credit_days>75?'RED':e.credit_days>60?'AMBER':'GREEN'}/>
+                          <span className="tabular">{e.credit_days}d</span>
+                        </div>
+                      </td>
+                      <td>
+                        <PayBar e={e}/>
+                      </td>
+                    </>}
+
+                    {effectiveView === 'fleet' && <>
+                      {/* Columnas logísticas (origen/destino + modo de
+                          transporte) OCULTAS para CLIENT (POL_VISIBILIDAD). */}
+                      {!isClient && (
+                        <td>
+                          <div className="caption">{e.origin}</div>
+                          <div className="body-sm" style={{fontWeight:500}}>→ {e.destination}</div>
+                        </td>
+                      )}
+                      {!isClient && (
+                        <td style={{textAlign:'right'}}>
+                          <span className="caption">{e.mode} · {e.freight_mode || '—'}</span>
+                        </td>
+                      )}
+                      {/* "credit_days" es una señal interna (edad de la cuenta por cobrar).
+                          CLIENT no ve esto. */}
+                      {isAdmin && (
+                        <td className="td-num">
+                          <div className="flex ai-center gap-2" style={{justifyContent:'flex-end'}}>
+                            <CreditDot band={e.credit_days>75?'RED':e.credit_days>60?'AMBER':'GREEN'}/>
+                            <span className="tabular">{e.credit_days}d</span>
+                          </div>
+                        </td>
+                      )}
+                      {/* Rev 2026-05-21e · CLIENT ya no ve esta columna en el
+                          listado. El "Precio acordado" se reservó para el detalle
+                          de la OC. Staff sigue viendo "Facturado". */}
+                      {!isClient && (
+                        <td className="td-money">
+                          {fmtMoney(e.total_invoiced)}
+                        </td>
+                      )}
+                    </>}
+
+                    {isAdmin && (
+                      <td>
+                        <AlertStack e={e} lang={lang}/>
+                      </td>
+                    )}
+                    <td onClick={(ev)=>{
+                         ev.stopPropagation();
+                         // Va a la vista intermedia de la OC (PO-xxxx-xxxxx).
+                         // Buscar primero por code (mocks) y luego por oc_id (real),
+                         // con fallback al detalle del expediente si no hay OC.
+                         // Si la OC tiene >1 expediente (split), abrir el expediente concreto.
+                         if (e.oc_id && (ocExpCount[e.oc_id] || 0) > 1) { onOpenExpediente(e.id); return; }
+                         const oc = OCS.find(o => o.code === e.oc_client)
+                                 || OCS.find(o => o.id === e.oc_id)
+                                 || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
+                         if (oc) navigate(`/expedientes/${oc.id}`);
+                         else if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
+                         else onOpenExpediente(e.id);
+                       }}
+                       title={tr(lang,'oc_detail')}>
+                      <IconChevRight size={14} style={{ color:'var(--text-tertiary)'}}/>
+                    </td>
+                    {isAdmin && (
+                      <td
+                        style={{ textAlign: 'center' }}
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            if (!e.uuid) {
+                              alert(lang === 'es'
+                                ? 'No se puede eliminar: el expediente no tiene UUID.'
+                                : 'Cannot delete: file has no UUID.');
+                              return;
+                            }
+                            handleBulkDelete([e.uuid]);
+                          }}
+                          disabled={!e.uuid || deleting}
+                          className="icon-btn"
+                          title={lang === 'es' ? 'Eliminar expediente' : 'Delete file'}
+                          style={{
+                            color: 'var(--critical, #DC2626)',
+                            opacity: !e.uuid || deleting ? 0.4 : 1,
+                            cursor: !e.uuid || deleting ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          <IconTrash size={14}/>
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                    
+              );
+  };
 
   return (
     <div
@@ -1064,8 +1434,11 @@ export default function ScreenExpedientes() {
         </div>
       ) : (<>
       {/* ── Master table ───── */}
+
       <div className="table-wrap">
-        <table className="table ceo-table">
+        <VirtualTable
+          className="table ceo-table"
+          thead={
           <thead>
             <tr>
               {/* Checkbox de seleccion (CEO-ONLY) */}
@@ -1144,395 +1517,17 @@ export default function ScreenExpedientes() {
               {isAdmin && <th style={{width:36}}></th>}
             </tr>
           </thead>
-          <tbody>
-            {loading && displayRows.length === 0 && (
-              <TableSkeletonRows rows={8} />
-            )}
-            {displayRows.map(e => {
-              // ── Fila padre de una fusión (sprint 2026-06-11) ──────
-              // Agrupación SOLO visual: click expande/colapsa los
-              // miembros (filas normales debajo). Desfusionar es CEO-only.
-              if (e.__fusionHeader) {
-                const open = fusionOpen.has(e.fid);
-                const members = e.members;
-                const label = members[0].fusion_label
-                  || ((members[0].oc_codigos || []).find(c =>
-                        members.every(m => (m.oc_codigos || []).includes(c)))
-                  || (lang === 'es' ? 'Fusión' : 'Merged'));
-                const totalInv  = members.reduce((a, m) => a + (m.total_invoiced || 0), 0);
-                const totalPaid = members.reduce((a, m) => a + (m.total_paid || 0), 0);
-                const maxCredit = Math.max(...members.map(m => m.credit_days || 0));
-                const sts = Array.from(new Set(members.map(m => m.status)));
-                const toggleFusion = () => setFusionOpen(prev => {
-                  const next = new Set(prev);
-                  if (next.has(e.fid)) next.delete(e.fid); else next.add(e.fid);
-                  return next;
-                });
-                // Misma estructura de celdas que una fila normal para que
-                // las columnas alineen; la flecha navega al detalle fusionado.
-                return (
-                  <tr
-                    key={`fusion-${e.fid}`}
-                    data-selected={open}
-                    style={{ cursor: 'pointer' }}
-                    onClick={toggleFusion}
-                  >
-                    {isAdmin && <td style={{ borderLeft: '3px solid var(--brand-accent)' }}/>}
-                    <td>
-                      <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{label}</span>
-                        <span className="caption">
-                          {lang === 'es'
-                            ? `Fusión · ${members.length} expedientes`
-                            : `Merged · ${members.length} expedientes`}
-                        </span>
-                      </div>
-                      <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap', marginTop: 4 }}>
-                        {/* Fable5-QA 2026-06-12 · R3: los chips de miembros
-                            mostraban el codigo interno EXP- a TODOS los roles.
-                            Identificacion por rol (spec de la fusion):
-                            ADMIN/CEO -> numero de proforma (o SAP); CLIENT ->
-                            su numero de PO. Sin valor -> el chip no se pinta;
-                            duplicados (PO compartida) se deduplican. */}
-                        {Array.from(new Set(members.map(m => (
-                          isAdmin
-                            ? ((m.proforma_codigos || [])[0] || m.proforma || m.sap || '')
-                            : ((m.oc_codigos || [])[0] || '')
-                        )).filter(Boolean))).map(tag => (
-                          <span
-                            key={tag}
-                            style={{
-                              fontFamily: 'JetBrains Mono, monospace', fontSize: 11,
-                              padding: '2px 8px', borderRadius: 6,
-                              background: 'var(--surface-raised)',
-                              border: '1px solid var(--border-subtle)',
-                            }}
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                        {isAdmin && (
-                          <button
-                            type="button"
-                            disabled={fusing}
-                            onClick={(ev) => { ev.stopPropagation(); handleUnfuse(e.fid); }}
-                            style={{
-                              border: 0, background: 'transparent',
-                              color: 'var(--text-tertiary)', fontSize: 11,
-                              textDecoration: 'underline', padding: 0,
-                              cursor: fusing ? 'not-allowed' : 'pointer',
-                              opacity: fusing ? 0.5 : 1,
-                            }}
-                          >
-                            {lang === 'es' ? 'Desfusionar' : 'Unmerge'}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                    <td>
-                      <span style={{ fontWeight: 500 }}>{members[0].client || '—'}</span>
-                    </td>
-                    {/* Columna OPERADOR (fusión): solo si todos los miembros
-                        comparten el mismo operador; si difieren, "—".
-                        Solo staff (rev2). */}
-                    {!isClient && (
-                      <td>
-                        <span style={{ fontWeight: 400 }}>
-                          {(() => {
-                            const ops = Array.from(new Set(members.map(m => m.operator || '')));
-                            return ops.length === 1 && ops[0] ? ops[0] : '—';
-                          })()}
-                        </span>
-                      </td>
-                    )}
-                    <td>
-                      <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
-                        {sts.map(s => <StatusBadge key={s} status={s} lang={lang}/>)}
-                      </div>
-                    </td>
-                    {effectiveView === 'ops' && <>
-                      <td><span className="caption">—</span></td>
-                      <td style={{ textAlign: 'right' }}><span className="caption">—</span></td>
-                    </>}
-                    {effectiveView === 'financial' && <>
-                      <td className="td-money">{fmtMoney(totalInv)}</td>
-                      {!isClient && (
-                        <td className="td-money" style={{ textAlign: 'right' }}>
-                          {fmtMoney(members.reduce((a, m) => a + (Boolean(m.operating_company_id && m.operating_company_id !== m.client_id) ? (m.total_mwt || m.total_cost || 0) : 0), 0))}
-                        </td>
-                      )}
-                      <td className="td-num">
-                        <div className="flex ai-center gap-2" style={{ justifyContent: 'flex-end' }}>
-                          <CreditDot band={maxCredit > 75 ? 'RED' : maxCredit > 60 ? 'AMBER' : 'GREEN'}/>
-                          <span className="tabular">{maxCredit}d</span>
-                        </div>
-                      </td>
-                      <td>
-                        <span className="caption tabular">
-                          {fmtMoney(totalPaid)} / {fmtMoney(totalInv)}
-                        </span>
-                      </td>
-                    </>}
-                    {effectiveView === 'fleet' && <>
-                      {!isClient && <td><span className="caption">—</span></td>}
-                      {!isClient && <td style={{ textAlign: 'right' }}><span className="caption">—</span></td>}
-                      {isAdmin && (
-                        <td className="td-num">
-                          <div className="flex ai-center gap-2" style={{ justifyContent: 'flex-end' }}>
-                            <CreditDot band={maxCredit > 75 ? 'RED' : maxCredit > 60 ? 'AMBER' : 'GREEN'}/>
-                            <span className="tabular">{maxCredit}d</span>
-                          </div>
-                        </td>
-                      )}
-                      {!isClient && <td className="td-money">{fmtMoney(totalInv)}</td>}
-                    </>}
-                    {isAdmin && <td><span className="caption">—</span></td>}
-                    <td onClick={(ev) => {
-                          ev.stopPropagation();
-                          navigate(`/expedientes/fusion/${e.fid}`);
-                        }}
-                        title={lang === 'es' ? 'Detalle fusionado' : 'Merged detail'}>
-                      <IconChevRight size={14} style={{ color: 'var(--text-tertiary)' }}/>
-                    </td>
-                    {isAdmin && <td/>}
-                  </tr>
-                );
-              }
-              const driftE = e.real_margin - e.projected_margin;
-              const stIdx = displayStageIndex(e.status);
-              return (
-                <Fragment key={e.id}>
-                  <tr data-selected={!!(e.uuid && selected.has(e.uuid))} style={{ cursor:'pointer' }}
-                      onClick={() => {
-                        // Para CLIENT, el click directo en la fila abre el
-                        // detalle de la OC (no hay expandible con data interna).
-                        if (isClient) {
-                          if (e.oc_id && (ocExpCount[e.oc_id] || 0) > 1) { onOpenExpediente(e.id); return; }
-                          const oc = OCS.find(o => o.code === e.oc_client)
-                                  || OCS.find(o => o.id === e.oc_id)
-                                  || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
-                          if (oc) navigate(`/expedientes/${oc.id}`);
-                          else if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
-                          else onOpenExpediente(e.id);
-                          return;
-                        }
-                        // Sprint 2026-07-18 · la fila expandida inline (costos
-                        // internos + deferred + Guardar) se eliminó: el click
-                        // en la fila navega siempre al detalle de la OC.
-                        if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
-                        else onOpenExpediente(e.id);
-                      }}>
-                    {isAdmin && (
-                      <td
-                        style={{ textAlign: 'center' }}
-                        onClick={(ev) => ev.stopPropagation()}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!!(e.uuid && selected.has(e.uuid))}
-                          disabled={!e.uuid}
-                          onChange={(ev) => {
-                            ev.stopPropagation();
-                            if (e.uuid) toggleOne(e.uuid);
-                          }}
-                          onClick={(ev) => ev.stopPropagation()}
-                          title={
-                            !e.uuid
-                              ? (lang === 'es' ? 'Sin UUID — no eliminable' : 'No UUID — not deletable')
-                              : (lang === 'es' ? 'Seleccionar' : 'Select')
-                          }
-                          style={{ accentColor: 'var(--brand-primary)', cursor: e.uuid ? 'pointer' : 'not-allowed' }}
-                        />
-                      </td>
-                    )}
-                    <td>
-                      {/* Sprint 2026-05-17 · Celda REF role-aware.
-                          ADMIN/CEO  → REF + chips de Proforma(s) + OC(s) + SAP(s)
-                          CLIENT_*   → REF + chips de OC(s) (sus propias POs)
-                          Los chips vienen del backend (R4 policy-driven). Si el
-                          serializer devuelve [], el chip no se renderiza. */}
-                      <RefCell
-                        lang={lang}
-                        isAdmin={isAdmin}
-                        expediente={{
-                          codigo:           e.ref,
-                          is_blocked:       e.is_blocked,
-                          // Fallback al string legacy si los arrays no llegaron.
-                          proforma_codigos: (e.proforma_codigos && e.proforma_codigos.length)
-                            ? e.proforma_codigos
-                            : (e.proforma ? [e.proforma] : []),
-                          oc_codigos:       (e.oc_codigos && e.oc_codigos.length)
-                            ? e.oc_codigos
-                            : (e.oc_client ? [e.oc_client] : []),
-                          sap_codigos:      (e.sap_codigos && e.sap_codigos.length)
-                            ? e.sap_codigos
-                            : (e.sap ? [e.sap] : []),
-                        }}
-                        onClickOc={(code) => {
-                          const oc = OCS.find(o => o.code === code)
-                                  || OCS.find(o => o.codigo === code);
-                          if (oc && onOpenOC) onOpenOC(oc.id);
-                        }}
-                      />
-                    </td>
-                    <td>
-                      <div className="flex ai-center gap-2">
-                        {/* CountryFlag quitado: el avión que veías era el
-                            placeholder cuando no había country_iso2 en la
-                            data del expediente. Ahora mostramos solo el
-                            nombre del cliente, que viene hidratado desde
-                            /api/clientes/<id> en el batch enrich. */}
-                        <span style={{fontWeight: 500}}>{e.client || '—'}</span>
-                      </div>
-                      {e.destination && (
-                        <div className="caption" style={{ marginTop: 2 }}>{e.destination}</div>
-                      )}
-                    </td>
-                    {/* Columna OPERADOR (Sprint 2026-08-02) — solo staff. */}
-                    {!isClient && (
-                      <td>
-                        <span style={{fontWeight: 400}}>{e.operator || '—'}</span>
-                      </td>
-                    )}
-                    {/* Columna MARCA eliminada (header y body). */}
-                    <td><StatusBadge status={e.status} lang={lang}/></td>
-
-                    {effectiveView === 'ops' && <>
-                      <td>
-                        <div className="mini-timeline">
-                          {DISPLAY_STAGES.map((s, i) => {
-                            const cls = i < stIdx ? 'done' : i === stIdx ? 'cur ' + e.phase_signal : 'future';
-                            return <div key={s} className={`seg ${cls}`} title={tr(lang,s)}/>;
-                          })}
-                        </div>
-                        <div className="caption" style={{marginTop:6}}>
-                          {e.time_in_phase}d / {e.baseline_days}d {tr(lang,'vs_historical')}
-                        </div>
-                      </td>
-                      <td style={{textAlign:'right'}}>
-                        <span className="signal-bar">
-                          <span className={e.phase_signal==='green'?'on-green':(e.phase_signal==='amber'||e.phase_signal==='red'?'':'')}/>
-                          <span className={e.phase_signal==='amber'?'on-amber':(e.phase_signal==='red'?'':'')}/>
-                          <span className={e.phase_signal==='red'?'on-red':''}/>
-                        </span>
-                      </td>
-                    </>}
-
-                    {effectiveView === 'financial' && <>
-                      <td className="td-money">
-                        {fmtMoney(e.total_invoiced > 0 ? e.total_invoiced : (e.total_client || e.order_value || 0))}
-                      </td>
-                      {!isClient && (
-                        <td className="td-money" style={{ textAlign: 'right' }}>
-                          {Boolean(e.operating_company_id && e.operating_company_id !== e.client_id)
-                            ? fmtMoney(e.total_mwt || e.total_cost || 0)
-                            : '$0'}
-                        </td>
-                      )}
-                      <td className="td-num">
-                        <div className="flex ai-center gap-2" style={{justifyContent:'flex-end'}}>
-                          <CreditDot band={e.credit_days>75?'RED':e.credit_days>60?'AMBER':'GREEN'}/>
-                          <span className="tabular">{e.credit_days}d</span>
-                        </div>
-                      </td>
-                      <td>
-                        <PayBar e={e}/>
-                      </td>
-                    </>}
-
-                    {effectiveView === 'fleet' && <>
-                      {/* Columnas logísticas (origen/destino + modo de
-                          transporte) OCULTAS para CLIENT (POL_VISIBILIDAD). */}
-                      {!isClient && (
-                        <td>
-                          <div className="caption">{e.origin}</div>
-                          <div className="body-sm" style={{fontWeight:500}}>→ {e.destination}</div>
-                        </td>
-                      )}
-                      {!isClient && (
-                        <td style={{textAlign:'right'}}>
-                          <span className="caption">{e.mode} · {e.freight_mode || '—'}</span>
-                        </td>
-                      )}
-                      {/* "credit_days" es una señal interna (edad de la cuenta por cobrar).
-                          CLIENT no ve esto. */}
-                      {isAdmin && (
-                        <td className="td-num">
-                          <div className="flex ai-center gap-2" style={{justifyContent:'flex-end'}}>
-                            <CreditDot band={e.credit_days>75?'RED':e.credit_days>60?'AMBER':'GREEN'}/>
-                            <span className="tabular">{e.credit_days}d</span>
-                          </div>
-                        </td>
-                      )}
-                      {/* Rev 2026-05-21e · CLIENT ya no ve esta columna en el
-                          listado. El "Precio acordado" se reservó para el detalle
-                          de la OC. Staff sigue viendo "Facturado". */}
-                      {!isClient && (
-                        <td className="td-money">
-                          {fmtMoney(e.total_invoiced)}
-                        </td>
-                      )}
-                    </>}
-
-                    {isAdmin && (
-                      <td>
-                        <AlertStack e={e} lang={lang}/>
-                      </td>
-                    )}
-                    <td onClick={(ev)=>{
-                         ev.stopPropagation();
-                         // Va a la vista intermedia de la OC (PO-xxxx-xxxxx).
-                         // Buscar primero por code (mocks) y luego por oc_id (real),
-                         // con fallback al detalle del expediente si no hay OC.
-                         // Si la OC tiene >1 expediente (split), abrir el expediente concreto.
-                         if (e.oc_id && (ocExpCount[e.oc_id] || 0) > 1) { onOpenExpediente(e.id); return; }
-                         const oc = OCS.find(o => o.code === e.oc_client)
-                                 || OCS.find(o => o.id === e.oc_id)
-                                 || OCS.find(o => Array.isArray(o.expedientes) && o.expedientes.includes(e.id));
-                         if (oc) navigate(`/expedientes/${oc.id}`);
-                         else if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
-                         else onOpenExpediente(e.id);
-                       }}
-                       title={tr(lang,'oc_detail')}>
-                      <IconChevRight size={14} style={{ color:'var(--text-tertiary)'}}/>
-                    </td>
-                    {isAdmin && (
-                      <td
-                        style={{ textAlign: 'center' }}
-                        onClick={(ev) => ev.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            if (!e.uuid) {
-                              alert(lang === 'es'
-                                ? 'No se puede eliminar: el expediente no tiene UUID.'
-                                : 'Cannot delete: file has no UUID.');
-                              return;
-                            }
-                            handleBulkDelete([e.uuid]);
-                          }}
-                          disabled={!e.uuid || deleting}
-                          className="icon-btn"
-                          title={lang === 'es' ? 'Eliminar expediente' : 'Delete file'}
-                          style={{
-                            color: 'var(--critical, #DC2626)',
-                            opacity: !e.uuid || deleting ? 0.4 : 1,
-                            cursor: !e.uuid || deleting ? 'not-allowed' : 'pointer',
-                          }}
-                        >
-                          <IconTrash size={14}/>
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
+          }
+          rows={displayRows}
+          rowKey={(e) => (e.__fusionHeader ? `fusion-${e.fid}` : e.id)}
+          renderRow={renderMasterRow}
+          loadingSkeleton={loading && displayRows.length === 0 ? <TableSkeletonRows rows={8} /> : null}
+          emptyLabel={null}
+          maxHeight="64vh"
+          estimateRowHeight={46}
+        />
       </div>
+
 
       {!loading && loadError && filtered.length === 0 && (
         <div className="card" style={{padding:40, textAlign:'center', marginTop:16}}>

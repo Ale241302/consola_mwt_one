@@ -27,6 +27,8 @@ export default defineConfig({
           react: ["react", "react-dom", "react-router-dom"],
           xlsx: ["xlsx"],
           motion: ["framer-motion"],
+          query: ["@tanstack/react-query", "@tanstack/react-query-devtools"],
+          virtual: ["@tanstack/react-virtual"],
         },
       },
     },

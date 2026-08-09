@@ -12,6 +12,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { authApi, refreshAccessToken } from "../lib/api.js";
 import { clearCache } from "../lib/swrCache.js";
+import { queryClient } from "../lib/queryClient.js";
 
 const AUTH_KEY = "mwt-auth";
 
@@ -122,6 +123,9 @@ export function AuthProvider({ children }) {
     clearPersist();
     try { localStorage.removeItem(ACTIVITY_KEY); } catch { /* noop */ }
     clearCache(); // purga la caché SWR de datos del usuario saliente (R3)
+    // Ola 3 · 3.26 · React Query: purga la caché de estado servidor para no
+    // filtrar datos entre usuarios en la misma máquina (paridad con swrCache).
+    queryClient.clear();
   }, [accessToken, refresh]);
 
   // Sprint 2026-07-19 · Cierre automático por inactividad (30 min).
