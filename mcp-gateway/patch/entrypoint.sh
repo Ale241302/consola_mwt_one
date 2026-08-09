@@ -16,4 +16,7 @@ echo "Applying ContextForge OAuth identity propagation patch v6..."
 echo "Applying ContextForge MCP identity fallback patch v7..."
 /app/.venv/bin/python3 /patch/contextforge_patch_v7.py
 
+echo "Applying ContextForge MWT live tools/list by identity patch v8..."
+/app/.venv/bin/python3 /patch/contextforge_patch_v8.py
+
 exec /app/docker-entrypoint.sh "$@"
