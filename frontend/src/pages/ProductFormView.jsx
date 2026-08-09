@@ -52,40 +52,9 @@ import CreateBrandDrawer from "../components/brands/CreateBrandDrawer.jsx";
 // Backend → shape lista compacta para los grids
 // "Excepciones por cliente" / "Override por cliente".
 //
-// Sprint Parent-Child (2026-04-29): incluye parent_id y parent_name
-// para que el grid pueda renderizar la jerarquía y aplicar herencia
-// por defecto (la subsidiaria hereda visibilidad / precio del padre).
-function adaptClienteForGrid(c) {
-  return {
-    id:           c.id || c.uuid,
-    name:         c.nombre_comercial || c.razon_social || '—',
-    parent_id:    c.parent_id || null,
-    parent_name:  null,   // se rellena en orderClientsHierarchy()
-  };
-}
-
-// Ordena clientes con padres primero, seguidos de sus subsidiarias
-// (sangradas). Pre-resuelve parent_name para mostrar contexto.
-function orderClientsHierarchy(clients) {
-  const byId = new Map(clients.map(c => [c.id, c]));
-  const parents = clients.filter(c => !c.parent_id);
-  const out = [];
-  parents.forEach(p => {
-    out.push(p);
-    clients
-      .filter(c => c.parent_id === p.id)
-      .forEach(s => {
-        out.push({ ...s, parent_name: p.name });
-      });
-  });
-  // Subsidiarias huérfanas (padre no en la lista) — al final por seguridad
-  clients.forEach(c => {
-    if (c.parent_id && !byId.has(c.parent_id) && !out.find(o => o.id === c.id)) {
-      out.push(c);
-    }
-  });
-  return out;
-}
+// Ola 3 · 3.28 · Lógica pura extraída (adaptación/orden de clientes del
+// grid de marcas), testeable con node --test.
+import { adaptClienteForGrid, orderClientsHierarchy } from "./product-form/clients.logic.js";
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 import PriceMatrixCompact from "../components/marluvas/PriceMatrixCompact.jsx";

@@ -38,6 +38,9 @@ import {
 import {
   MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME,
 } from "../lib/operatingCompany.js";
+// Ola 3 · 3.28 · Lógica pura extraída (adaptación/orden de clientes),
+// testeable con node --test.
+import { adaptClient, orderClientsHierarchy } from "./wizard-lite/clients.logic.js";
 
 // Sprint 2026-05-06 · Step 0 visible solo para ADMIN/CEO/staff. CLIENT_*
 // salta este paso; el operador se asume "el propio cliente" implicitamente.
@@ -2980,36 +2983,6 @@ const EARLY_PAYMENT_TIERS = [
 // se considera "premium" y obtiene el tier 120; default sigue las flags).
 function getAvailableTiers(isAdmin) {
   return EARLY_PAYMENT_TIERS.filter(t => isAdmin || !t.adminOnly);
-}
-
-function adaptClient(c) {
-  return {
-    id:              c.id,
-    label:           c.razon_social || c.nombre_comercial || "—",
-    razon_social:    c.razon_social,
-    tax_id:          c.tax_id,
-    parent_id:       c.parent_id || null,
-    parent_label:    null,
-    contacto_email:  c.contacto_email,
-    credito_limit:   Number(c.credito_aprobado || c.credito_limit_usd || 0),
-    credito_used:    Number(c.credito_usado || 0),
-    // Sprint 2026-05-06 · días de crédito por defecto del cliente.
-    // El wizard lo usa como default del input 'Días de pago' del Paso 3.
-    dias_credito:    Number(c.dias_credito || 0),
-  };
-}
-
-function orderClientsHierarchy(clients) {
-  const out = []; const seen = new Set();
-  clients.filter((c) => !c.parent_id).forEach((parent) => {
-    out.push(parent); seen.add(parent.id);
-    clients.filter((c) => c.parent_id === parent.id).forEach((sub) => {
-      out.push({ ...sub, parent_label: parent.label });
-      seen.add(sub.id);
-    });
-  });
-  clients.forEach((c) => { if (!seen.has(c.id)) out.push(c); });
-  return out;
 }
 
 function Field({ label, children }) {

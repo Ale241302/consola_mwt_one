@@ -24,7 +24,7 @@ import GenericConfirmModal from "../common/ConfirmModal.jsx";
 import CostScopeModal from "./CostScopeModal.jsx";
 import TransferBuilderArtifactsBlock from "./TransferBuilderArtifactsBlock.jsx";
 import {
-  IconCheck, IconX, IconPlus, IconAlert, IconRefresh, IconFileText,
+  IconCheck, IconX, IconPlus, IconAlert, IconRefresh,
   IconDollar, IconLock, IconClipboard, IconUpload, IconTrash,
 } from "../../lib/icons.jsx";
 import {
@@ -34,45 +34,27 @@ import {
 import { useRole } from "../../context/RoleContext.jsx";
 import { isMwtOperated, MWT_OPERATING_CLIENT_ID } from "../../lib/operatingCompany.js";
 import { useTransferPriceMode } from "../../hooks/useTransferPriceMode.js";
-
-const NCM_TAX_RATES = {
-  "6403.99.90": { dai: 0.14, ley_6946: 0.01, iva: 0.13 }, // calzado seguridad
-  "6403.40.00": { dai: 0.14, ley_6946: 0.01, iva: 0.13 }, // calzado puntera metálica
-  _default:     { dai: 0.14, ley_6946: 0.01, iva: 0.13 },
-};
-
-function taxRatesForNcm(ncm) {
-  const key = String(ncm || "").trim();
-  return NCM_TAX_RATES[key] || NCM_TAX_RATES._default;
-}
-
-const KIND_FREIGHT = new Set(["FLETE", "FREIGHT", "CONSOLIDACION"]);
-const KIND_INSURANCE = new Set(["SEGURO", "INSURANCE"]);
-
-// Timbres/tasas fijas de nacionalización CR (montos USD fijos). Se siembran
-// por defecto en cada movimiento (vista MWT y Cliente) y se muestran en la
-// liquidación + factura. Mantener en sync con lib/transferInvoiceHtml.js.
-const DEFAULT_TIMBRES = [
-  { concept: "PROCOMER",                          amount: 3.00 },
-  { concept: "T. Asociación Agentes (Ley 7017)",  amount: 0.11 },
-  { concept: "T. Archivo Nacional",               amount: 0.04 },
-  { concept: "T. Contadores",                     amount: 0.00 },
-];
-
-// ── Catálogo fallback de tipos de costo (espejo del backend) ──
-const COST_KINDS_FALLBACK = [
-  { codigo:"DAI",           label:"Aranceles (DAI)",     is_fiscal:true,  color:"#481EE3" },
-  { codigo:"IVA",           label:"Impuestos (IVA)",     is_fiscal:true,  color:"#7C3AED" },
-  { codigo:"ALMACENAJE",    label:"Almacenaje aduanal",  is_fiscal:false, color:"#0891B2" },
-  { codigo:"AGENCIAMIENTO", label:"Agenciamiento",       is_fiscal:false, color:"#0EA5E9" },
-  { codigo:"MANIPULEO",     label:"Manipuleo / handling",is_fiscal:false, color:"#06B6D4" },
-  { codigo:"FLETE",         label:"Flete",               is_fiscal:false, color:"#3083FE" },
-  { codigo:"SEGURO",        label:"Seguro",              is_fiscal:false, color:"#10B981" },
-  { codigo:"CONSOLIDACION", label:"Consolidación",       is_fiscal:false, color:"#22C55E" },
-  { codigo:"OTRO",          label:"Otro",                is_fiscal:false, color:"#64748B" },
-];
-
-const CURRENCIES = ["USD", "PEN", "MXN", "COP", "CLP", "BRL", "ARS", "CRC", "EUR"];
+// Ola 3 · 3.28 · Lógica pura extraída (constantes + tasas + prorrateo IVA),
+// testeable con node --test. Sync fiscal con backend liquidation.py (d7d21b2).
+import {
+  NCM_TAX_RATES,
+  taxRatesForNcm,
+  KIND_FREIGHT,
+  KIND_INSURANCE,
+  DEFAULT_TIMBRES,
+  COST_KINDS_FALLBACK,
+  CURRENCIES,
+  isCapitalizable,
+  prorateExtras,
+  fmt,
+  fmt4,
+  fmtInt,
+} from "../../features/transfers/liquidation/liquidation.logic.js";
+// Ola 3 · 3.28 · Subcomponentes extraídos.
+import ScopeChip from "../../features/transfers/liquidation/components/ScopeChip.jsx";
+import SummaryStat from "../../features/transfers/liquidation/components/SummaryStat.jsx";
+import DocChip from "../../features/transfers/liquidation/components/DocChip.jsx";
+import ConfirmModal from "../../features/transfers/liquidation/components/ConfirmModal.jsx";
 
 // Sprint 2026-05-14 · Fase 15 — catálogo de motivos legales para el
 // dropdown editable. Espejo de transfers.legal_context_cat.
@@ -83,16 +65,6 @@ const LEGAL_CONTEXT_OPTIONS = [
   { codigo: "DISTRIBUTION",    label: { es: "Distribución",             en: "Distribution" } },
   { codigo: "CONSIGNMENT",     label: { es: "Consignación",             en: "Consignment" } },
 ];
-
-const fmt = (n) => Number(n || 0).toLocaleString("en-US", {
-  minimumFractionDigits: 2, maximumFractionDigits: 2,
-});
-const fmt4 = (n) => Number(n || 0).toLocaleString("en-US", {
-  minimumFractionDigits: 4, maximumFractionDigits: 4,
-});
-const fmtInt = (n) => Number(n || 0).toLocaleString("en-US", {
-  maximumFractionDigits: 0,
-});
 
 export default function TransferLiquidationPanel({ transfer, lang = "es", onLiquidated, viewMode }) {
   const transferId = transfer?._backend_id || transfer?.id;
@@ -3014,49 +2986,6 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
 // ── Sprint 2026-05-14 · Fase 14 — chip resumen del scope ────
 // Muestra "Todo" si scope=null/applies_to_all, "N exp" o "N exp · M
 // líneas" si está restringido. Click → abre el modal de edición.
-function ScopeChip({ scope, transferItems, disabled, onOpen, lang }) {
-  let label = lang === "es" ? "Todo" : "All";
-  let restricted = false;
-  if (scope && scope.applies_to_all === false) {
-    restricted = true;
-    const nExp   = Array.isArray(scope.expediente_ids) ? scope.expediente_ids.length : 0;
-    const nLines = Array.isArray(scope.lines)          ? scope.lines.length          : 0;
-    if (nLines > 0) {
-      label = lang === "es" ? `${nExp} exp · ${nLines} líneas`
-                            : `${nExp} exp · ${nLines} lines`;
-    } else if (nExp > 0) {
-      label = `${nExp} ${lang === "es"
-        ? (nExp === 1 ? "expediente" : "expedientes")
-        : (nExp === 1 ? "expediente" : "expedientes")}`;
-    }
-  }
-  const noItems = !transferItems || transferItems.length === 0;
-  const realDisabled = !!disabled || noItems;
-  return (
-    <button type="button"
-            onClick={onOpen}
-            disabled={realDisabled}
-            title={noItems
-              ? (lang === "es" ? "No hay líneas en el movimiento" : "No transfer lines")
-              : (lang === "es" ? "Configurar alcance del costo" : "Set cost scope")}
-            style={{
-              padding: "4px 10px", borderRadius: 999,
-              border: restricted
-                ? "1.5px solid var(--brand-accent, #0E8A6D)"
-                : "1px solid var(--border-subtle, #E1E6ED)",
-              background: restricted
-                ? "color-mix(in oklab, var(--brand-accent, #0E8A6D) 10%, transparent)"
-                : "var(--surface, white)",
-              color: restricted ? "var(--brand-accent, #0E8A6D)" : "var(--text-secondary, #475467)",
-              fontSize: 11, fontWeight: 700, letterSpacing: 0.3,
-              cursor: realDisabled ? "not-allowed" : "pointer",
-              opacity: realDisabled ? 0.5 : 1,
-            }}>
-      {label}
-    </button>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────
 function Field({ label, value }) {
   return (
@@ -3065,109 +2994,6 @@ function Field({ label, value }) {
         {label}
       </div>
       <div style={{ color: "var(--text-primary)", fontSize: 14 }}>{value}</div>
-    </div>
-  );
-}
-
-function SummaryStat({ label, value, color, strong }) {
-  return (
-    <div>
-      <div className="micro" style={{ color: "rgba(255,255,255,0.6)", letterSpacing: 1, marginBottom: 4 }}>
-        {label}
-      </div>
-      <div className="tabular-nums" style={{
-        fontSize: strong ? 24 : 18, fontWeight: 700,
-        color: color || "#fff",
-      }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function DocChip({ doc, fallbackLabel, kind }) {
-  if (!doc) {
-    return (
-      <span style={{
-        display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px",
-        borderRadius: 999, background: "rgba(100,116,139,0.08)",
-        color: "var(--text-tertiary)", fontSize: 12, fontStyle: "italic",
-      }}>
-        <IconFileText size={11}/> {fallbackLabel} —
-      </span>
-    );
-  }
-  const url = doc.url || (doc.object_key ? `/api/storage/signed_url/?key=${encodeURIComponent(doc.object_key)}` : null);
-  return (
-    <a href={url || "#"} target="_blank" rel="noopener noreferrer"
-       style={{
-         display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px",
-         borderRadius: 999, background: "rgba(0,178,134,0.10)",
-         color: "var(--text-primary)", fontSize: 12, fontWeight: 600, textDecoration: "none",
-         border: "1px solid rgba(0,178,134,0.25)",
-       }}>
-      <IconFileText size={11} style={{ color: "#00B286" }}/>
-      {doc.titulo || fallbackLabel}
-      {doc.numero_ref && <code className="mono-sm" style={{ color: "var(--text-tertiary)" }}>{doc.numero_ref}</code>}
-    </a>
-  );
-}
-
-function ConfirmModal({ lang, summary, onCancel, onConfirm, busy }) {
-  return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 100,
-      background: "rgba(11,30,58,0.55)", backdropFilter: "blur(2px)",
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
-    }} onClick={busy ? undefined : onCancel}>
-      <div onClick={(e) => e.stopPropagation()}
-           style={{
-             background: "var(--surface-raised)", borderRadius: 14, width: "min(520px, 96vw)",
-             padding: 26, boxShadow: "0 30px 60px -20px rgba(15,27,61,0.55)",
-           }}>
-        <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 6 }}>
-          {lang === "es" ? "CONFIRMAR LIQUIDACIÓN" : "CONFIRM LIQUIDATION"}
-        </div>
-        <div style={{ font: "700 18px/1.3 inherit", color: "var(--text-primary)", marginBottom: 10 }}>
-          {lang === "es" ? "¿Liquidar y transferir inventario?" : "Liquidate and transfer inventory?"}
-        </div>
-        <div className="caption" style={{ color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 14 }}>
-          {lang === "es"
-            ? "Esta acción congelará el landed cost por línea y dejará el inventario listo para impactar al nodo destino con su costo real. La acción es auditable pero no totalmente reversible."
-            : "This will freeze the landed cost per line and prepare inventory to land at the destination node with its real cost. Auditable but not fully reversible."}
-        </div>
-        <div style={{ padding: 14, borderRadius: 10, background: "rgba(0,178,134,0.06)", marginBottom: 16 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span className="caption">FOB</span>
-            <span className="tabular-nums" style={{ fontWeight: 600 }}>${fmt(summary.fobTotal)}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span className="caption">{lang === "es" ? "Costos extra" : "Extra costs"}</span>
-            <span className="tabular-nums" style={{ fontWeight: 600, color: "#F59E0B" }}>+${fmt(summary.extraUsd)}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, borderTop: "1px solid rgba(0,178,134,0.20)" }}>
-            <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>Landed</span>
-            <span className="tabular-nums" style={{ fontWeight: 700, color: "#00B286", fontSize: 16 }}>
-              ${fmt(summary.landedTotal)}
-            </span>
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-          <button className="btn btn-ghost" onClick={onCancel} disabled={busy}>
-            {lang === "es" ? "Cancelar" : "Cancel"}
-          </button>
-          <button className="btn btn-accent" onClick={onConfirm} disabled={busy}
-                  style={{
-                    minWidth: 200, fontWeight: 700,
-                    background: "var(--btn-primary, #00B286)",
-                    borderColor: "var(--btn-primary, #00B286)",
-                  }}>
-            {busy
-              ? (lang === "es" ? "Liquidando…" : "Liquidating…")
-              : (lang === "es" ? "Sí, liquidar" : "Yes, liquidate")}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
