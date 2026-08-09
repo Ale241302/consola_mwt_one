@@ -78,7 +78,52 @@ tests/**/__pycache__/
 # --- Vite dev timestamps (artefactos de sesiones del dev server) -------
 vite.config.js.timestamp-*.mjs
 
-# --- Archivos temporales de edición ------------------------------------
+# --- Archivos temporales de ediciï¿½n ------------------------------------
 *.tmp
 *.bak
 *.orig
+
+# --- Scratch / temp / ad-hoc (no versionar) ------------------------------
+.tmp_python_test/
+_to_delete/
+scratch/
+_cmdpal*
+_tmp_*.py
+_fugu_ola2_*
+_push_deploy_2026*
+mcp_server/build/
+mcp_server/err.txt
+mcp_server/_backup_gateway.sh
+mcp_server/a6_check.sh
+mcp_server/bp_apply.sh
+mcp_server/verify_ak1.sh
+mcp_server/create_mwt_finanzas.py
+mcp_server/mwt-finanzas-blueprint.yml
+mcp_server/revert_pilot.py
+contextforge_patch.py
+fix_app_authentik.py
+fix_nginx_authorize*.py
+list_flows.py
+set_authorization_flow.py
+patch-kimi-args.js
+ssh_helper.py
+mcp_gateway_backup.sh
+entrega-harness-mwt/
+prompt_extraccion_correo.md
+prompt_extraccion_correo_sondel.md
+prompt_fugu_pdf.txt
+
+# --- Datos / artefactos de negocio (grandes, no fuente) ------------------
+expedientes Upload de MCP/
+expedientes_sondel_2026-07-06.xlsx
+mwt-one-1.0.2.mcpb/
+mwt-one-1.0.2.mcpb - copia/
+detalleproducto/
+PF_2393-2025/
+_SAP_OV_*
+MWT_Proforma_2488-2026 V2.html
+PO 505244.pdf
+Captura de pantalla 2026-07-17 093827.png
+Sepa la Talla del Calzado Marluvas - Espa*.pdf
+Tabela de pre*.xlsx
+Tabla de Numeracion oficial de Marluvas_260721_091450.pdf
