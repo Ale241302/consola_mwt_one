@@ -248,6 +248,19 @@ class LoginView(APIView):
                 # No bloquear login si el rehash falla; loguear para revisión.
                 log.exception("Rehash de password falló para user=%s", user["id"])
 
+        # Sync de password consola -> Authentik (Mecanismo B · Fugu Ola 3).
+        # La consola guarda hashes; la password SOLO está en claro en el login.
+        # Cada login exitoso alinea la password de Authentik con la de la
+        # consola, para que el usuario entre al MCP (Claude) con la misma clave.
+        # Fail-safe: una caída de Authentik NUNCA bloquea el login de consola.
+        try:
+            _email_low = (user.get("email_plain") or "").strip().lower()
+            if _email_low and password:
+                from apps.users.authentik_sync import set_password as _ak_set_password  # noqa: PLC0415
+                _ak_set_password(_email_low, password)
+        except Exception:  # noqa: BLE001
+            log.exception("authentik sync on login failed for %s", user.get("email_plain"))
+
         tokens = _make_tokens(user)
 
         # Sprint 2026-07-16 · el login ahora incluye legal_entity_ids (Portal
