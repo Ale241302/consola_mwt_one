@@ -74,3 +74,11 @@ frontend/tests/.build/
 tests/.db_guard_snapshot.json
 backend/tests/__pycache__/
 tests/**/__pycache__/
+
+# --- Vite dev timestamps (artefactos de sesiones del dev server) -------
+vite.config.js.timestamp-*.mjs
+
+# --- Archivos temporales de edición ------------------------------------
+*.tmp
+*.bak
+*.orig

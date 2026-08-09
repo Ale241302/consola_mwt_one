@@ -44,7 +44,7 @@ function mapApiOcToPortalOc(r, allApiExpedientes) {
     // El codigo interno PO-2026-N queda como fallback.
     po_code:     r.client_ref || r.codigo || r.po_code || '',
     client_id:   r.client_id || null,
-    brand:       r.brand_id || '—',            // UUID — ver TODO resolver nombre
+    brand:       r.brand_name || r.brand_id || '—',   // nombre (ya no UUID)
     total_value: Number(r.total_value) || 0,
     total_paid:  Number(r.total_paid)  || 0,
     balance:     Number(r.balance)     || 0,

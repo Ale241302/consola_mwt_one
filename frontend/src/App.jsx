@@ -1,66 +1,72 @@
 // MWT.ONE · App — routes
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import AppLayout from "./components/layout/AppLayout.jsx";
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import Login from "./pages/Login.jsx";
 import ScreenPasswordReset from "./pages/PasswordReset.jsx";
-import ScreenDashboard from "./pages/Dashboard.jsx";
-import ScreenExpedientes from "./pages/Expedientes.jsx";
-// Sprint 2026-06-10 · Cronograma interactivo (reemplaza al Resumen .html).
-import ScreenCronograma from "./pages/Cronograma.jsx";
-import ScreenOCDetail from "./pages/OCDetail.jsx";
-// Sprint 2026-06-11 · detalle combinado de expedientes fusionados (E3).
-import ScreenFusionDetail from "./pages/FusionDetail.jsx";
-import ScreenExpedienteDetail from "./pages/ExpedienteDetail.jsx";
-import ScreenPipeline from "./pages/Pipeline.jsx";
-import ScreenPortal from "./pages/Portal.jsx";
-import ScreenPortalProductDetail from "./pages/PortalProductDetail.jsx";
-import PortalDiag from "./pages/PortalDiag.jsx";
-import ScreenPagos from "./pages/Pagos.jsx";
-// Sprint 2026-05-24 · Modulo Finanzas CEO-ONLY (comisiones, margen, devengo).
-import ScreenFinanzas from "./pages/Finanzas.jsx";
-import ScreenInventario from "./pages/Inventario.jsx";
-import InboundReceptionWizard from "./pages/InboundReceptionWizard.jsx";
-// import ScreenWizard from "./pages/Wizard.jsx";  // legacy — ahora /wizard redirige al wizard simplificado
-import CreateExpedienteWizard from "./pages/CreateExpedienteWizard.jsx";
-import CreateExpedienteWizardLite from "./pages/CreateExpedienteWizardLite.jsx";
-import ScreenTransfers from "./pages/Transfers.jsx";
-import ScreenTransferDetail from "./pages/TransferDetail.jsx";
-import ScreenCreateTransferWizard from "./pages/CreateTransferWizard.jsx";
-import ScreenNodos from "./pages/Nodos.jsx";
-import ScreenNodoDetail from "./pages/NodoDetail.jsx";
-import ScreenClientes from "./pages/Clientes.jsx";
-import ScreenClienteDetail from "./pages/ClienteDetail.jsx";
-import ScreenClienteFormView from "./pages/ClienteFormView.jsx";
-import ScreenBrands from "./pages/Brands.jsx";
-import ScreenBrandDetail from "./pages/BrandDetail.jsx";
-import ScreenBrandClientPricingForm from "./pages/BrandClientPricingForm.jsx";
-import ScreenProductos from "./pages/Productos.jsx";
-import ScreenProductFormView from "./pages/ProductFormView.jsx";
-import ScreenSizingEngine from "./pages/SizingEngine.jsx";
-import ScreenNcmEngine from "./pages/NcmEngine.jsx";
-import ScreenProveedores from "./pages/Proveedores.jsx";
-import ScreenSupplierFormView from "./pages/SupplierFormView.jsx";
-import ScreenSupplierDetail from "./pages/SupplierDetail.jsx";
-import ScreenEmailTemplates from "./pages/EmailTemplates.jsx";
-import ScreenNotificaciones from "./pages/Notificaciones.jsx";
-import ScreenCobros from "./pages/Cobros.jsx";
-import ScreenAIHub from "./pages/AIHub.jsx";
-import ScreenAIChat from "./pages/AIChat.jsx";
-import ScreenAIGovernance from "./pages/AIGovernance.jsx";
-import ScreenUsers from "./pages/Users.jsx";
-import ScreenUserFormView from "./pages/UserFormView.jsx";
-import ScreenRolesPermissions from "./pages/RolesPermissions.jsx";
-// F6 · Sprint 2026-05-20 · Bitácora histórica de precios (CEO-ONLY).
-import ScreenPriceHistory from "./pages/PriceHistory.jsx";
-// Sprint 2026-07-20 · Mesa de trabajo (CEO/Admin) — expedientes que
-// requieren atención (estancados vs promedio de fase / sin proforma).
-import ScreenMesaTrabajo from "./pages/MesaTrabajo.jsx";
-import ScreenProfilePage from "./pages/ProfilePage.jsx";
-import ScreenTickets from "./pages/Tickets.jsx";
-import ScreenTicketDetail from "./pages/TicketDetail.jsx";
 import { useRole } from "./context/RoleContext.jsx";
+
+// ── Code splitting (Ola 3 · 3.24) ─────────────────────────────────────
+// Carga diferida por ruta: cada página se descarga solo cuando se navega.
+// Login/PasswordReset quedan eager (primera pantalla). Los monolitos
+// (ExpedienteDetail, ProductFormView, etc.) se parten en chunks propios.
+const ScreenDashboard = lazy(() => import("./pages/Dashboard.jsx"));
+const ScreenExpedientes = lazy(() => import("./pages/Expedientes.jsx"));
+const ScreenCronograma = lazy(() => import("./pages/Cronograma.jsx"));
+const ScreenOCDetail = lazy(() => import("./pages/OCDetail.jsx"));
+const ScreenFusionDetail = lazy(() => import("./pages/FusionDetail.jsx"));
+const ScreenExpedienteDetail = lazy(() => import("./pages/ExpedienteDetail.jsx"));
+const ScreenPipeline = lazy(() => import("./pages/Pipeline.jsx"));
+const ScreenPortal = lazy(() => import("./pages/Portal.jsx"));
+const ScreenPortalProductDetail = lazy(() => import("./pages/PortalProductDetail.jsx"));
+const PortalDiag = lazy(() => import("./pages/PortalDiag.jsx"));
+const ScreenPagos = lazy(() => import("./pages/Pagos.jsx"));
+const ScreenFinanzas = lazy(() => import("./pages/Finanzas.jsx"));
+const ScreenInventario = lazy(() => import("./pages/Inventario.jsx"));
+const InboundReceptionWizard = lazy(() => import("./pages/InboundReceptionWizard.jsx"));
+const CreateExpedienteWizard = lazy(() => import("./pages/CreateExpedienteWizard.jsx"));
+const CreateExpedienteWizardLite = lazy(() => import("./pages/CreateExpedienteWizardLite.jsx"));
+const ScreenTransfers = lazy(() => import("./pages/Transfers.jsx"));
+const ScreenTransferDetail = lazy(() => import("./pages/TransferDetail.jsx"));
+const ScreenCreateTransferWizard = lazy(() => import("./pages/CreateTransferWizard.jsx"));
+const ScreenNodos = lazy(() => import("./pages/Nodos.jsx"));
+const ScreenNodoDetail = lazy(() => import("./pages/NodoDetail.jsx"));
+const ScreenClientes = lazy(() => import("./pages/Clientes.jsx"));
+const ScreenClienteDetail = lazy(() => import("./pages/ClienteDetail.jsx"));
+const ScreenClienteFormView = lazy(() => import("./pages/ClienteFormView.jsx"));
+const ScreenBrands = lazy(() => import("./pages/Brands.jsx"));
+const ScreenBrandDetail = lazy(() => import("./pages/BrandDetail.jsx"));
+const ScreenBrandClientPricingForm = lazy(() => import("./pages/BrandClientPricingForm.jsx"));
+const ScreenProductos = lazy(() => import("./pages/Productos.jsx"));
+const ScreenProductFormView = lazy(() => import("./pages/ProductFormView.jsx"));
+const ScreenSizingEngine = lazy(() => import("./pages/SizingEngine.jsx"));
+const ScreenNcmEngine = lazy(() => import("./pages/NcmEngine.jsx"));
+const ScreenProveedores = lazy(() => import("./pages/Proveedores.jsx"));
+const ScreenSupplierFormView = lazy(() => import("./pages/SupplierFormView.jsx"));
+const ScreenSupplierDetail = lazy(() => import("./pages/SupplierDetail.jsx"));
+const ScreenEmailTemplates = lazy(() => import("./pages/EmailTemplates.jsx"));
+const ScreenNotificaciones = lazy(() => import("./pages/Notificaciones.jsx"));
+const ScreenCobros = lazy(() => import("./pages/Cobros.jsx"));
+const ScreenAIHub = lazy(() => import("./pages/AIHub.jsx"));
+const ScreenAIChat = lazy(() => import("./pages/AIChat.jsx"));
+const ScreenAIGovernance = lazy(() => import("./pages/AIGovernance.jsx"));
+const ScreenUsers = lazy(() => import("./pages/Users.jsx"));
+const ScreenUserFormView = lazy(() => import("./pages/UserFormView.jsx"));
+const ScreenRolesPermissions = lazy(() => import("./pages/RolesPermissions.jsx"));
+const ScreenPriceHistory = lazy(() => import("./pages/PriceHistory.jsx"));
+const ScreenMesaTrabajo = lazy(() => import("./pages/MesaTrabajo.jsx"));
+const ScreenProfilePage = lazy(() => import("./pages/ProfilePage.jsx"));
+const ScreenTickets = lazy(() => import("./pages/Tickets.jsx"));
+const ScreenTicketDetail = lazy(() => import("./pages/TicketDetail.jsx"));
+
+function PageFallback() {
+  return (
+    <div style={{ padding: 48, textAlign: "center", color: "var(--text-tertiary)" }}>
+      Cargando…
+    </div>
+  );
+}
 
 // ── Route guard: CEO-ONLY páginas bloqueadas para CLIENT B2B.
 // AI Hub Governance expone catálogos (agentes, skills, instrucciones)
@@ -95,7 +101,8 @@ function NuevaOcRoleSwitch() {
 
 export default function App() {
   return (
-    <Routes>
+    <Suspense fallback={<PageFallback />}>
+      <Routes>
       {/* Públicas */}
       <Route path="/login" element={<Login />} />
       <Route path="/reset" element={<ScreenPasswordReset />} />
@@ -190,6 +197,7 @@ export default function App() {
         <Route path="/ai/chat/:threadId" element={<ScreenAIChat />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 }

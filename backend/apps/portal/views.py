@@ -566,6 +566,7 @@ class PortalViewSet(viewsets.ViewSet):
               o.created_at,
               COALESCE(o.client_id, exp_first.client_id) AS client_id,
               COALESCE(c.nombre_comercial, c.razon_social) AS client_name,
+              m.nombre   AS brand_name,
               -- Fable5-QA 2026-06-12: referencia VISIBLE para el cliente.
               -- Misma politica que ExpedienteListSerializer.get_oc_codigos:
               -- 1) codigo del documento OC subido (kind OC*), 2) alias
@@ -598,6 +599,7 @@ class PortalViewSet(viewsets.ViewSet):
             ) exp_first ON TRUE
             LEFT JOIN clientes.cliente c
                    ON c.id = COALESCE(o.client_id, exp_first.client_id)
+            LEFT JOIN brands.marca      m ON m.id = o.brand_id
             WHERE o.is_active = TRUE
               AND (
                 lower(o.client_id::text) IN ({placeholders})
@@ -866,6 +868,53 @@ class PortalViewSet(viewsets.ViewSet):
             )
 
         return Response(data)
+
+    # ── /api/portal/oc_lines/ ────────────────────────────────
+    @action(detail=False, methods=["get"], url_path="oc_lines")
+    def oc_lines(self, request):
+        """Líneas de una OC del cliente (scope-checked por client_id).
+
+        Ola 3 · 3.29 — el portal mostraba lines_count pero no las líneas.
+        Devuelve SOLO campos seguros: sku, talla, cantidad, precio unitario
+        y referencia de producto (sin costos internos / margen / proveedor).
+        """
+        cid = _resolve_client_id(request)
+        if not cid:
+            return _forbidden()
+        oc_id = request.query_params.get("id")
+        if not oc_id:
+            return Response({"detail": "Falta query param 'id'"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Scope: la OC debe pertenecer al cliente (o a un expediente suyo).
+        # Columnas reales de expedientes.linea: size (no talla), qty (no
+        # cantidad). Se expone unit_price_client (precio que ve el cliente),
+        # nunca unit_price_mwt/unit_cost (internos).
+        rows = _fetchall("""
+            SELECT
+              l.id, l.sku, l.size, l.qty,
+              l.unit_price_client,
+              COALESCE(p.nombre, '') AS producto_nombre
+            FROM expedientes.linea l
+            LEFT JOIN productos.producto p ON p.id = l.producto_id
+            WHERE l.is_active = TRUE
+              AND l.oc_id = %s
+              AND (
+                EXISTS (
+                  SELECT 1 FROM expedientes.oc o
+                   WHERE o.id = l.oc_id AND o.client_id = %s
+                )
+                OR EXISTS (
+                  SELECT 1 FROM expedientes.expediente e
+                   WHERE e.oc_id = l.oc_id
+                     AND e.is_active = TRUE
+                     AND (e.client_id = %s OR e.operating_company_id = %s)
+                )
+              )
+            ORDER BY l.created_at ASC
+            LIMIT 500
+        """, [oc_id, cid, cid, cid])
+        return Response(rows)
 
     # ── /api/portal/update_preferences/ ───────────────────────
     @action(detail=False, methods=["patch", "post"], url_path="update_preferences")
