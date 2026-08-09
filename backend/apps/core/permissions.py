@@ -212,9 +212,31 @@ class RoleBasedPermission(BasePermission):
     · Si NO lo declara:
         - Por defecto se permite y se loguea (transición log-only).
         - En modo estricto (MWT_RBAC_STRICT=1) se niega el acceso (fail-closed).
-    · Los roles 'admin' y 'superadmin' (o modules=['*']) pasan todo.
+    · Los roles 'admin' y 'superadmin' (o modules=['*']) pasan todo en la
+      CONSOLA (wildcard a propósito para no romper la operación).
+    · MCP (request.auth['mcp']==True): valida contra la MATRIZ REAL de
+      core.roles.permissions (permissions_for_role_exact) — si el CEO
+      deshabilitó clientes.create en /roles, la tool cliente_crear devuelve
+      403 aunque el usuario sea admin. La consola no cambia.
     · ServiceTokenUser aporta sus permisos directos.
     """
+
+    _METHOD_TO_ACTION = {
+        "GET": "view",
+        "HEAD": "view",
+        "OPTIONS": "view",
+        "POST": "create",
+        "PUT": "update",
+        "PATCH": "update",
+        "DELETE": "delete",
+    }
+
+    def _effective_action(self, request, view) -> str:
+        """Acción requerida: la declarada en la vista o derivada del método HTTP."""
+        declared = getattr(view, "required_action", None)
+        if declared:
+            return declared
+        return self._METHOD_TO_ACTION.get((request.method or "GET").upper(), "view")
 
     def has_permission(self, request, view):
         # Auth ya fue validada por JWTAuthentication / ServiceTokenAuthentication
@@ -222,7 +244,6 @@ class RoleBasedPermission(BasePermission):
             return False
 
         required_module = getattr(view, "required_module", None)
-        required_action = getattr(view, "required_action", "view")
         view_name = f"{view.__class__.__module__}.{view.__class__.__name__}"
 
         # ── Vista sin required_module ────────────────────────────────────
@@ -243,17 +264,60 @@ class RoleBasedPermission(BasePermission):
             )
             return True
 
+        # ── ¿Es una llamada del MCP? ─────────────────────────────────────
+        # El JWT mint por McpTokenView lleva claim mcp=True. Para el MCP
+        # SIEMPRE validamos contra la matriz REAL (permissions_for_role_exact)
+        # y la acción derivada del método HTTP, de modo que lo configurado en
+        # /roles se respete (ej. clientes.create=false -> cliente_crear 403).
+        # La consola (sin claim mcp) conserva el wildcard admin/superadmin.
+        is_mcp = bool(isinstance(request.auth, dict) and request.auth.get("mcp"))
+
         # ── Permisos del usuario ───────────────────────────────────────
-        # ServiceTokenUser trae permisos directos en _permissions.
         if getattr(request.user, "is_service_token", False):
             perms = getattr(request.user, "_permissions", {}) or {}
+            modules = perms.get("modules") or []
+            actions = perms.get("actions") or []
+            if "*" in modules:
+                return True
+            if required_module not in modules:
+                return False
+            if not actions or "*" in actions:
+                return True
+            required_action = self._effective_action(request, view)
+            return required_action in actions
+
+        if isinstance(request.auth, dict):
+            role_slug = request.auth.get("role")
         else:
-            if isinstance(request.auth, dict):
-                role_slug = request.auth.get("role")
-            else:
-                role_slug = (getattr(request.user, "role", None)
-                             or getattr(request.user, "role_default", None))
-            perms = _permissions_for_role(role_slug)
+            role_slug = (getattr(request.user, "role", None)
+                         or getattr(request.user, "role_default", None))
+
+        if is_mcp:
+            perms = permissions_for_role_exact(role_slug)
+            modules = perms.get("modules") or []
+            actions = perms.get("actions") or []
+            required_action = self._effective_action(request, view)
+            # MCP: sin wildcard. modules=['*'] explícito -> acceso total.
+            if "*" in modules:
+                return True
+            if required_module not in modules:
+                log.info(
+                    "[RoleBasedPermission][MCP] módulo %r denegado para rol %r (action=%s)",
+                    required_module, role_slug, required_action,
+                )
+                return False
+            if not actions or "*" in actions:
+                return True
+            ok = f"{required_module}.{required_action}" in actions
+            if not ok:
+                log.info(
+                    "[RoleBasedPermission][MCP] action %s.%s denegado para rol %r",
+                    required_module, required_action, role_slug,
+                )
+            return ok
+
+        # ── Consola: wildcard admin/superadmin (comportamiento actual) ──
+        perms = _permissions_for_role(role_slug)
 
         if not isinstance(perms, dict):
             log.warning(
@@ -271,4 +335,5 @@ class RoleBasedPermission(BasePermission):
             return False
         if not actions or "*" in actions:
             return True
+        required_action = self._effective_action(request, view)
         return required_action in actions
