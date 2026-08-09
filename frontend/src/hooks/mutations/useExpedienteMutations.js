@@ -11,5 +11,12 @@ export function useExpedienteMutations() {
   return {
     update: useMutation({ mutationFn: ({ id, body }) => expedientesApi.update(id, body), onSuccess: invalidate }),
     create: useMutation({ mutationFn: (body) => expedientesApi.create(body), onSuccess: invalidate }),
+    remove: useMutation({ mutationFn: (id) => expedientesApi.remove(id), onSuccess: invalidate }),
+    // action: acciones de dominio del backend (fusionar, desfusionar, phase-stats…).
+    //   useExpedienteMutations().action.mutateAsync({ name: "fusionar", body: {...} })
+    action: useMutation({
+      mutationFn: ({ name, body }) => expedientesApi.action(name, null, body),
+      onSuccess: invalidate,
+    }),
   };
 }

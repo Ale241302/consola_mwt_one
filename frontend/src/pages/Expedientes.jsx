@@ -47,6 +47,7 @@ import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 // Ola 3 · 3.26 · React Query — estado servidor (api.js sigue siendo transporte).
 import { useExpedientesData } from "../hooks/queries/useExpedientesData.js";
 import { useClientesMap } from "../hooks/queries/useClientesMap.js";
+import { useExpedienteMutations } from "../hooks/mutations/useExpedienteMutations.js";
 // Ola 3 · 3.27 · Virtualización compartida (threshold 60 + print + fallback).
 import VirtualTable from "../components/ui/VirtualTable.jsx";
 // Sprint 2026-05-20 · Fusión Pipeline → Expedientes.
@@ -300,6 +301,11 @@ export default function ScreenExpedientes() {
   // reload para mutaciones (bulk delete, fuse, etc.) → refetch RQ.
   const load = useCallback(() => expQuery.refetch(), [expQuery]);
 
+  // Ola 3 · 3.26 · Mutaciones vía React Query: cada `onSuccess` invalida el
+  // listado (queryKeys.expedientes.all) → RQ refetchea solo. `load()` queda
+  // como respaldo (Retry del estado de error) y para el caso manual.
+  const expMutations = useExpedienteMutations();
+
   // Sprint 2026-05-10 · CEO ordenó eliminar TODA fallback a mock data.
   // Si el backend devuelve [] mostramos estado vacío real, no demo.
   const EXPEDIENTES = apiExpedientes;
@@ -501,9 +507,10 @@ export default function ScreenExpedientes() {
     setDeleteErr(null);
     try {
       // Llamadas en serie para no saturar el backend ni perder errores
-      // individuales. Si una falla, las demás continúan; al final reload.
+      // individuales. Si una falla, las demás continúan; al final la
+      // invalidación de RQ (onSuccess) refresca el listado.
       const results = await Promise.allSettled(
-        ids.map(id => expedientesApi.remove(id))
+        ids.map(id => expMutations.remove.mutateAsync(id))
       );
       const failed = results.filter(r => r.status === 'rejected');
       if (failed.length > 0) {
@@ -517,7 +524,6 @@ export default function ScreenExpedientes() {
       }
       clearSelection();
       setPendingDelete(null);
-      await load();   // refrescar listado desde API
     } finally {
       setDeleting(false);
     }
@@ -539,12 +545,14 @@ export default function ScreenExpedientes() {
             members.every(m => (m.oc_codigos || []).includes(code))
           ) || null)
         : null;
-      await expedientesApi.action('fusionar', null, {
-        expediente_ids: ids,
-        ...(common ? { label: common } : {}),
+      await expMutations.action.mutateAsync({
+        name: 'fusionar',
+        body: {
+          expediente_ids: ids,
+          ...(common ? { label: common } : {}),
+        },
       });
       clearSelection();
-      await load();   // refrescar listado desde API (cache invalidation)
     } catch (err) {
       setFusionErr(err?.message || String(err));
     } finally {
@@ -557,8 +565,10 @@ export default function ScreenExpedientes() {
     setFusing(true);
     setFusionErr(null);
     try {
-      await expedientesApi.action('desfusionar', null, { fusion_id: fid });
-      await load();
+      await expMutations.action.mutateAsync({
+        name: 'desfusionar',
+        body: { fusion_id: fid },
+      });
     } catch (err) {
       setFusionErr(err?.message || String(err));
     } finally {
