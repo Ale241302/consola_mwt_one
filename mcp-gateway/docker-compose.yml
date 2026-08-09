@@ -151,6 +151,11 @@ services:
       MCPGATEWAY_UI_ENABLED: "true"
       # Fugu · Ola 2 - 2.15 · hardening producción.
       MCPGATEWAY_ADMIN_API_ENABLED: "false"
+      # Ola 2 · RBAC por rol MWT: el gateway MWT corre en direct_proxy para que
+      # tools/list se reenvíe EN VIVO al server MCP con la identidad del usuario
+      # (X-Forwarded-User-*), y el filtrado por rol de mwt_mcp/tool_rbac.py
+      # oculte las tools que la matriz /roles no permite.
+      MCPGATEWAY_DIRECT_PROXY_ENABLED: "true"
       SSO_ENABLED: "true"
       AUTH_REQUIRED: "true"
       SECURE_COOKIES: "true"
