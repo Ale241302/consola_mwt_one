@@ -21,6 +21,8 @@ import { apiFetch, getToken, ApiError } from "../lib/api.js";
 import { ROLES_DEMO } from "../lib/usersRolesMock.js";
 import { IconPlus, IconRefresh, IconLock, IconX, IconCheck } from "../lib/icons.jsx";
 import ConfirmActionModal, { ACTION_META } from "../components/users/ConfirmActionModal.jsx";
+// Ola 3 · 3.25 · Accesibilidad — Field compartido (cablea htmlFor/id).
+import { Field } from "../components/ui/index.js";
 
 export default function Users() {
   const { lang } = useOutletContext() || { lang: "es" };
@@ -141,6 +143,7 @@ export default function Users() {
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <input
           className="input"
+          aria-label={lang === "es" ? "Buscar usuarios" : "Search users"}
           placeholder={lang === "es" ? "Buscar por email o nombre…" : "Search by email or name…"}
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -468,54 +471,70 @@ function UserDrawer({ open, user, onClose, onSaved, lang }) {
 
             <div style={{ padding: 20, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 12 }}>
               <Field label={lang === "es" ? "Email (login)" : "Email (login)"} required>
-                <input className="input" type="email" value={form.email_plain}
-                       onChange={(e) => setForm({ ...form, email_plain: e.target.value.toLowerCase() })}
-                       disabled={isEdit}/>
+                {({ id }) => (
+                  <input id={id} className="input" type="email" value={form.email_plain}
+                         onChange={(e) => setForm({ ...form, email_plain: e.target.value.toLowerCase() })}
+                         disabled={isEdit}/>
+                )}
               </Field>
               <Field label={lang === "es" ? "Nombre completo" : "Full name"}>
-                <input className="input" value={form.full_name}
-                       onChange={(e) => setForm({ ...form, full_name: e.target.value })}/>
+                {({ id }) => (
+                  <input id={id} className="input" value={form.full_name}
+                         onChange={(e) => setForm({ ...form, full_name: e.target.value })}/>
+                )}
               </Field>
               <Field label={lang === "es" ? "Email de contacto" : "Contact email"}>
-                <input className="input" type="email" value={form.contact_email}
-                       onChange={(e) => setForm({ ...form, contact_email: e.target.value })}/>
+                {({ id }) => (
+                  <input id={id} className="input" type="email" value={form.contact_email}
+                         onChange={(e) => setForm({ ...form, contact_email: e.target.value })}/>
+                )}
               </Field>
               <Field label={lang === "es" ? "Teléfono" : "Phone"}>
-                <input className="input" value={form.phone || ""}
-                       onChange={(e) => setForm({ ...form, phone: e.target.value })}/>
+                {({ id }) => (
+                  <input id={id} className="input" value={form.phone || ""}
+                         onChange={(e) => setForm({ ...form, phone: e.target.value })}/>
+                )}
               </Field>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <Field label={lang === "es" ? "Idioma" : "Language"}>
-                  <select className="select" value={form.preferred_language}
-                          onChange={(e) => setForm({ ...form, preferred_language: e.target.value })}>
-                    <option value="es">Español</option>
-                    <option value="en">English</option>
-                    <option value="pt">Português</option>
-                  </select>
+                  {({ id }) => (
+                    <select id={id} className="select" value={form.preferred_language}
+                            onChange={(e) => setForm({ ...form, preferred_language: e.target.value })}>
+                      <option value="es">Español</option>
+                      <option value="en">English</option>
+                      <option value="pt">Português</option>
+                    </select>
+                  )}
                 </Field>
                 <Field label={lang === "es" ? "Zona horaria" : "Timezone"}>
-                  <select className="select" value={form.timezone}
-                          onChange={(e) => setForm({ ...form, timezone: e.target.value })}>
-                    <option>America/Lima</option>
-                    <option>America/Santiago</option>
-                    <option>America/Argentina/Buenos_Aires</option>
-                    <option>America/Mexico_City</option>
-                    <option>America/Bogota</option>
-                    <option>America/Sao_Paulo</option>
-                  </select>
+                  {({ id }) => (
+                    <select id={id} className="select" value={form.timezone}
+                            onChange={(e) => setForm({ ...form, timezone: e.target.value })}>
+                      <option>America/Lima</option>
+                      <option>America/Santiago</option>
+                      <option>America/Argentina/Buenos_Aires</option>
+                      <option>America/Mexico_City</option>
+                      <option>America/Bogota</option>
+                      <option>America/Sao_Paulo</option>
+                    </select>
+                  )}
                 </Field>
               </div>
               <Field label={lang === "es" ? "Rol principal" : "Primary role"}>
-                <select className="select" value={form.role_default}
-                        onChange={(e) => setForm({ ...form, role_default: e.target.value })}>
-                  {ROLES_DEMO.map((r) => <option key={r.slug} value={r.slug}>{r.nombre}</option>)}
-                </select>
+                {({ id }) => (
+                  <select id={id} className="select" value={form.role_default}
+                          onChange={(e) => setForm({ ...form, role_default: e.target.value })}>
+                    {ROLES_DEMO.map((r) => <option key={r.slug} value={r.slug}>{r.nombre}</option>)}
+                  </select>
+                )}
               </Field>
               {!isEdit && (
                 <Field label={lang === "es" ? "Contraseña inicial (opcional)" : "Initial password (optional)"}>
-                  <input className="input" type="password" value={form.password}
-                         onChange={(e) => setForm({ ...form, password: e.target.value })}
-                         placeholder={lang === "es" ? "Dejar vacío para enviar invitación" : "Leave empty to send invitation"}/>
+                  {({ id }) => (
+                    <input id={id} className="input" type="password" value={form.password}
+                           onChange={(e) => setForm({ ...form, password: e.target.value })}
+                           placeholder={lang === "es" ? "Dejar vacío para enviar invitación" : "Leave empty to send invitation"}/>
+                  )}
                 </Field>
               )}
               {error && <div style={{ color: "var(--critical)", fontSize: 12 }}>⚠️ {error}</div>}
@@ -549,22 +568,6 @@ function UserDrawer({ open, user, onClose, onSaved, lang }) {
     </AnimatePresence>
   );
 }
-
-function Field({ label, required, children }) {
-  return (
-    <label style={{ display: "block" }}>
-      <span style={{
-        display: "block", fontSize: 10, fontWeight: 700,
-        color: "var(--text-tertiary)",
-        letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 4,
-      }}>
-        {label} {required && <span style={{ color: "var(--critical)" }}>*</span>}
-      </span>
-      {children}
-    </label>
-  );
-}
-
 
 // ConfirmActionModal vive en components/users/ConfirmActionModal.jsx
 // (compartido con UserFormView para mantener el copy + estilos en un solo lugar).

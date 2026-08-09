@@ -16,6 +16,9 @@ import {
 } from "../../lib/icons.jsx";
 import { documentosApi, expedientesApi, getToken, documentMatchmakerApi } from "../../lib/api.js";
 import { useRole } from "../../context/RoleContext.jsx";
+// Ola 3 · 3.25 · Accesibilidad — focus trap + Escape + restore.
+import { useDialogA11y } from "../../lib/a11y/useDialogA11y.js";
+import { useAutoId } from "../../lib/a11y/useAutoId.js";
 // Sprint 2026-06-01 · Factura comercial generada (mismo formato que la
 // factura de transferencia) desde el detalle del expediente.
 import { buildExpedienteFacturaFile } from "../../lib/expedienteFactura.js";
@@ -120,6 +123,10 @@ export default function UploadDocumentModal({
   const showAudience = audienceApplies && kind === "FACTURA";
 
   if (!open) return null;
+
+  // Ola 3 · 3.25 · Accesibilidad
+  const titleId = useAutoId("uploaddoc-title");
+  const dialogRef = useDialogA11y({ open, onClose });
 
   // Sprint 2026-06-11 · FUSIÓN: si hay targetOptions, ocId/expedienteId
   // se resuelven del destino elegido. El documento queda relacionado al
@@ -470,6 +477,7 @@ export default function UploadDocumentModal({
   return (
     <div
       onClick={() => !uploading && onClose?.()}
+      onMouseDown={(e) => { if (e.target === e.currentTarget && !uploading) onClose?.(); }}
       style={{
         position: "fixed", inset: 0, zIndex: 200,
         background: "rgba(11,30,58,0.55)",
@@ -478,12 +486,18 @@ export default function UploadDocumentModal({
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "white", borderRadius: 14,
           width: "min(560px, 96vw)", maxHeight: "90vh",
           boxShadow: "0 30px 60px -20px rgba(15,27,61,0.55)",
           display: "flex", flexDirection: "column", overflow: "hidden",
+          outline: "none",
         }}
       >
         {/* Header */}
@@ -507,7 +521,7 @@ export default function UploadDocumentModal({
               }}>
                 {lang === "es" ? "DOCUMENTO COMERCIAL" : "COMMERCIAL DOCUMENT"}
               </div>
-              <div style={{ fontWeight: 800, fontSize: 15, color: "var(--text-primary)" }}>
+              <div id={titleId} style={{ fontWeight: 800, fontSize: 15, color: "var(--text-primary)" }}>
                 {lang === "es" ? "Agregar documento" : "Add document"}
                 {contextLabel && (
                   <span className="caption mono-sm" style={{
@@ -859,10 +873,18 @@ export default function UploadDocumentModal({
             </div>
             <div
               onClick={() => !uploading && inputRef.current?.click()}
+              onKeyDown={(e) => {
+                if (uploading) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  inputRef.current?.click();
+                }
+              }}
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={onDrop}
               role="button" tabIndex={0}
+              aria-label={lang === "es" ? "Seleccionar archivo" : "Select file"}
               style={{
                 border: dragOver
                   ? "2px dashed var(--success, #00B286)"

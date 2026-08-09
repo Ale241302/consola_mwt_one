@@ -11,6 +11,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { nodosApi, productosApi, apiFetch, getToken } from "../../lib/api.js";
+// Ola 3 · 3.25 · Accesibilidad — focus trap + Escape + restore.
+import { useDialogA11y } from "../../lib/a11y/useDialogA11y.js";
+import { useAutoId } from "../../lib/a11y/useAutoId.js";
 
 export default function ReceiveBatchModal({ lang = "es", onClose, onSaved }) {
   // ── Catálogos ─────────────────────────────────────
@@ -79,6 +82,10 @@ export default function ReceiveBatchModal({ lang = "es", onClose, onSaved }) {
   const [busy, setBusy]   = useState(false);
   const [error, setError] = useState(null);
 
+  // Ola 3 · 3.25 · Accesibilidad
+  const titleId = useAutoId("receive-title");
+  const dialogRef = useDialogA11y({ open: true, onClose });
+
   const canSave =
     !!form.nodo_id &&
     !!form.producto_id &&
@@ -138,10 +145,11 @@ export default function ReceiveBatchModal({ lang = "es", onClose, onSaved }) {
       />
       {/* Card */}
       <motion.div
+        ref={dialogRef}
         initial={{ opacity: 0, y: -12, x: "-50%" }}
         animate={{ opacity: 1, y: 0,   x: "-50%", transition: { duration: 0.18 } }}
         exit   ={{ opacity: 0, y: -12, x: "-50%", transition: { duration: 0.12 } }}
-        role="dialog" aria-modal="true"
+        role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
         style={{
           position: "fixed", top: "8vh", left: "50%",
           width: "min(640px, 96vw)",
@@ -151,6 +159,7 @@ export default function ReceiveBatchModal({ lang = "es", onClose, onSaved }) {
           boxShadow: "0 30px 60px -20px rgba(15,27,61,0.45)",
           fontFamily: "inherit",
           display: "flex", flexDirection: "column",
+          outline: "none",
         }}
       >
         {/* Header */}
@@ -161,7 +170,7 @@ export default function ReceiveBatchModal({ lang = "es", onClose, onSaved }) {
           }}>
             {lang === "es" ? "RECIBIR LOTE" : "RECEIVE LOT"}
           </div>
-          <div style={{ font: "700 17px/1.3 inherit", color: "#0F1B3D", marginBottom: 4 }}>
+          <div id={titleId} style={{ font: "700 17px/1.3 inherit", color: "#0F1B3D", marginBottom: 4 }}>
             {lang === "es" ? "Alta de inventario en un nodo" : "Inventory intake at a node"}
           </div>
           <div style={{ font: "500 12.5px/1.4 inherit", color: "#64748B" }}>

@@ -218,6 +218,7 @@ export default function ScreenClientes() {
         <div className="search-box" style={{flex:'1 1 260px', maxWidth: 380}}>
           <IconSearch size={14} className="search-icon"/>
           <input className="input" value={q} onChange={e=>setQ(e.target.value)}
+                 aria-label={lang==='es'?'Buscar clientes':'Search clients'}
                  placeholder={lang==='es'?'Buscar por nombre, SAP, país o contacto…':'Search by name, SAP, country or contact…'}/>
         </div>
         <div className="seg">

@@ -448,6 +448,7 @@ function AddressesTab({ profile, patch }) {
                 <input
                   value={a.label}
                   onChange={(e) => updateAddress(a.id, { label: e.target.value })}
+                  aria-label="Etiqueta de dirección"
                   placeholder="Etiqueta (Casa, Oficina, Almacén…)"
                   style={{ ...styles.input, flex: 1, fontWeight: 600 }}
                 />
