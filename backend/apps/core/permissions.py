@@ -270,7 +270,12 @@ class RoleBasedPermission(BasePermission):
         # y la acción derivada del método HTTP, de modo que lo configurado en
         # /roles se respete (ej. clientes.create=false -> cliente_crear 403).
         # La consola (sin claim mcp) conserva el wildcard admin/superadmin.
-        is_mcp = bool(isinstance(request.auth, dict) and request.auth.get("mcp"))
+        # Nota: request.auth es un AccessToken de simplejwt (dict-like con
+        # .get(), NO un dict) — se detecta con hasattr/get, no isinstance.
+        try:
+            is_mcp = bool(getattr(request.auth, "get", lambda k: None)("mcp"))
+        except Exception:  # noqa: BLE001
+            is_mcp = False
 
         # ── Permisos del usuario ───────────────────────────────────────
         if getattr(request.user, "is_service_token", False):
@@ -287,6 +292,8 @@ class RoleBasedPermission(BasePermission):
             return required_action in actions
 
         if isinstance(request.auth, dict):
+            role_slug = request.auth.get("role")
+        elif hasattr(request.auth, "get"):
             role_slug = request.auth.get("role")
         else:
             role_slug = (getattr(request.user, "role", None)
