@@ -81,6 +81,19 @@ def post(path: str, body: dict | list | None = None) -> Any:
         return _handle(r)
 
 
+def post_service(path: str, body: dict | list | None = None) -> Any:
+    """POST firmado con el ServiceToken estático (NO el JWT de usuario).
+
+    Para endpoints de metadatos/diagnóstico del propio MCP (auth/mcp-token,
+    auth/mcp-diag, auth/mcp-audit) que exigen el token de servicio, no la
+    identidad del usuario conectado."""
+    from .jwt_minter import _service_auth_header
+
+    with httpx.Client(timeout=settings.http_timeout) as c:
+        r = c.post(_url(path), json=_clean(body), headers=_service_auth_header())
+        return _handle(r)
+
+
 def patch(path: str, body: dict | None = None) -> Any:
     with httpx.Client(timeout=settings.http_timeout) as c:
         r = c.patch(_url(path), json=_clean(body), headers=_auth_headers())

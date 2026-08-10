@@ -143,12 +143,12 @@ def test_diag_scope_ok_cruza_rbac(monkeypatch):
         "legal_entity_ids": ["le-1"],
     }
 
-    def _fake_post(path, body):
+    def _fake_post_service(path, body):
         assert path == "auth/mcp-diag/"
         assert body == {"email": "alvaro@muitowork.com"}
         return target
 
-    monkeypatch.setattr(server.api, "post", _fake_post)
+    monkeypatch.setattr(server.api, "post_service", _fake_post_service)
     out = server.mwt_diag_scope(email="alvaro@muitowork.com")
     assert out["email_plain"] == "alvaro@muitowork.com"
     assert "mwt_rbac" in out
@@ -164,12 +164,61 @@ def test_diag_scope_passthrough_user_id(monkeypatch):
     monkeypatch.setattr(server, "get_identity_user", lambda: {"role": "ceo"})
     captured = {}
 
-    def _fake_post(path, body):
+    def _fake_post_service(path, body):
         captured["body"] = body
         return {"id": "u3", "email_plain": "j@k.l", "role_slug": "ceo",
                 "permissions": {"modules": ["*"]}, "legal_entity_ids": []}
 
-    monkeypatch.setattr(server.api, "post", _fake_post)
+    monkeypatch.setattr(server.api, "post_service", _fake_post_service)
     out = server.mwt_diag_scope(user_id="u3")
     assert captured["body"] == {"user_id": "u3"}
     assert out["mwt_rbac"]["total_ocultas"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────── #
+# client.post_service — firma con ServiceToken, no con JWT de usuario
+# ─────────────────────────────────────────────────────────────────────── #
+def test_post_service_firma_con_service_token(monkeypatch):
+    from mwt_mcp import client
+
+    captured = {}
+
+    class _FakeResp:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def json(self):
+            return {"saved": True}
+
+    class _FakeClient:
+        def __init__(self, *a, **k):  # noqa: ANN002, ANN003
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):  # noqa: ANN002
+            return False
+
+        def post(self, url, json=None, headers=None):  # noqa: ANN001
+            captured["url"] = url
+            captured["json"] = json
+            captured["headers"] = headers
+            return _FakeResp()
+
+    monkeypatch.setattr(
+        client,
+        "_auth_headers",
+        lambda: {"Authorization": "Bearer jwt-de-usuario"},  # NO debe usarse
+    )
+    monkeypatch.setattr(
+        "mwt_mcp.jwt_minter._service_auth_header",
+        lambda: {"Authorization": "ServiceToken abc"},
+    )
+    with monkeypatch.context() as m:
+        m.setattr(client.httpx, "Client", _FakeClient)
+        out = client.post_service("auth/mcp-diag/", {"email": "x@y.z"})
+
+    assert out == {"saved": True}
+    assert captured["headers"]["Authorization"] == "ServiceToken abc"
+    assert "jwt-de-usuario" not in captured["headers"]["Authorization"]

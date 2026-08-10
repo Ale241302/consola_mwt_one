@@ -399,7 +399,7 @@ def mwt_diag_scope(email: str | None = None, user_id: str | None = None) -> Any:
         return {"error": True, "detail": "Falta email o user_id."}
 
     body = _params(email=email, user_id=user_id)
-    data = _safe(lambda: api.post("auth/mcp-diag/", body))
+    data = _safe(lambda: api.post_service("auth/mcp-diag/", body))
     if not isinstance(data, dict) or data.get("error"):
         return data
 
