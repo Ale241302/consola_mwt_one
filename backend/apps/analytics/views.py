@@ -34,8 +34,10 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.cache import never_cache
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, throttle_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.views import APIView
 
 from .models import DashboardSnapshot, WidgetCat
 from .serializers import (
@@ -47,7 +49,7 @@ from apps.core.scoped_querysets import (
     filter_by_user_clients_sql,
     is_bypass,
 )
-from apps.core.permissions import user_is_ceo_or_admin
+from apps.core.permissions import RoleBasedPermission, user_is_ceo_or_admin
 
 log = logging.getLogger(__name__)
 
@@ -1624,86 +1626,6 @@ class AnalyticsViewSet(viewsets.ViewSet):
         return Response(rows)
 
 
-    # ── Ola 3.10 · render de charts server-side (SVG) ────────────────
-    @action(detail=False, methods=["post"], url_path="chart-render")
-    @method_decorator(never_cache)
-    @throttle_classes([_ChartRenderThrottle])
-    def chart_render(self, request):
-        """Genera un chart SVG a partir de datos puros (Ola 3.10).
-
-        POST /api/analytics/chart-render/
-        Body: { "tipo": "line"|"area"|"bar"|"column"|"pie",
-                "data": [ {x, y} | {category, value} ... ],
-                "opciones": { x, y, category, value, titulo, width, height, palette } }
-
-        · El renderizador es server-side y puro: recibe SOLO datos (números y
-          labels), NUNCA URLs ni HTML (sin SSRF). Máx 5000 filas.
-        · El SVG se sube a MinIO (`charts/<uuid>.svg`) y se devuelve una URL
-          firmada con TTL corto (5 min, patrón storage/signed_url).
-        · La redacción por rol ya la aplicó el MCP ANTES de enviar los datos
-          (el agente no manda costos/margen de un rol no autorizado).
-        · Throttle: scope `chart_render`.
-        """
-        from apps.storage.services import (
-            generate_signed_url,
-            put_object_stream,
-        )
-        from .chart_svg import CHART_TYPES, render_chart
-
-        tipo = (request.data.get("tipo") or "").strip().lower()
-        data = request.data.get("data")
-        opciones = request.data.get("opciones") or {}
-        if tipo not in CHART_TYPES:
-            return Response(
-                {"detail": f"tipo inválido. Válidos: {', '.join(CHART_TYPES)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not isinstance(data, list) or not data:
-            return Response(
-                {"detail": "data debe ser un array no vacío de filas."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if len(data) > 5000:
-            return Response(
-                {"detail": "data excede 5000 filas."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        # opciones: whitelist de claves (nunca se interpolan en HTML/URL).
-        allowed_opts = {"x", "y", "category", "value", "titulo", "width",
-                        "height", "palette"}
-        opciones = {k: v for k, v in (opciones or {}).items() if k in allowed_opts}
-
-        try:
-            svg = render_chart(tipo, data, opciones)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Subir a MinIO + URL firmada TTL 5 min.
-        key = f"charts/{uuid.uuid4()}.svg"
-        try:
-            up = put_object_stream(key, __import__("io").BytesIO(svg.encode("utf-8")),
-                                   content_type="image/svg+xml",
-                                   length=len(svg.encode("utf-8")))
-        except Exception as e:  # noqa: BLE001 - diagnóstico
-            log.error("[chart_render] upload falló: %s", e)
-            up = {"ok": False, "error": str(e)}
-        if not up.get("ok"):
-            return Response(
-                {"detail": "No se pudo almacenar el chart: "
-                           f"{up.get('error', 'storage_unavailable')}"},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-
-        signed = generate_signed_url(key, kind="get", ttl=300)
-        return Response({
-            "success": True,
-            "tipo": tipo,
-            "image_url": signed.get("url"),
-            "expires_at": signed.get("expires_at"),
-            "errorMessage": None,
-        })
-
-
 # ══════════════════════════════════════════════════════════════
 # DashboardSnapshotViewSet — CRUD con idempotencia
 # ══════════════════════════════════════════════════════════════
@@ -1868,3 +1790,85 @@ class WidgetCatViewSet(viewsets.ReadOnlyModelViewSet):
         if min_role:
             qs = qs.filter(min_role=min_role)
         return qs.order_by("orden", "codigo")
+
+
+# ══════════════════════════════════════════════════════════════
+# Ola 3.10 · ChartRenderView — render de charts server-side (SVG)
+#
+# Vista DEDICADA (APIView) en lugar de un @action del AnalyticsViewSet:
+#   · POST → el enforcement MCP derivaría la acción "create" (POST→create),
+#     pero generar un chart es SOLO LECTURA. Al declarar
+#     required_action="view" el RoleBasedPermission valida analytics.view
+#     (la matriz de los roles staff lo tiene tras F5_mcp_charts_rbac.sql).
+#   · Recibe SOLO datos puros (números y labels), nunca URLs/HTML (sin SSRF).
+#   · El SVG se sube a MinIO y se devuelve URL firmada TTL 5 min.
+# ══════════════════════════════════════════════════════════════
+class ChartRenderView(APIView):
+    """POST /api/analytics/chart-render/ — genera un chart SVG (Ola 3.10)."""
+
+    required_module = "analytics"
+    required_action = "view"
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
+    throttle_classes = [_ChartRenderThrottle]
+
+    @method_decorator(never_cache)
+    def post(self, request):
+        from apps.storage.services import (
+            generate_signed_url,
+            put_object_stream,
+        )
+        from .chart_svg import CHART_TYPES, render_chart
+
+        tipo = (request.data.get("tipo") or "").strip().lower()
+        data = request.data.get("data")
+        opciones = request.data.get("opciones") or {}
+        if tipo not in CHART_TYPES:
+            return Response(
+                {"detail": f"tipo inválido. Válidos: {', '.join(CHART_TYPES)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(data, list) or not data:
+            return Response(
+                {"detail": "data debe ser un array no vacío de filas."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(data) > 5000:
+            return Response(
+                {"detail": "data excede 5000 filas."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # opciones: whitelist de claves (nunca se interpolan en HTML/URL).
+        allowed_opts = {"x", "y", "category", "value", "titulo", "width",
+                        "height", "palette"}
+        opciones = {k: v for k, v in (opciones or {}).items() if k in allowed_opts}
+
+        try:
+            svg = render_chart(tipo, data, opciones)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Subir a MinIO + URL firmada TTL 5 min.
+        key = f"charts/{uuid.uuid4()}.svg"
+        try:
+            svg_bytes = svg.encode("utf-8")
+            up = put_object_stream(key, __import__("io").BytesIO(svg_bytes),
+                                   content_type="image/svg+xml",
+                                   length=len(svg_bytes))
+        except Exception as e:  # noqa: BLE001 - diagnóstico
+            log.error("[chart_render] upload falló: %s", e)
+            up = {"ok": False, "error": str(e)}
+        if not up.get("ok"):
+            return Response(
+                {"detail": "No se pudo almacenar el chart: "
+                           f"{up.get('error', 'storage_unavailable')}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        signed = generate_signed_url(key, kind="get", ttl=300)
+        return Response({
+            "success": True,
+            "tipo": tipo,
+            "image_url": signed.get("url"),
+            "expires_at": signed.get("expires_at"),
+            "errorMessage": None,
+        })

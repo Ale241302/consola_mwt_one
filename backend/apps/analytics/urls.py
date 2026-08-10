@@ -24,6 +24,7 @@ from .views import (
     AnalyticsViewSet,
     DashboardSnapshotViewSet,
     WidgetCatViewSet,
+    ChartRenderView,
 )
 
 router = DefaultRouter()
@@ -33,4 +34,8 @@ router.register(r"dashboard-widgets",   WidgetCatViewSet,          basename="das
 
 urlpatterns = [
     path("", include(router.urls)),
+    # Ola 3.10 · render de charts server-side (SVG). Vista dedicada con
+    # required_action="view" (POST pero conceptualmente solo-lectura).
+    path("analytics/chart-render/", ChartRenderView.as_view(),
+         name="analytics-chart-render"),
 ]
