@@ -1,0 +1,69 @@
+# =====================================================================
+# Consola MWT.ONE · GitHub Actions · CI del MCP Server (Ola 3.9 · H3)
+#
+# En cada push/PR toca mcp_server/:
+#   1. Compila (py_compile) el paquete mwt_mcp.
+#   2. Corre la suite de tests del MCP (redact, _safe_role, RBAC,
+#      jwt_minter, auditoría, contratos).
+#   3. Comprueba el número de tools mapeadas en TOOL_MODULES.
+#
+# No despliega: el deploy a producción lo hace `deploy.yml` (solo main).
+# =====================================================================
+
+name: CI — MCP Server
+
+on:
+  push:
+    paths:
+      - "mcp_server/**"
+  pull_request:
+    paths:
+      - "mcp_server/**"
+  workflow_dispatch: {}
+
+concurrency:
+  group: mcp-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-mcp:
+    name: Compile + tests del MCP
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r mcp_server/requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Compilar (py_compile)
+        run: |
+          python -m compileall -q mcp_server/mwt_mcp
+          echo "✔ compilación OK"
+
+      - name: Tests del MCP
+        working-directory: mcp_server
+        run: |
+          python -m pytest tests/ -v --no-header -p no:cacheprovider
+
+      - name: Sanity — tools mapeadas y registradas
+        working-directory: mcp_server
+        run: |
+          python - <<'EOF'
+          from mwt_mcp import server, tool_rbac
+          registered = set(server.mcp._tool_manager._tools.keys())
+          mapeadas = set(tool_rbac.TOOL_MODULES.keys())
+          sin_mapa = registered - mapeadas
+          assert not sin_mapa, f"Tools sin mapeo RBAC: {sorted(sin_mapa)}"
+          print(f"tools registradas={len(registered)} mapeadas={len(mapeadas)} — OK")
+          EOF

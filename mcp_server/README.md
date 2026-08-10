@@ -348,3 +348,24 @@ Empieza siempre con `mwt_whoami` para confirmar que el token está activo.
   transferencias, liquidación landed, pagos y diagnóstico de soporte).
 - **Seguridad**: `mcp_server/SECURITY.md` — autenticación, las 3 capas de
   protección, catálogo de campos redactados, y procedimientos ante una fuga.
+
+---
+
+## 7. Tests y CI (Ola 3.9 · Ejes H2/H3)
+
+Suite de tests unitarios del MCP (sin red ni backend, con mocks):
+
+```bash
+cd mcp_server
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests/ -q --no-header -p no:cacheprovider
+```
+
+Cubre: `redact.py` (redacción por rol), `_safe_role` (frontera de errores),
+`tool_rbac.py` (RBAC + fail-closed), `jwt_minter.py` (token exchange
+fail-closed), auditoría durable, contratos (`campos`/hints/schemas) — **61
+tests**.
+
+CI en GitHub Actions (`.github/workflows/mcp-ci.yml`): compila el paquete,
+corre la suite y verifica el mapeo de tools en cada push/PR que toque
+`mcp_server/`. El deploy a producción lo hace `deploy.yml` (solo `main`).

@@ -7,6 +7,16 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/).
 
 ## [1.0.0] — 2026-08-10
 
+### Ola 3.9 — Operación (Ejes H2/H3/A8)
+- Suite de tests completa: `redact.py`, `_safe_role`, `tool_rbac.py` (RBAC +
+  fail-closed), `jwt_minter.py` (token exchange fail-closed), auditoría,
+  contratos. **61 tests**.
+- CI en GitHub Actions (`.github/workflows/mcp-ci.yml`): compila el paquete +
+  corre los tests + sanity de mapeo de tools en cada push/PR que toque
+  `mcp_server/`.
+- Docker hardening (A8): contenedor corre como usuario **no-root** (uid 10001,
+  sin shell), chown de `/app`; `MWT_MCP_READONLY=1` como kill-switch.
+
 ### Ola 3.8 — Skills y documentación (Eje G)
 - Skill `mwt-operations` (`harness/canonical/skills/mwt-operations/SKILL.md`):
   manual del operador con flujos, orden y anti-patrones.

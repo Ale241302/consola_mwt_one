@@ -159,7 +159,8 @@ no-CEO/Admin (y proveedores/PII para client_b2b):
 - [x] Throttle por usuario (mcp-token/audit/diag/health).
 - [x] `mwt_diag_scope` (CEO-only) para soporte.
 - [x] Hints en errores (no filtran stack traces ni rutas internas).
-- [ ] Docker: correr como usuario no-root (pendiente Ola 3.9).
+- [x] Docker hardening: usuario no-root (uid 10001, sin shell) — Ola 3.9.
+- [x] CI: compilación + tests (redact/RBAC/jwt_minter) en cada push/PR.
 - [ ] Rotación periódica de `MWT_MCP_TOKEN` documentada (operación recurrente).
 
 ## 9. Reportar un problema
