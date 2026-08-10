@@ -30,23 +30,41 @@
 ### 0b.1 La pregunta que motiva esta sección
 > "¿En un MCP se puede hacer que ayude a responder a la IA, así como recrear un gráfico cuando le pregunten de tal cosa, o simplemente la IA obtiene la información y ya?"
 
-**Respuesta corta:** ambas cosas son posibles y se complementan. Hoy tu MCP es un MCP **de datos** (la IA obtiene JSON y responde con texto/tablas). Un MCP **de presentación** agrega la capacidad de que la tool devuelva una **URL de imagen/gráfico ya renderizado**, que la IA muestra en su respuesta — exactamente el patrón de `antvis/mcp-server-chart` (tool → servicio de render → PNG → URL → Claude muestra la imagen).
+**Respuesta corta:** ambas cosas son posibles y se complementan. Hoy tu MCP es un MCP **de datos** (la IA obtiene JSON y responde con texto/tablas). Un MCP **de presentación** va más allá: la IA puede **entregar el resultado en el formato más útil** según la pregunta — un gráfico, una tabla renderizada, un reporte PDF, una comparativa, un mapa, un diagrama, o una hoja de cálculo.
 
-**Las 3 formas en que un MCP puede "ayudar a responder":**
-1. **Datos crudos** (lo que tenés hoy): la tool devuelve JSON; la IA formatea texto/tablas.
-2. **Imagen renderizada** (lo que agrega esta sección): la tool genera un PNG/SVG y devuelve la URL; la IA la muestra.
-3. **Content block de imagen directo** (blob en la respuesta MCP): más frágil; antvis usa URL porque Claude en chat la muestra bien.
+**Las formas en que un MCP puede "ayudar a responder":**
+1. **Datos crudos** (lo que tenés hoy): la tool devuelve JSON; la IA formatea texto/tablas Markdown.
+2. **Imagen renderizada**: la tool genera un PNG/SVG y devuelve la URL; la IA la muestra.
+3. **Documento/reporte renderizado**: PDF, hoja de cálculo, JSON exportable.
+4. **Content block de imagen/directo**: blob en la respuesta MCP (más frágil; las URLs son más robustas).
 
-### 0b.2 Diseño propuesto — tools de visualización (estilo antvis)
+### 0b.2 El concepto: un "motor de presentación", no solo charts
 
-**Nuevo módulo en el MCP:** `mcp_server/mwt_mcp/visualization.py` + 4 tools nuevas en `server.py`.
+En vez de una única categoría "gráficos", la capa de presentación cubre **5 categorías de formato**, cada una con sus tools:
 
-| Tool | Input | Output | Rol |
+| # | Categoría | Formato de salida | Ejemplos de pregunta que resuelve |
 |---|---|---|---|
-| `generar_grafico` | `{tipo, data, opciones?}` | `{image_url, success, errorMessage}` | Genérica: cualquier serie de datos → PNG/SVG renderizado |
-| `dashboard_resumen` | `{periodo, scope?}` | `{kpis, image_urls: {cashflow, margen, aging, exposicion}, resumen}` | Un solo call que trae KPIs + los charts renderizados |
-| `cashflow_chart` | `{semanas?}` | `{image_url, data}` | Cashflow de últimas N semanas (usa `analytics/cashflow/`) |
-| `margen_marcas_chart` | `{}` | `{image_url, data}` | Margen por marca (usa `analytics/margen_marcas/`) |
+| P1 | **Gráficos** | PNG/SVG (URL firmada) | "Mostrame la tendencia de ventas", "compará márgenes por marca" |
+| P2 | **Tablas / DataFrames** | Tabla renderizada (HTML/SVG) o JSON estructurado | "Dame el detalle de las líneas de la OC 2488" |
+| P3 | **Reportes / documentos** | PDF o Markdown largo (resumen ejecutivo) | "Generá el reporte mensual de cobranza" |
+| P4 | **Comparativas / dashboards** | Multi-panel (varios charts + KPIs en una sola respuesta) | "Dame el panorama del mes: KPIs + cashflow + aging" |
+| P5 | **Exportaciones** | XLSX/CSV (descargable) | "Exportá los pagos del Q2 a Excel" |
+
+**Nota clave:** la IA ya puede hacer P2/P3/P5 con datos crudos (Markdown, CSV). El valor del MCP de presentación es **renderizar de forma server-side y consistente** (branding MWT, numeración correcta, tablas con estilo) en vez de que la IA improvise.
+
+### 0b.3 Diseño propuesto — tools de presentación (5 categorías)
+
+**Nuevo módulo en el MCP:** `mcp_server/mwt_mcp/presentation.py` + tools nuevas en `server.py`.
+
+#### P1 — Gráficos (estilo antvis)
+
+| Tool | Input | Output | Fuente de datos |
+|---|---|---|---|
+| `generar_grafico` | `{tipo, data, opciones?}` | `{image_url, success, errorMessage}` | Genérica: cualquier serie que el agente ya obtuvo |
+| `cashflow_chart` | `{semanas?}` | `{image_url, data}` | `analytics/cashflow/` |
+| `margen_marcas_chart` | `{}` | `{image_url, data}` | `analytics/margen_marcas/` (**CEO-only** vía redacción) |
+| `aging_chart` | `{dias?}` | `{image_url, data}` | `analytics/aging/` |
+| `exposicion_chart` | `{}` | `{image_url, data}` | `analytics/exposicion_clientes/` |
 
 **Tipos de gráfico soportados (mapeo a la semántica de antvis):**
 ```
@@ -61,78 +79,122 @@ histogram, boxplot, violin, word_cloud, liquid, dual_axes
   "data": [{"time": "2026-05", "value": 512}, {"time": "2026-06", "value": 1024}],
   "opciones": { "x": "time", "y": "value", "titulo": "Ventas mensuales", "palette": "mwt" }
 }
-→ { "success": true, "image_url": "https://consola.mwt.one/api/charts/render/<token>.png", "errorMessage": null }
+→ { "success": true, "image_url": "https://consola.mwt.one/api/presentation/render/<token>.png", "errorMessage": null }
 ```
 
-### 0b.3 Arquitectura del renderizador server-side
+#### P2 — Tablas renderizadas
 
-**Problema:** el stack actual no tiene renderizador de charts server-side (el frontend usa SVG manual en `DashboardPrimitives.jsx`/`primitives.jsx`). Para generar PNG hay 2 caminos:
+| Tool | Input | Output |
+|---|---|---|
+| `render_tabla` | `{columnas: [{key, label, tipo?}], filas: [...], titulo?, resaltar?}` | `{image_url, tabla_markdown}` — SVG de tabla con branding MWT + versión Markdown para el agente |
 
-**Opción A (recomendada) — microservicio Node `chart-renderer`:**
+Resuelve el problema de "el agente muestra la tabla con estilos inconsistentes": el MCP renderiza la tabla server-side con el mismo look que la consola.
+
+#### P3 — Reportes / documentos
+
+| Tool | Input | Output |
+|---|---|---|
+| `generar_reporte` | `{titulo, secciones: [{titulo, tipo: "texto"\|"tabla"\|"chart", data?}], formato: "pdf"\|"markdown"}` | `{documento_url, markdown}` — PDF firmado (TTL) o Markdown largo listo para la IA |
+| `reporte_cobranza` | `{mes, formato?}` | Reporte mensual de cobranza (reutiliza datos de cobros/aging) |
+| `reporte_expedientes` | `{periodo, scope?}` | Resumen de expedientes del período |
+
+#### P4 — Comparativas / dashboards
+
+| Tool | Input | Output |
+|---|---|---|
+| `dashboard_resumen` | `{periodo, scope?}` | `{kpis, image_urls: {cashflow, margen, aging, exposicion}, resumen_markdown}` — un solo call que arma el panorama completo |
+| `comparar` | `{metricas: [...], grupo: "cliente"\|"marca"\|"nodo"\|"mes"}` | `{image_url, tabla_comparativa, insights}` — compara métricas entre grupos |
+
+#### P5 — Exportaciones
+
+| Tool | Input | Output |
+|---|---|---|
+| `exportar_xlsx` | `{nombre_archivo, hojas: [{nombre, columnas, filas}]}` | `{download_url}` — XLSX firmado TTL 15 min (reutiliza `xlsx` ya en el stack) |
+| `exportar_csv` | `{nombre_archivo, columnas, filas}` | `{download_url}` — CSV firmado |
+
+### 0b.4 Arquitectura del renderizador server-side
+
+**Problema:** el stack actual no tiene renderizador server-side (el frontend usa SVG manual en `DashboardPrimitives.jsx`/`primitives.jsx`). Para PNG/SVG/PDF hay 2 caminos:
+
+**Opción A (recomendada) — microservicio Node `presentation-renderer`:**
 ```
-chart-renderer/            ← NUEVO servicio (Node 20 + express/fastify)
+presentation-renderer/     ← NUEVO servicio (Node 20 + express/fastify)
   src/
-    index.js               # POST /render -> {type,data,options} -> PNG (blob) o SVG string
-    renderers/             # line, bar, pie, radar, sankey... (usa echarts / chart.js SSR)
+    index.js               # POST /render -> {kind, data, options} -> PNG/SVG/PDF blob
+    renderers/
+      charts/              # line, bar, pie, radar, sankey... (echarts / chart.js SSR)
+      tables/              # tabla con branding MWT -> SVG
+      reports/             # PDF (puppeteer-headless o react-pdf)
   package.json
-  Dockerfile               # imagen pequeña node:20-alpine
+  Dockerfile               # imagen node:20-alpine
 ```
-- Se agrega al `docker-compose.yml` como servicio `chart-renderer` (red `consola-net`).
-- El backend `django` expone `POST /api/charts/render/` que valida auth + rol y reenvía al renderer interno.
-- El MCP llama a `POST /api/charts/render/` con su JWT de usuario → recibe `{image_url}` con **URL firmada TTL 5 min** (mismo patrón de storage, nunca una URL pública permanente).
+- Se agrega al `docker-compose.yml` como servicio `presentation-renderer` (red `consola-net`).
+- El backend `django` expone `POST /api/presentation/render/` que valida auth + rol y reenvía al renderer interno.
+- El MCP llama con su JWT de usuario → recibe `{image_url}`/`{documento_url}` con **URL firmada TTL** (5 min imágenes, 15 min documentos).
 
-**Opción B (rápida, sin servicio nuevo) — render en Django con SVG:**
-- Django genera **SVG** del chart (string) usando un helper puro (sin librería pesada), lo sube a MinIO con key `charts/<uuid>.svg`, y devuelve URL firmada.
-- SVG se muestra igual en Claude (lo soporta como imagen), y el render es 100% server-side en Python.
-- Menor fidelidad que PNG para charts complejos (radar/sankey), pero cubre line/bar/pie/area.
+**Opción B (rápida, sin servicio nuevo) — render en Django con SVG/HTML:**
+- Django genera **SVG** (charts y tablas) con helpers puros, y **PDF** vía `weasyprint` (ya es una librería Python madura, sin Node).
+- SVG se muestra en Claude; PDF se descarga. Todo server-side en Python.
+- Menor fidelidad que echarts para radar/sankey, pero cubre line/bar/pie/area + tablas + reportes PDF.
 
-**Recomendación:** Opción A (microservicio Node con `echarts` o `chart.js` SSR) da la mejor fidelidad y es la misma estrategia de antvis (GPT-Vis-SSR). Si se quiere mínimo esfuerzo, la Opción B (SVG en Django) cubre el 80% de los casos.
+**Recomendación:** Opción A (Node + echarts + puppeteer) da la mejor fidelidad y es la estrategia de antvis. Si se quiere mínimo esfuerzo, la Opción B (SVG + weasyprint en Django) cubre el 80% sin agregar un servicio.
 
-### 0b.4 Seguridad específica de la capa de presentación
+### 0b.5 Seguridad específica de la capa de presentación
 
 | Riesgo | Mitigación |
 |---|---|
-| **SSRF**: el renderizador podría ser abusado para pedir URLs internas | El renderer solo recibe `{type, data, options}` (datos puros), NUNCA URLs. Validación estricta de tipos y tamaño de `data` (max 5000 filas, campos whitelist). |
-| **Data leakage en el chart**: el PNG puede mostrar datos que el rol no debería ver | `generar_grafico` aplica `redact_for_role` ANTES de renderizar (Eje B): un manager no puede pedir un chart de márgenes/comisiones con datos que no ve. |
-| **URLs firmadas largas/permanentes** | TTL 5 min (mismo patrón que `storage/signed_url`), nunca pública. |
-| **Abuso / rate** | Throttle por usuario en `/api/charts/render/` (mismo rate limit del Eje A). |
-| **SSRF a través de `options`** | `options` solo acepta keys whitelist (x, y, titulo, palette, width, height). |
+| **SSRF**: el renderizador abusado para pedir URLs internas | El renderer solo recibe `{kind, data, options}` (datos puros), NUNCA URLs. Validación estricta de `kind`, tamaño de `data` (max 5000 filas) y keys de `options` (whitelist). |
+| **Data leakage en la salida**: el PNG/PDF/tabla muestra datos que el rol no debería ver | `redact_for_role` se aplica ANTES de renderizar (Eje B): un manager no puede pedir `margen_marcas_chart` con datos que no ve. |
+| **URLs firmadas largas/permanentes** | TTL 5 min (imágenes) / 15 min (documentos); nunca pública. Mismo patrón que `storage/signed_url`. |
+| **Abuso / rate** | Throttle por usuario en `/api/presentation/render/` (Eje A). |
+| **Inyección en `opciones` (SVG/HTML)** | Escapar todo valor que entre a SVG/HTML; nunca confiar en `data` como markup. |
+| **PII en reportes PDF** | `redact_for_role` incluye PII (contact_email, phone, tax_id) en B2B_FORBIDDEN_KEYS. |
+| **Exposición de datos cross-tenant** | Toda tool de presentación hereda el scope de `legal_entity_ids` del JWT (Eje A7). |
 
-### 0b.5 Integración con la IA y el skill
+### 0b.6 Integración con la IA y el skill
 
-- **Skill `mwt-operations`** (Eje G) se extiende con una sección "Visualización": enseña al agente a elegir el tipo de chart según la pregunta (¿tendencia? → line/area; ¿composición? → pie; ¿distribución? → histogram/boxplot) y a llamar `generar_grafico` con los datos que ya obtuvo de las tools de datos.
+- **Skill `mwt-operations`** (Eje G) se extiende con una sección "Presentación": enseña al agente a elegir el formato según la pregunta:
+  - ¿Tendencia en el tiempo? → line/area.
+  - ¿Composición de un total? → pie/treemap.
+  - ¿Distribución? → histogram/boxplot/violin.
+  - ¿Detalle tabular? → `render_tabla`.
+  - ¿Resumen ejecutivo para el CEO? → `generar_reporte` (PDF).
+  - ¿Panorama mensual? → `dashboard_resumen`.
+  - ¿Datos para Excel? → `exportar_xlsx`.
 - Ejemplo de flujo end-to-end:
 ```
-agente: "mostrame el cashflow de las últimas 12 semanas"
-  → tool cashflow_chart({semanas:12})       (usa analytics/cashflow/)
-  → devuelve {image_url, data}
-  → Claude responde: interpretación en texto + la imagen del chart
+agente: "armame el reporte mensual de cobranza"
+  → tool reporte_cobranza({mes:"2026-07"})
+  → devuelve {documento_url (PDF), markdown}
+  → Claude responde: resumen en texto + enlace al PDF
 ```
-
-### 0b.6 Criterios de salida de la capa de presentación
-
-- [ ] `generar_grafico` + `cashflow_chart` + `margen_marcas_chart` + `dashboard_resumen` funcionales y RBAC-scopeados.
-- [ ] El renderizador devuelve PNG/SVG en < 2s para ≤ 5000 filas.
-- [ ] Los charts respetan `redact_for_role` (un manager NO ve márgenes en el chart).
-- [ ] URLs de imagen firmadas con TTL 5 min, sin acceso público permanente.
-- [ ] Skill de visualización documentado (tipo de chart ↔ pregunta).
 
 ### 0b.7 Herramientas nuevas (resumen)
 
-| # | Tool | Módulo RBAC | Acción |
-|---|---|---|---|
-| V1 | `generar_grafico` | `dashboard` (o `analytics`) | view |
-| V2 | `dashboard_resumen` | `dashboard` | view |
-| V3 | `cashflow_chart` | `financiero`/`dashboard` | view |
-| V4 | `margen_marcas_chart` | `dashboard` (**CEO-only** vía redacción) | view |
+| # | Tool | Categoría | Módulo RBAC | Acción |
+|---|---|---|---|---|
+| P1a | `generar_grafico` | Gráficos | `dashboard`/`analytics` | view |
+| P1b | `cashflow_chart` | Gráficos | `dashboard` | view |
+| P1c | `margen_marcas_chart` | Gráficos | `dashboard` (**CEO-only** vía redacción) | view |
+| P1d | `aging_chart` | Gráficos | `cartera` | view |
+| P1e | `exposicion_chart` | Gráficos | `cartera` | view |
+| P2a | `render_tabla` | Tablas | `dashboard` | view |
+| P3a | `generar_reporte` | Reportes | `dashboard` | view |
+| P3b | `reporte_cobranza` | Reportes | `cartera` | view |
+| P3c | `reporte_expedientes` | Reportes | `expedientes` | view |
+| P4a | `dashboard_resumen` | Dashboards | `dashboard` | view |
+| P4b | `comparar` | Dashboards | `dashboard` | view |
+| P5a | `exportar_xlsx` | Exportaciones | `dashboard` | view |
+| P5b | `exportar_csv` | Exportaciones | `dashboard` | view |
 
-> **Nota:** las tools de visualización son **solo lectura** (`view`). Nunca reciben datos mutables y no crean registros de negocio. Se registran en `TOOL_MODULES` con acción `view` para que el RBAC de la CAPA 1 las filtre igual que al resto.
+> **Nota:** todas las tools de presentación son **solo lectura** (`view`). Nunca reciben datos mutables y no crean registros de negocio. Se registran en `TOOL_MODULES` con acción `view` para que el RBAC de la CAPA 1 las filtre igual que al resto. `margen_marcas_chart`/`reporte_cobranza` se marcan CEO-only vía `redact_for_role`.
 
 ### 0b.8 Dependencia con el plan actual
 
-- **Depende de la Ola 3.5 (redact.py)**: un chart no puede filtrar datos que el rol no ve, así que la redacción debe estar activa antes de exponer `margen_marcas_chart`/`dashboard_resumen` a roles no-CEO.
-- **Depende del Eje A (rate limit)**: `generar_grafico` es un endpoint costoso (render) — debe tener throttle.
+- **Depende de la Ola 3.5 (redact.py)**: ningún render puede filtrar datos que el rol no ve — la redacción debe estar activa antes de exponer charts/reportes de rentabilidad a roles no-CEO.
+- **Depende del Eje A (rate limit)**: `generar_reporte`/`generar_grafico` son endpoints costosos (render) — deben tener throttle.
 - **Depende de storage (URLs firmadas)**: reutiliza `storage/signed_url` + scope de lectura.
+- **Depende de `xlsx` (ya en el stack)**: `exportar_xlsx` reutiliza la misma lib del frontend (Opción B) o un endpoint Node.
 
 ---
 
@@ -443,14 +505,19 @@ def _safe_role(call):
 2. CHANGELOG del MCP (H1).
 3. Revisión Docker hardening (A8).
 
-### Ola 3.10 — Capa de presentación (2-3 semanas) — P2
-1. **Renderizador server-side**: crear `chart-renderer/` (Opción A: Node + echarts SSR) o helper SVG en Django (Opción B). Empezar con line/bar/pie/area.
-2. **Endpoint `POST /api/charts/render/`** en backend: auth + rol + throttle + reenvío al renderer + URL firmada TTL 5 min.
-3. **Módulo MCP `visualization.py`** + 4 tools (`generar_grafico`, `dashboard_resumen`, `cashflow_chart`, `margen_marcas_chart`).
+### Ola 3.10 — Capa de presentación (3-4 semanas) — P2
+1. **Renderizador server-side**: crear `presentation-renderer/` (Opción A: Node + echarts + puppeteer) o helpers SVG+weasyprint en Django (Opción B).
+2. **Endpoint `POST /api/presentation/render/`** en backend: auth + rol + throttle + reenvío al renderer + URL firmada TTL (5 min imágenes, 15 min docs).
+3. **Módulo MCP `presentation.py`** con las tools por categoría:
+   - **P1 Gráficos**: `generar_grafico`, `cashflow_chart`, `margen_marcas_chart`, `aging_chart`, `exposicion_chart`.
+   - **P2 Tablas**: `render_tabla`.
+   - **P3 Reportes**: `generar_reporte`, `reporte_cobranza`, `reporte_expedientes`.
+   - **P4 Dashboards**: `dashboard_resumen`, `comparar`.
+   - **P5 Exportaciones**: `exportar_xlsx`, `exportar_csv`.
 4. **Registrar en `TOOL_MODULES`** con acción `view` (RBAC CAPA 1 las filtra).
 5. **`redact_for_role` aplicado ANTES de renderizar** (depende de Ola 3.5).
-6. **Skill de visualización** en `mwt-operations` (tipo de chart ↔ pregunta).
-7. Tests: render < 2s, redacción en chart, URLs firmadas TTL.
+6. **Skill de presentación** en `mwt-operations` (formato de salida ↔ tipo de pregunta).
+7. Tests: render < 2s, redacción en toda salida, URLs firmadas TTL, escape de SVG/HTML.
 
 ---
 
@@ -474,10 +541,11 @@ def _safe_role(call):
 | Tiempo de respuesta `mwt_health` | < 500ms |
 | README/skill completos | 100% de flujos documentados |
 | Tests del MCP | ≥ 40 tests verdes en CI |
-| **Render de chart** | **< 2s para ≤ 5000 filas (Ola 3.10)** |
-| **Charts RBAC-scopeados** | **0 charts con datos CEO_ONLY a rol no-admin (Ola 3.10)** |
-| **URLs de imagen** | **100% firmadas TTL ≤ 5 min (Ola 3.10)** |
-| **Tools de visualización** | **4 tools view-scopeadas, 0 fugas (Ola 3.10)** |
+| **Render de charts** | **< 2s para ≤ 5000 filas (Ola 3.10)** |
+| **Charts RBAC-scopeados** | **0 salidas con datos CEO_ONLY a rol no-admin (Ola 3.10)** |
+| **URLs de salida** | **100% firmadas TTL (5 min imágenes, 15 min docs) (Ola 3.10)** |
+| **Cobertura de presentación** | **5 categorías (gráficos, tablas, reportes, dashboards, exportaciones) (Ola 3.10)** |
+| **Tools de presentación** | **13 tools view-scopeadas, 0 fugas (Ola 3.10)** |
 
 ---
 
