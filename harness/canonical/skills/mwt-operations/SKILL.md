@@ -138,6 +138,36 @@ storage_subir_archivo(...) / artefacto_archivo_descargar(...)
 ncm_listar() / marca_listar() / tallas_listar()   [catálogos para crear]
 ```
 
+### Flujo 9 — Visualización (Ola 3.10 · charts server-side)
+
+Elige el tipo de chart según la pregunta del usuario:
+
+| Pregunta del usuario | Tipo de chart | Tool |
+|---|---|---|
+| ¿Tendencia a lo largo del tiempo? | `line` / `area` | `cashflow_chart(semanas)` |
+| ¿Comparación entre categorías? | `bar` / `column` | `margen_marcas_chart()` (CEO) |
+| ¿Distribución / composición? | `pie` | `generar_grafico("pie", ...)` |
+| ¿Un gráfico custom con datos que ya tengo? | cualquiera | `generar_grafico(tipo, data, opciones)` |
+| Todo el dashboard en un call | — | `dashboard_resumen(periodo, scope)` |
+
+```
+cashflow_chart(semanas=12)            → {success, image_url, expires_at, data}
+margen_marcas_chart()                 → {success, image_url, data}   (CEO-only)
+generar_grafico("bar",                → {success, image_url}
+    [{"category":"Marluvas","value":120}],
+    {"titulo":"Ventas por marca"})
+dashboard_resumen("30d")              → {kpis, image_urls:{cashflow, margen_marcas}}
+```
+
+Reglas:
+- La URL de imagen está firmada con **TTL 5 min** — muéstrala pronto, no la
+  guardes ni la reuses en respuestas posteriores.
+- Los datos se redactan por rol ANTES de renderizar: un rol sin acceso a
+  costos/margen no puede dibujarlos (aunque pase los números).
+- `margen_marcas_chart` falla con 403 para roles no-CEO (igual que el
+  endpoint del backend).
+- Prefiere interpretar los números de `data` además de mostrar la imagen.
+
 ## Errores comunes y cómo leerlos
 
 Todo error devuelve `{error, status, detail, url, hint}`:

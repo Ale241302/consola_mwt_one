@@ -154,6 +154,11 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Storage ────────────────────────────────────────────────────────────
     "storage_subir_archivo": ("storage", "create"),
     "artefacto_archivo_descargar": ("storage", "download_doc"),
+    # ── Visualización (Ola 3.10 · solo lectura) ────────────────────────────
+    "generar_grafico": ("analytics", "view"),
+    "dashboard_resumen": ("analytics", "view"),
+    "cashflow_chart": ("analytics", "view"),
+    "margen_marcas_chart": ("analytics", "view"),
 }
 
 

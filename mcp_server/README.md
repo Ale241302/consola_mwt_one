@@ -369,3 +369,35 @@ tests**.
 CI en GitHub Actions (`.github/workflows/mcp-ci.yml`): compila el paquete,
 corre la suite y verifica el mapeo de tools en cada push/PR que toque
 `mcp_server/`. El deploy a producción lo hace `deploy.yml` (solo `main`).
+
+---
+
+## 8. Visualización — charts server-side (Ola 3.10 · sección 0b del plan)
+
+El MCP deja de ser solo-datos: las tools de visualización devuelven la **URL
+de un SVG renderizado server-side** que la IA puede mostrar en su respuesta
+(patrón `antvis/mcp-server-chart`).
+
+| Tool | Input | Output | Uso |
+|---|---|---|---|
+| `generar_grafico` | `{tipo, data, opciones}` | `{success, image_url, expires_at}` | Genérica: cualquier serie → line/area/bar/pie |
+| `cashflow_chart` | `{semanas?}` | `{success, image_url, data}` | Cashflow proyectado vs real (analytics/cashflow) |
+| `margen_marcas_chart` | `{}` | `{success, image_url, data}` | Margen por marca (CEO-only en backend) |
+| `dashboard_resumen` | `{periodo?, scope?}` | `{kpis, image_urls, resumen}` | KPIs + charts en un call |
+
+**Arquitectura:** el MCP envía los datos al backend `POST /api/analytics/chart-render/`
+(auth + throttle `chart_render` 20/min), que genera el SVG en Python
+(`apps/analytics/chart_svg.py`), lo sube a MinIO (`charts/<uuid>.svg`) y
+devuelve **URL firmada TTL 5 min** (mismo patrón que `storage/signed_url`).
+
+**Seguridad:**
+- **Sin SSRF:** el renderizador recibe SOLO `{tipo, data, opciones}` con
+  opciones en whitelist; nunca URLs ni HTML. Los textos se escapan en el SVG.
+- **Redacción por rol ANTES de renderizar:** `visualization.py` aplica
+  `redact_for_user` a los datos antes de enviarlos (un manager/client_b2b no
+  puede dibujar costos/margen).
+- **CEO-only:** `margen_marcas_chart` hereda el 403 del backend
+  (`analytics/margen_marcas` → `_deny_unless_ceo_admin`).
+- **URLs firmadas:** TTL 5 min, nunca acceso público permanente.
+- **RBAC:** las 4 tools se registran como `(analytics, view)` — la CAPA 1 las
+  filtra por rol igual que el resto.

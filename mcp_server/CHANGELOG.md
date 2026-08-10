@@ -7,6 +7,17 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/).
 
 ## [1.0.0] — 2026-08-10
 
+### Ola 3.10 — Capa de presentación (charts server-side, sección 0b)
+- `backend/apps/analytics/chart_svg.py`: renderizador SVG puro (line/area/bar/
+  column/pie) sin librerías; sin SSRF (solo datos), textos escapados, máx 5000
+  filas.
+- `POST /api/analytics/chart-render/`: auth + throttle (`chart_render` 20/min)
+  + subida a MinIO + URL firmada TTL 5 min.
+- `mcp_server/mwt_mcp/visualization.py`: 4 tools (`generar_grafico`,
+  `cashflow_chart`, `margen_marcas_chart`, `dashboard_resumen`) con
+  redacción por rol ANTES de renderizar. Registradas como `(analytics, view)`.
+- Skill y README documentan el tipo de chart ↔ pregunta.
+
 ### Ola 3.9 — Operación (Ejes H2/H3/A8)
 - Suite de tests completa: `redact.py`, `_safe_role`, `tool_rbac.py` (RBAC +
   fail-closed), `jwt_minter.py` (token exchange fail-closed), auditoría,

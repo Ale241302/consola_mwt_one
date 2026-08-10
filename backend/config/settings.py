@@ -200,6 +200,7 @@ REST_FRAMEWORK = {
         "mcp_audit": "120/minute",
         "mcp_diag": "10/minute",
         "mcp_health": "30/minute",
+        "chart_render": "20/minute",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }

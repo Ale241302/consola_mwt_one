@@ -110,6 +110,10 @@ def pytest_collection_modifyitems(config, items):
     """
     db_marker = pytest.mark.django_db(transaction=False)
     for item in items:
+        # Ola 3.10 · los tests puros (chart_svg) no requieren DB: se marcan
+        # con @pytest.mark.no_db para que el auto-django_db NO les aplique.
+        if "no_db" in item.keywords:
+            continue
         item.add_marker(db_marker)
 
 

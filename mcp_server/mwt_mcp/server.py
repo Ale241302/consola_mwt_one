@@ -1993,3 +1993,16 @@ def builder_template_obtener(template_id: int) -> Any:
     """Obtiene la definición/estructura de un template del Builder por su id (entero)."""
     return _safe_role(lambda: api.get(f"builder/templates/{template_id}/"))
 
+
+# =========================================================================== #
+# I) VISUALIZACIÓN (Ola 3.10 · capa de presentación, estilo antvis)
+#    Las tools devuelven URL de SVG firmada (TTL 5 min). Datos redactados
+#    por rol ANTES de renderizar. Solo lectura (acción view en RBAC).
+# =========================================================================== #
+from .visualization import (  # noqa: E402
+    cashflow_chart,
+    dashboard_resumen,
+    generar_grafico,
+    margen_marcas_chart,
+)
+
