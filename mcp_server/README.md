@@ -124,6 +124,33 @@ Variables de entorno (ver `.env.example`): `MWT_API_BASE`, `MWT_MCP_TOKEN`,
 
 ---
 
+## 3.5 Redacción de campos sensibles por rol (Ola 3.5 · Eje B)
+
+El MCP aplica una segunda capa de seguridad MÁS ALLÁ del filtrado de tools:
+aunque una tool esté permitida para el rol, su respuesta se recorta en la
+frontera del servidor para que el agente NUNCA reciba datos que ese rol no
+debe ver.
+
+- **Rol CEO/Admin (`superadmin`/`admin`/`ceo`)**: acceso total, sin cambios.
+- **Staff (`manager`/`operator`/`finance`/`compras`/`viewer`)**: se oscurecen
+  costos internos, márgenes, comisiones, límites de crédito, precio interno
+  MWT y notas internas.
+- **`client_b2b` (Portal)**: además de lo anterior, nunca ve proveedores,
+  PII (contact_email/phone/cedula/tax_id) ni decisiones operativas internas
+  (ruteo, bandas de riesgo, bloqueos, semáforos).
+
+Los valores se reemplazan por `***` (la clave se conserva para no romper el
+shape que el agente espera). La implementación vive en
+`mcp_server/mwt_mcp/redact.py` y el wrapper `_safe_role` en `server.py`
+envuelve las ~96 tools de negocio. Sin identidad propagada (ServiceToken
+puro / stdio) no se redacta (comportamiento anterior).
+
+Catálogo alineado con `POL_VISIBILIDAD` del portal B2B
+(`backend/apps/portal/serializers.py`) y con los serializers de expedientes,
+transfers, clientes, commercial e inventario.
+
+---
+
 ## 4. Registrar en clientes de IA
 
 ### Antigravity / Claude Desktop / Cursor (config JSON `mcpServers`)

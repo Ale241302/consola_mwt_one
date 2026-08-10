@@ -16,6 +16,8 @@ from typing import Any
 from . import client as api
 from .client import MwtApiError
 from .config import settings
+from .jwt_minter import get_identity_user
+from .redact import redact_for_user
 from .schemas import (
     pydantic_available,
     validate_aplicaciones,
@@ -34,12 +36,38 @@ mcp = RbacFastMCP("mwt-one")
 # Helpers
 # --------------------------------------------------------------------------- #
 def _safe(call):
+    """Frontera de errores SIN redacción (meta-tools: mwt_*, tipo_cambio)."""
     try:
         return call()
     except MwtApiError as e:
         return {"error": True, "status": e.status, "detail": e.payload, "url": e.url}
     except Exception as e:  # noqa: BLE001 - frontera del MCP: nunca propagar crudo
         return {"error": True, "detail": str(e)}
+
+
+def _safe_role(call):
+    """Frontera de errores + redacción de campos sensibles por rol (Ola 3.5 · Eje B).
+
+    Ejecuta `call()` y redacta el resultado según el rol del usuario conectado
+    (CEO/Admin: sin cambios; client_b2b y staff: oscurece claves CEO_ONLY con
+    '***'). Es la red de seguridad definitiva: aunque una tool devuelva todo lo
+    que trae el backend, aquí se recorta lo que el rol no debe ver.
+
+    Sin identidad propagada (ServiceToken puro / stdio) NO redacta (comportamiento
+    anterior, plan §5.4). Si `get_identity_user()` falla al resolver el perfil
+    (IdentityMintingError) se propaga como error fail-closed, nunca como fuga.
+    """
+    try:
+        data = call()
+    except MwtApiError as e:
+        return {"error": True, "status": e.status, "detail": e.payload, "url": e.url}
+    except Exception as e:  # noqa: BLE001 - frontera del MCP: nunca propagar crudo
+        return {"error": True, "detail": str(e)}
+    try:
+        user = get_identity_user()
+    except Exception as e:  # noqa: BLE001 - sin perfil no se puede redactar con seguridad
+        return {"error": True, "detail": f"No se pudo resolver identidad para redactar: {e}"}
+    return redact_for_user(data, user)
 
 
 def _wguard():
@@ -60,8 +88,10 @@ from functools import wraps as _wraps
 # Ola 2 · 2.20 — auditoría JSON por escritura (observabilidad + trazabilidad).
 # Campos sensibles que NUNCA se vuelcan a los logs (se marcan como "<redactado>").
 _AUDIT_REDACT = {
-    "file_path", "filename", "key", "storage_url", "evidencia", "documento_sap",
-    "idempotence_token", "idempotency_key", "token", "password", "secret",
+    "file_path", "filename", "key", "storage_url", "signed_url", "url",
+    "evidencia", "documento_sap", "idempotence_token", "idempotency_key",
+    "token", "password", "secret", "tax_id", "contact_email", "phone",
+    "cedula",
 }
 
 
@@ -333,7 +363,7 @@ def cliente_listar(
     `campos`: lista separada por comas (ej. "id,razon_social,estado") para proyectar
     solo esos atributos y ahorrar contexto (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    data = _safe(
+    data = _safe_role(
         lambda: api.get(
             "clientes/",
             _params(q=q, is_parent=is_parent, tipo=tipo, estado=estado,
@@ -348,7 +378,7 @@ def cliente_listar(
 @mcp.tool()
 def cliente_obtener(cliente_id: str) -> Any:
     """Obtiene el detalle completo de un cliente por su id (UUID)."""
-    return _safe(lambda: api.get(f"clientes/{cliente_id}/"))
+    return _safe_role(lambda: api.get(f"clientes/{cliente_id}/"))
 
 
 @mcp.tool()
@@ -362,7 +392,7 @@ def cliente_crear(datos: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post("clientes/", datos))
+    return _safe_role(lambda: api.post("clientes/", datos))
 
 
 @mcp.tool()
@@ -371,19 +401,19 @@ def cliente_editar(cliente_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"clientes/{cliente_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"clientes/{cliente_id}/", cambios))
 
 
 @mcp.tool()
 def cliente_subsidiarias(cliente_id: str) -> Any:
     """Lista las subsidiarias de un cliente padre."""
-    return _safe(lambda: api.get(f"clientes/{cliente_id}/subsidiarias/"))
+    return _safe_role(lambda: api.get(f"clientes/{cliente_id}/subsidiarias/"))
 
 
 @mcp.tool()
 def cliente_kpis_pool(cliente_id: str) -> Any:
     """KPIs consolidados del pool de crédito (padre + subsidiarias)."""
-    return _safe(lambda: api.get(f"clientes/{cliente_id}/kpis_pool/"))
+    return _safe_role(lambda: api.get(f"clientes/{cliente_id}/kpis_pool/"))
 
 
 # =========================================================================== #
@@ -401,7 +431,7 @@ def producto_listar(
 ) -> Any:
     """Lista productos (SKU, nombre, precios). Filtros: q (busca en nombre+sku+desc),
     marca (UUID), categoria, estado, proveedor (UUID), limit, offset."""
-    return _safe(
+    return _safe_role(
         lambda: api.get(
             "productos/",
             _params(q=q, marca=marca, categoria=categoria, estado=estado,
@@ -414,7 +444,7 @@ def producto_listar(
 def producto_obtener(producto_id: str) -> Any:
     """Detalle completo de un producto, incluyendo `especificaciones`
     (tallas, client_prices, ncm) y precios (precio_lista, precio_distribuidor, costo_estandar)."""
-    return _safe(lambda: api.get(f"productos/{producto_id}/"))
+    return _safe_role(lambda: api.get(f"productos/{producto_id}/"))
 
 
 @mcp.tool()
@@ -431,7 +461,7 @@ def producto_crear(datos: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post("productos/", datos))
+    return _safe_role(lambda: api.post("productos/", datos))
 
 
 @mcp.tool()
@@ -441,13 +471,13 @@ def producto_editar(producto_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"productos/{producto_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"productos/{producto_id}/", cambios))
 
 
 @mcp.tool()
 def ncm_listar() -> Any:
     """Lista los códigos NCM/arancelarios disponibles (code, descripcion, tarifas)."""
-    return _safe(lambda: api.get("ncm/"))
+    return _safe_role(lambda: api.get("ncm/"))
 
 
 @mcp.tool()
@@ -456,7 +486,7 @@ def tallas_listar(tipo_producto: str = "calzado") -> Any:
     `{results:[{id, nombre, talla_base, br, eu, ...}]}`. **El `id` (UUID) es lo que se
     pone en `producto_crear` (`tallas` y `especificaciones.sizes`)**; el `nombre`/`talla_base`
     (ej. "39") es el label que se usa en la LÍNEA del expediente (`size`)."""
-    return _safe(lambda: api.get("sizing/tallas/", _params(tipo_producto=tipo_producto)))
+    return _safe_role(lambda: api.get("sizing/tallas/", _params(tipo_producto=tipo_producto)))
 
 
 @mcp.tool()
@@ -468,7 +498,7 @@ def producto_alias_crear(producto_id: str, cliente_id: str, alias: str, cliente_
     if g:
         return g
     body = _params(cliente_id=cliente_id, alias=alias, cliente_sku=cliente_sku, notas=notas)
-    return _safe(lambda: api.post(f"productos/{producto_id}/aliases/", body))
+    return _safe_role(lambda: api.post(f"productos/{producto_id}/aliases/", body))
 
 
 # =========================================================================== #
@@ -490,14 +520,14 @@ def oc_listar(
     lim, off = _paging(limit, offset)
     return _project(
         campos,
-        _safe(lambda: api.get("ocs/", _params(q=q, client=client, estado=estado, credit_band=credit_band, limit=lim, offset=off)))
+        _safe_role(lambda: api.get("ocs/", _params(q=q, client=client, estado=estado, credit_band=credit_band, limit=lim, offset=off)))
     )
 
 
 @mcp.tool()
 def oc_obtener(oc_id: str) -> Any:
     """Detalle de una OC (acepta UUID o código, p.ej. PO-2026-04100)."""
-    return _safe(lambda: api.get(f"ocs/{oc_id}/"))
+    return _safe_role(lambda: api.get(f"ocs/{oc_id}/"))
 
 
 @mcp.tool()
@@ -508,14 +538,14 @@ def oc_editar(oc_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"ocs/{oc_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"ocs/{oc_id}/", cambios))
 
 
 @mcp.tool()
 def marca_listar(q: str | None = None) -> Any:
     """Lista marcas (brands). `q` filtra por nombre (ej. "Marluvas"). Devuelve `id`(UUID)+`nombre`;
     el `id` es lo que se pone en `brand_id` de expediente/OC."""
-    return _safe(lambda: api.get("marcas/", _params(q=q)))
+    return _safe_role(lambda: api.get("marcas/", _params(q=q)))
 
 
 @mcp.tool()
@@ -552,7 +582,7 @@ def expediente_listar(
     lim, off = _paging(limit, offset)
     return _project(
         campos,
-        _safe(
+        _safe_role(
             lambda: api.get(
                 "expedientes/",
                 _params(oc=oc, client=client, estado=estado, phase_signal=phase_signal, q=q, limit=lim, offset=off),
@@ -566,7 +596,7 @@ def expediente_obtener(expediente_id: str, campos: str | None = None) -> Any:
     """Detalle de un expediente (acepta UUID o código, p.ej. EXP-1027).
     `campos`: lista separada por comas (ej. "id,codigo,estado,client_id") para devolver
     solo esos atributos y ahorrar contexto (Ola 2 · 2.17)."""
-    return _project(campos, _safe(lambda: api.get(f"expedientes/{expediente_id}/")))
+    return _project(campos, _safe_role(lambda: api.get(f"expedientes/{expediente_id}/")))
 
 
 @mcp.tool()
@@ -588,7 +618,7 @@ def expediente_buscar(
     `{existe, total, matches:[{expediente_id, codigo, oc_id, oc_codigos, proforma_codigos,
     sap_codigos, estado, client_id}]}`. Si `existe=true` → **NO crees**, edita el existente."""
     params = _params(client=client_id, oc_number=oc_number, proforma=proforma)  # oc_number/proforma los usa el backend si está parcheado
-    data = _safe(lambda: api.get("expedientes/", params))
+    data = _safe_role(lambda: api.get("expedientes/", params))
     if isinstance(data, dict) and data.get("error"):
         return data
     rows = _as_rows(data)
@@ -612,7 +642,7 @@ def expediente_buscar(
 @mcp.tool()
 def expediente_lineas(expediente_id: str) -> Any:
     """Líneas (SKU/talla/cantidad/precios) de un expediente."""
-    return _safe(lambda: api.get(f"expedientes/{expediente_id}/lineas/"))
+    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/lineas/"))
 
 
 @mcp.tool()
@@ -622,7 +652,7 @@ def expediente_resolve_oc_preview(client_id: str, lines: list) -> Any:
     `lines`: lista de {client_part_number?, sku?, size, qty}. Devuelve líneas con
     producto_id, unit_price y needs_review. Aunque no persiste, ejecuta POST, así
     que en modo readonly queda bloqueada (guard estructural @write_tool)."""
-    return _safe(
+    return _safe_role(
         lambda: api.post("expedientes/resolve-oc-preview/", {"client_id": client_id, "lines": lines})
     )
 
@@ -698,7 +728,7 @@ def expediente_crear(
         idempotence_token=idempotence_token,
         ocr_payload=ocr_payload,
     )
-    return _safe(lambda: api.post_multipart("expedientes/create-from-oc/", data, file_path))
+    return _safe_role(lambda: api.post_multipart("expedientes/create-from-oc/", data, file_path))
 
 
 @mcp.tool()
@@ -734,7 +764,7 @@ def lineas_actualizar_precios(updates: list) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post("lineas/bulk-update-prices/", {"updates": updates}))
+    return _safe_role(lambda: api.post("lineas/bulk-update-prices/", {"updates": updates}))
 
 
 @mcp.tool()
@@ -746,7 +776,7 @@ def expediente_apply_pronto_pago(expediente_id: str, plazo_days: int, covered_pa
     if g:
         return g
     body = _params(plazo_days=plazo_days, covered_pairs=covered_pairs)
-    return _safe(lambda: api.post(f"expedientes/{expediente_id}/apply-pronto-pago/", body))
+    return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/apply-pronto-pago/", body))
 
 
 @mcp.tool()
@@ -761,7 +791,7 @@ def expediente_editar(expediente_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"expedientes/{expediente_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"expedientes/{expediente_id}/", cambios))
 
 
 @mcp.tool()
@@ -772,13 +802,13 @@ def expediente_eliminar(expediente_id: str) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.delete(f"expedientes/{expediente_id}/"))
+    return _safe_role(lambda: api.delete(f"expedientes/{expediente_id}/"))
 
 
 @mcp.tool()
 def expediente_edit_full_get(expediente_id: str) -> Any:
     """Lee la edición GENERAL del expediente (todas las líneas y términos)."""
-    return _safe(lambda: api.get(f"expedientes/{expediente_id}/edit-full/"))
+    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/edit-full/"))
 
 
 @mcp.tool()
@@ -791,7 +821,7 @@ def expediente_edit_full_patch(expediente_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"expedientes/{expediente_id}/edit-full/", cambios))
+    return _safe_role(lambda: api.patch(f"expedientes/{expediente_id}/edit-full/", cambios))
 
 
 # --- Documentos -------------------------------------------------------------
@@ -829,7 +859,7 @@ def documento_subir(
     if str(kind).upper() == "PROFORMA" and codigo and not re.fullmatch(r"\d{4}-\d{4}", str(codigo).strip()):
         return {"error": True, "detail": f"codigo de PROFORMA inválido: '{codigo}'. Debe ser el número limpio ####-#### (ej. '2228-2026'), sin filename ni prefijos."}
     data = _params(kind=kind, codigo=codigo, expediente_id=expediente_id, oc_id=oc_id, audience=audience)
-    return _safe(lambda: api.post_multipart("documentos/", data, file_path))
+    return _safe_role(lambda: api.post_multipart("documentos/", data, file_path))
 
 
 @mcp.tool()
@@ -844,7 +874,7 @@ def documento_listar(
     `limit`/`offset`: paginación (default limit=50, máx 200).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    return _project(campos, _safe(lambda: api.get("documentos/", _params(expediente=expediente, oc=oc, kind=kind, limit=lim, offset=off))))
+    return _project(campos, _safe_role(lambda: api.get("documentos/", _params(expediente=expediente, oc=oc, kind=kind, limit=lim, offset=off))))
 
 
 @mcp.tool()
@@ -854,7 +884,7 @@ def documento_eliminar(documento_id: str) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.delete(f"documentos/{documento_id}/"))
+    return _safe_role(lambda: api.delete(f"documentos/{documento_id}/"))
 
 
 # Ola 2 · 2.18 — descarga firma el acceso al binario almacenado.
@@ -883,7 +913,7 @@ def documento_descargar(documento_id: str, ttl_minutes: int | None = None) -> An
         ttl_minutes = 15
 
     # 1) obtener el documento para saber su storage_url.
-    doc = _safe(lambda: api.get(f"documentos/{documento_id}/"))
+    doc = _safe_role(lambda: api.get(f"documentos/{documento_id}/"))
     if isinstance(doc, dict) and doc.get("error"):
         return doc
     storage_url = None
@@ -901,7 +931,7 @@ def documento_descargar(documento_id: str, ttl_minutes: int | None = None) -> An
 
     # 2) firmar la lectura.
     try:
-        return _safe(lambda: api.post(
+        return _safe_role(lambda: api.post(
             "storage/signed_url/",
             {"key": key, "kind": "get", "ttl": ttl_minutes * 60},
         ))
@@ -916,7 +946,7 @@ def documento_editar(documento_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"documentos/{documento_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"documentos/{documento_id}/", cambios))
 
 
 # --- SAP --------------------------------------------------------------------
@@ -927,7 +957,7 @@ def sap_analizar(expediente_id: str, file_path: str) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post_multipart(f"expedientes/{expediente_id}/analyze-sap-confirmation/", {}, file_path))
+    return _safe_role(lambda: api.post_multipart(f"expedientes/{expediente_id}/analyze-sap-confirmation/", {}, file_path))
 
 
 @mcp.tool()
@@ -945,7 +975,7 @@ def sap_confirmar(
     if g:
         return g
     data = _params(sap_id=sap_id, lineas_confirmadas=lineas_confirmadas, fecha_fabricacion=fecha_fabricacion)
-    return _safe(lambda: api.post_multipart(
+    return _safe_role(lambda: api.post_multipart(
         f"expedientes/{expediente_id}/confirm-sap/", data, file_path, file_field="documento_sap"))
 
 
@@ -963,14 +993,14 @@ def sap_upsert(
     if g:
         return g
     data = _params(sap_id=sap_id, lineas_confirmadas=lineas_confirmadas, fecha_fabricacion=fecha_fabricacion)
-    return _safe(lambda: api.post_multipart(
+    return _safe_role(lambda: api.post_multipart(
         f"expedientes/{expediente_id}/upsert-sap/", data, file_path, file_field="documento_sap"))
 
 
 @mcp.tool()
 def sap_obtener(expediente_id: str, sap_id: str) -> Any:
     """Detalle del SAP (líneas, términos, valores MWT/cliente) — editor por-SAP."""
-    return _safe(lambda: api.get(f"expedientes/{expediente_id}/sap/{sap_id}/"))
+    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/sap/{sap_id}/"))
 
 
 @mcp.tool()
@@ -980,7 +1010,7 @@ def sap_editar(expediente_id: str, sap_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"expedientes/{expediente_id}/sap/{sap_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"expedientes/{expediente_id}/sap/{sap_id}/", cambios))
 
 
 @mcp.tool()
@@ -990,7 +1020,7 @@ def sap_sincronizar_discrepancias(expediente_id: str, actions: list) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post(f"expedientes/{expediente_id}/sync-sap-discrepancies/", {"actions": actions}))
+    return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/sync-sap-discrepancies/", {"actions": actions}))
 
 
 # --- Matchmaker / balanceo IA ----------------------------------------------
@@ -1003,7 +1033,7 @@ def match_subir(expediente_id: str, document_type: str, file_path: str) -> Any:
     if g:
         return g
     data = _params(document_type=document_type)
-    return _safe(lambda: api.post_multipart(f"expedientes/{expediente_id}/upload-match/", data, file_path))
+    return _safe_role(lambda: api.post_multipart(f"expedientes/{expediente_id}/upload-match/", data, file_path))
 
 
 @mcp.tool()
@@ -1014,7 +1044,7 @@ def match_resolver(expediente_id: str, log_id: str, actions: list, note: str | N
     if g:
         return g
     body = _params(log_id=log_id, actions=actions, note=note)
-    return _safe(lambda: api.post(f"expedientes/{expediente_id}/resolve-match/", body))
+    return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/resolve-match/", body))
 
 
 # --- Fusión -----------------------------------------------------------------
@@ -1025,7 +1055,7 @@ def expediente_fusionar(expediente_ids: list, label: str | None = None) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post("expedientes/fusionar/", _params(expediente_ids=expediente_ids, label=label)))
+    return _safe_role(lambda: api.post("expedientes/fusionar/", _params(expediente_ids=expediente_ids, label=label)))
 
 
 @mcp.tool()
@@ -1034,7 +1064,7 @@ def expediente_fusion_label(fusion_id: str, label: str | None = None) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post("expedientes/fusion-label/", _params(fusion_id=fusion_id, label=label)))
+    return _safe_role(lambda: api.post("expedientes/fusion-label/", _params(fusion_id=fusion_id, label=label)))
 
 
 @mcp.tool()
@@ -1043,7 +1073,7 @@ def expediente_desfusionar(fusion_id: str | None = None, expediente_ids: list | 
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post("expedientes/desfusionar/", _params(fusion_id=fusion_id, expediente_ids=expediente_ids)))
+    return _safe_role(lambda: api.post("expedientes/desfusionar/", _params(fusion_id=fusion_id, expediente_ids=expediente_ids)))
 
 
 # --- Proforma / Factura -----------------------------------------------------
@@ -1058,20 +1088,20 @@ def proforma_generar(expediente_id: str, audience: str = "CLIENT", codigo: str |
     if g:
         return g
     body = _params(audience=audience, codigo=codigo, payment_days=payment_days)
-    return _safe(lambda: api.post(f"expedientes/{expediente_id}/generate-proforma/", body))
+    return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/generate-proforma/", body))
 
 
 @mcp.tool()
 def proforma_html(expediente_id: str, codigo: str | None = None) -> Any:
     """Devuelve el HTML de la proforma renderizada al vuelo (no persiste)."""
-    return _safe(lambda: api.get(f"expedientes/{expediente_id}/proforma-html/", _params(codigo=codigo)))
+    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/proforma-html/", _params(codigo=codigo)))
 
 
 @mcp.tool()
 def factura_payload(expediente_id: str) -> Any:
     """Devuelve el payload estructurado de la factura comercial del expediente
     (líneas con FOB/landed/dai_rate/ncm, cost_breakdown, totales)."""
-    return _safe(lambda: api.get(f"expedientes/{expediente_id}/factura-payload/"))
+    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/factura-payload/"))
 
 
 # --- Estados SAP / pipeline -------------------------------------------------
@@ -1083,13 +1113,13 @@ def expediente_avanzar_estado(expediente_id: str, fase_to: str, note: str | None
     if g:
         return g
     body = _params(fase_to=fase_to, note=note, idempotence_token=idempotence_token, documento_id=documento_id)
-    return _safe(lambda: api.post(f"expedientes/{expediente_id}/transition/", body))
+    return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/transition/", body))
 
 
 @mcp.tool()
 def expediente_phase_durations_get(expediente_id: str) -> Any:
     """Lee las fechas/duraciones por fase del expediente."""
-    return _safe(lambda: api.get(f"expedientes/{expediente_id}/phase-durations/"))
+    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/phase-durations/"))
 
 
 @mcp.tool()
@@ -1099,13 +1129,13 @@ def expediente_phase_durations_set(expediente_id: str, phase_durations: dict) ->
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post(f"expedientes/{expediente_id}/phase-durations/", phase_durations))
+    return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/phase-durations/", phase_durations))
 
 
 @mcp.tool()
 def expediente_eventos(expediente_id: str, limit: int = 200) -> Any:
     """Historial de eventos (transiciones) del expediente."""
-    return _safe(lambda: api.get(f"expedientes/{expediente_id}/events/", _params(limit=limit)))
+    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/events/", _params(limit=limit)))
 
 
 # =========================================================================== #
@@ -1117,13 +1147,13 @@ def nodo_listar(tipo: str | None = None, pais: str | None = None, status: str | 
     `limit`/`offset`: paginación (default limit=50, máx 200).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    return _project(campos, _safe(lambda: api.get("nodos/", _params(tipo=tipo, pais=pais, status=status, q=q, limit=lim, offset=off))))
+    return _project(campos, _safe_role(lambda: api.get("nodos/", _params(tipo=tipo, pais=pais, status=status, q=q, limit=lim, offset=off))))
 
 
 @mcp.tool()
 def nodo_obtener(nodo_id: str) -> Any:
     """Detalle de un nodo."""
-    return _safe(lambda: api.get(f"nodos/{nodo_id}/"))
+    return _safe_role(lambda: api.get(f"nodos/{nodo_id}/"))
 
 
 @mcp.tool()
@@ -1133,7 +1163,7 @@ def nodo_crear(datos: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post("nodos/", datos))
+    return _safe_role(lambda: api.post("nodos/", datos))
 
 
 @mcp.tool()
@@ -1142,7 +1172,7 @@ def nodo_editar(nodo_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"nodos/{nodo_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"nodos/{nodo_id}/", cambios))
 
 
 @mcp.tool()
@@ -1151,7 +1181,7 @@ def nodo_artefactos_listar(nodo_id: str, template_id: int | None = None, limit: 
     `limit`/`offset`: paginación (default limit=50, máx 200).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    return _project(campos, _safe(lambda: api.get(f"nodos/{nodo_id}/builder-artifacts/", _params(template_id=template_id, limit=lim, offset=off))))
+    return _project(campos, _safe_role(lambda: api.get(f"nodos/{nodo_id}/builder-artifacts/", _params(template_id=template_id, limit=lim, offset=off))))
 
 
 @mcp.tool()
@@ -1175,7 +1205,7 @@ def nodo_artefacto_crear(nodo_id: str, template_id: int, template_title: str, da
         return g
     body = _params(template_id=template_id, template_title=template_title, data=data,
                    structure_snapshot=structure_snapshot, lines=lines)
-    return _safe(lambda: api.post(f"nodos/{nodo_id}/builder-artifacts/", body))
+    return _safe_role(lambda: api.post(f"nodos/{nodo_id}/builder-artifacts/", body))
 
 
 # Ola 2 · 2.19 — editar/publicar artefactos del Builder.
@@ -1194,7 +1224,7 @@ def artefacto_editar(nodo_id: str, artifact_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"nodos/{nodo_id}/builder-artifacts/{artifact_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"nodos/{nodo_id}/builder-artifacts/{artifact_id}/", cambios))
 
 
 @mcp.tool()
@@ -1208,7 +1238,7 @@ def artefacto_publicar(nodo_id: str, artifact_id: str, publicado: bool = True) -
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"nodos/{nodo_id}/builder-artifacts/{artifact_id}/", {"publicado": bool(publicado)}))
+    return _safe_role(lambda: api.patch(f"nodos/{nodo_id}/builder-artifacts/{artifact_id}/", {"publicado": bool(publicado)}))
 
 
 # =========================================================================== #
@@ -1223,20 +1253,20 @@ def stock_listar(nodo: str | None = None, producto: str | None = None, solo_disp
     params = _params(nodo=nodo, producto=producto, limit=lim, offset=off)
     if solo_disponible:
         params["solo_disponible"] = 1
-    return _project(campos, _safe(lambda: api.get("stock/", params)))
+    return _project(campos, _safe_role(lambda: api.get("stock/", params)))
 
 
 @mcp.tool()
 def inventario_saldos_por_expediente(expediente_ids: list, nodo_id: str | None = None) -> Any:
     """Saldos pendientes de asignar por expediente. `expediente_ids`: lista de UUIDs (requerido)."""
     csv = ",".join(expediente_ids)
-    return _safe(lambda: api.get("inventario/saldos-por-expediente/", _params(expediente_ids=csv, nodo_id=nodo_id)))
+    return _safe_role(lambda: api.get("inventario/saldos-por-expediente/", _params(expediente_ids=csv, nodo_id=nodo_id)))
 
 
 @mcp.tool()
 def inventario_expedientes_con_pendiente() -> Any:
     """Devuelve los expediente_ids que tienen cantidades pendientes de recibir."""
-    return _safe(lambda: api.get("inventario/expedientes-with-pending/"))
+    return _safe_role(lambda: api.get("inventario/expedientes-with-pending/"))
 
 
 @mcp.tool()
@@ -1246,7 +1276,7 @@ def inventario_lineas_en_nodo(nodo_id: str, expediente_ids: list | None = None) 
     params = {}
     if expediente_ids:
         params["expediente_ids"] = ",".join(expediente_ids)
-    return _safe(lambda: api.get(f"inventario/nodos/{nodo_id}/lineas-en-nodo/", params))
+    return _safe_role(lambda: api.get(f"inventario/nodos/{nodo_id}/lineas-en-nodo/", params))
 
 
 @mcp.tool()
@@ -1265,7 +1295,7 @@ def recepcion_crear(items: list, cost_lines: list | None = None, recepcion_id: s
     if _cerr:
         return {"error": True, "detail": _cerr}
     body = _params(items=items, cost_lines=cost_lines, recepcion_id=recepcion_id)
-    return _safe(lambda: api.post("inventario/nodo-assignments/bulk/", body))
+    return _safe_role(lambda: api.post("inventario/nodo-assignments/bulk/", body))
 
 
 @mcp.tool()
@@ -1276,13 +1306,13 @@ def inventario_transferir_asignaciones(origin_nodo_id: str, destination_nodo_id:
     if g:
         return g
     body = _params(origin_nodo_id=origin_nodo_id, destination_nodo_id=destination_nodo_id, items=items, transferencia_id=transferencia_id)
-    return _safe(lambda: api.post("inventario/nodo-assignments/transfer/", body))
+    return _safe_role(lambda: api.post("inventario/nodo-assignments/transfer/", body))
 
 
 @mcp.tool()
 def inventario_artefactos_expediente(expediente_id: str) -> Any:
     """Lista los artefactos (Builder) ligados a un expediente vía inventario."""
-    return _safe(lambda: api.get(f"inventario/expedientes/{expediente_id}/artifacts/"))
+    return _safe_role(lambda: api.get(f"inventario/expedientes/{expediente_id}/artifacts/"))
 
 
 # =========================================================================== #
@@ -1296,14 +1326,14 @@ def transferencia_listar(origen: str | None = None, destino: str | None = None, 
     `limit`/`offset`: paginación (default limit=50, máx 200).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    return _project(campos, _safe(lambda: api.get("transferencias/", _params(origen=origen, destino=destino, estado=estado, legal_context=legal_context, q=q, limit=lim, offset=off))))
+    return _project(campos, _safe_role(lambda: api.get("transferencias/", _params(origen=origen, destino=destino, estado=estado, legal_context=legal_context, q=q, limit=lim, offset=off))))
 
 
 @mcp.tool()
 def transferencia_obtener(transferencia_id: str) -> Any:
     """Detalle de un movimiento (acepta UUID o código TRF-...), con líneas, eventos,
     documentos y cost_lines."""
-    return _safe(lambda: api.get(f"transferencias/{transferencia_id}/"))
+    return _safe_role(lambda: api.get(f"transferencias/{transferencia_id}/"))
 
 
 @mcp.tool()
@@ -1334,14 +1364,14 @@ def transferencia_crear(
     body = _params(origen_id=origen_id, destino_id=destino_id, legal_context=legal_context,
                    lineas=lineas, cost_lines=cost_lines, ref_tracking=ref_tracking,
                    context_data=context_data, notes=notes, idempotency_key=idempotency_key)
-    return _safe(lambda: api.post("transferencias/", body))
+    return _safe_role(lambda: api.post("transferencias/", body))
 
 
 def _transfer_action(transferencia_id: str, action: str, body: dict | None = None):
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post(f"transferencias/{transferencia_id}/{action}/", body or {}))
+    return _safe_role(lambda: api.post(f"transferencias/{transferencia_id}/{action}/", body or {}))
 
 
 @mcp.tool()
@@ -1370,7 +1400,7 @@ def transferencia_editar(transferencia_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"transferencias/{transferencia_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"transferencias/{transferencia_id}/", cambios))
 
 
 @mcp.tool()
@@ -1409,7 +1439,7 @@ def transferencia_cancelar(transferencia_id: str, notes: str | None = None) -> A
 @mcp.tool()
 def transfer_costos_listar(transferencia_id: str) -> Any:
     """Lista las líneas de costo (DUA/impuestos/gastos) de un movimiento."""
-    return _safe(lambda: api.get(f"transferencias/{transferencia_id}/cost-lines/"))
+    return _safe_role(lambda: api.get(f"transferencias/{transferencia_id}/cost-lines/"))
 
 
 @mcp.tool()
@@ -1456,7 +1486,7 @@ def transfer_costo_agregar(
             scope_json.setdefault("applies_to_all", True)
     body = _params(kind=kind, amount=amount, label=label, currency=currency, fx_to_usd=fx_to_usd,
                    price_view=price_view, scope_json=scope_json, source=source, document_id=document_id, notes=notes)
-    return _safe(lambda: api.post(f"transferencias/{transferencia_id}/cost-lines/", body))
+    return _safe_role(lambda: api.post(f"transferencias/{transferencia_id}/cost-lines/", body))
 
 
 @mcp.tool()
@@ -1465,7 +1495,7 @@ def transfer_costo_editar(transferencia_id: str, cost_id: str, cambios: dict) ->
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"transferencias/{transferencia_id}/cost-lines/{cost_id}/", cambios))
+    return _safe_role(lambda: api.patch(f"transferencias/{transferencia_id}/cost-lines/{cost_id}/", cambios))
 
 
 @mcp.tool()
@@ -1474,7 +1504,7 @@ def transfer_costo_eliminar(transferencia_id: str, cost_id: str) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.delete(f"transferencias/{transferencia_id}/cost-lines/{cost_id}/"))
+    return _safe_role(lambda: api.delete(f"transferencias/{transferencia_id}/cost-lines/{cost_id}/"))
 
 
 @mcp.tool()
@@ -1487,14 +1517,14 @@ def transfer_artefacto_crear(transferencia_id: str, template_id: int, template_t
         return g
     body = _params(template_id=template_id, template_title=template_title, data=data,
                    structure_snapshot=structure_snapshot, lines=lines)
-    return _safe(lambda: api.post(f"transferencias/{transferencia_id}/builder-artifacts/", body))
+    return _safe_role(lambda: api.post(f"transferencias/{transferencia_id}/builder-artifacts/", body))
 
 
 # --- Landed cost / factura / remisión ---------------------------------------
 @mcp.tool()
 def transfer_liquidacion_preview(transferencia_id: str) -> Any:
     """Preview del landed cost (no persiste): FOB, costos extra, costo aterrizado por línea."""
-    return _safe(lambda: api.get(f"transferencias/{transferencia_id}/liquidation_report/"))
+    return _safe_role(lambda: api.get(f"transferencias/{transferencia_id}/liquidation_report/"))
 
 
 @mcp.tool()
@@ -1506,20 +1536,20 @@ def transfer_liquidar(transferencia_id: str, method: str = "BY_VALUE") -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post(f"transferencias/{transferencia_id}/liquidate/", {"method": method}))
+    return _safe_role(lambda: api.post(f"transferencias/{transferencia_id}/liquidate/", {"method": method}))
 
 
 @mcp.tool()
 def transfer_factura_payload(transferencia_id: str) -> Any:
     """Payload estructurado para generar la factura/remisión interna del movimiento
     (líneas, cost_breakdown, totales, operating_company, transfer_pricing)."""
-    return _safe(lambda: api.get(f"transferencias/{transferencia_id}/invoice_payload/"))
+    return _safe_role(lambda: api.get(f"transferencias/{transferencia_id}/invoice_payload/"))
 
 
 @mcp.tool()
 def transfer_notas_listar(transferencia_id: str) -> Any:
     """Lista las notas del movimiento."""
-    return _safe(lambda: api.get(f"transferencias/{transferencia_id}/notes/"))
+    return _safe_role(lambda: api.get(f"transferencias/{transferencia_id}/notes/"))
 
 
 @mcp.tool()
@@ -1528,7 +1558,7 @@ def transfer_nota_crear(transferencia_id: str, text: str, actor_name: str | None
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.post(f"transferencias/{transferencia_id}/notes/", _params(text=text, actor_name=actor_name)))
+    return _safe_role(lambda: api.post(f"transferencias/{transferencia_id}/notes/", _params(text=text, actor_name=actor_name)))
 
 
 # =========================================================================== #
@@ -1550,7 +1580,7 @@ def pago_applicables(
                      transferencia_id=transferencia_id, oc_id=oc_id)
     if include_paid:
         params["include_paid"] = 1
-    return _safe(lambda: api.get("finance/payments/applicables/", params))
+    return _safe_role(lambda: api.get("finance/payments/applicables/", params))
 
 
 @mcp.tool()
@@ -1560,13 +1590,13 @@ def pago_listar(expediente_id: str | None = None, estado: str | None = None, tra
     `limit`/`offset`: paginación (default limit=50, máx 200).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    return _project(campos, _safe(lambda: api.get("finance/payments/", _params(expediente_id=expediente_id, estado=estado, transferencia_id=transferencia_id, q=q, limit=lim, offset=off))))
+    return _project(campos, _safe_role(lambda: api.get("finance/payments/", _params(expediente_id=expediente_id, estado=estado, transferencia_id=transferencia_id, q=q, limit=lim, offset=off))))
 
 
 @mcp.tool()
 def pago_obtener(pago_id: str) -> Any:
     """Detalle de un pago, incluyendo aplicaciones, evidencia y veredicto IA."""
-    return _safe(lambda: api.get(f"finance/payments/{pago_id}/"))
+    return _safe_role(lambda: api.get(f"finance/payments/{pago_id}/"))
 
 
 @mcp.tool()
@@ -1578,7 +1608,7 @@ def pago_dry_run(expediente_id: str, monto: float, direction: str, aplicaciones:
     (guard estructural @write_tool)."""
     body = _params(expediente_id=expediente_id, monto=monto, direction=direction,
                    aplicaciones=aplicaciones, counterparty_type=counterparty_type, counterparty_id=counterparty_id)
-    return _safe(lambda: api.post("finance/payments/dry-run/", body))
+    return _safe_role(lambda: api.post("finance/payments/dry-run/", body))
 
 
 @mcp.tool()
@@ -1618,7 +1648,7 @@ def pago_registrar(
                    metodo=metodo, tipo_pago=tipo_pago, referencia=referencia,
                    aplicaciones=aplicaciones, notas=notas, event_id=event_id,
                    idempotency_key=idempotency_key)
-    return _safe(lambda: api.post_multipart("finance/payments/", data, file_path, file_field="evidencia"))
+    return _safe_role(lambda: api.post_multipart("finance/payments/", data, file_path, file_field="evidencia"))
 
 
 @mcp.tool()
@@ -1628,7 +1658,7 @@ def pago_conciliar(pago_id: str, bank_reference: str | None = None) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"finance/payments/{pago_id}/reconcile/", _params(bank_reference=bank_reference)))
+    return _safe_role(lambda: api.patch(f"finance/payments/{pago_id}/reconcile/", _params(bank_reference=bank_reference)))
 
 
 @mcp.tool()
@@ -1637,7 +1667,7 @@ def pago_liberar_credito(pago_id: str) -> Any:
     g = _wguard()
     if g:
         return g
-    return _safe(lambda: api.patch(f"finance/payments/{pago_id}/release-credit/", {}))
+    return _safe_role(lambda: api.patch(f"finance/payments/{pago_id}/release-credit/", {}))
 
 
 @mcp.tool()
@@ -1649,7 +1679,7 @@ def pago_rechazar(pago_id: str, rejection_reason: str, rejection_comment: str | 
     if g:
         return g
     body = _params(rejection_reason=rejection_reason, rejection_comment=rejection_comment, confirm_reversal=True)
-    return _safe(lambda: api.patch(f"finance/payments/{pago_id}/reject/", body))
+    return _safe_role(lambda: api.patch(f"finance/payments/{pago_id}/reject/", body))
 
 
 # =========================================================================== #
@@ -1674,7 +1704,7 @@ def storage_subir_archivo(file_path: str, scope: str = "artifact-field/misc", fi
     data = {"scope": scope}
     if filename:
         data["filename"] = filename
-    return _safe(lambda: api.post_multipart("storage/upload-proxy/", data, file_path, file_field="file"))
+    return _safe_role(lambda: api.post_multipart("storage/upload-proxy/", data, file_path, file_field="file"))
 
 
 # Ola 2 · 2.18 — descarga de un binario con key de MinIO (campos de archivo
@@ -1709,7 +1739,7 @@ def artefacto_archivo_descargar(key: str, ttl_minutes: int | None = None) -> Any
     if "download/?key=" in str(key):
         clean = str(key).split("download/?key=")[-1]
 
-    return _safe(lambda: api.post(
+    return _safe_role(lambda: api.post(
         "storage/signed_url/",
         {"key": clean, "kind": "get", "ttl": ttl_minutes * 60},
     ))
@@ -1722,11 +1752,11 @@ def artefacto_archivo_descargar(key: str, ttl_minutes: int | None = None) -> Any
 def builder_templates_listar(only_published: bool = True) -> Any:
     """Lista los templates de artefactos disponibles en el Builder (campos, tipos, opciones)."""
     params = {"only_published": 1} if only_published else {}
-    return _safe(lambda: api.get("builder/templates/", params))
+    return _safe_role(lambda: api.get("builder/templates/", params))
 
 
 @mcp.tool()
 def builder_template_obtener(template_id: int) -> Any:
     """Obtiene la definición/estructura de un template del Builder por su id (entero)."""
-    return _safe(lambda: api.get(f"builder/templates/{template_id}/"))
+    return _safe_role(lambda: api.get(f"builder/templates/{template_id}/"))
 

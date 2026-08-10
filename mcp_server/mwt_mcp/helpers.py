@@ -52,8 +52,10 @@ from functools import wraps as _wraps
 # Ola 2 · 2.20 — auditoría JSON por escritura (observabilidad + trazabilidad).
 # Campos sensibles que NUNCA se vuelcan a los logs (se marcan como "<redactado>").
 _AUDIT_REDACT = {
-    "file_path", "filename", "key", "storage_url", "evidencia", "documento_sap",
-    "idempotence_token", "idempotency_key", "token", "password", "secret",
+    "file_path", "filename", "key", "storage_url", "signed_url", "url",
+    "evidencia", "documento_sap", "idempotence_token", "idempotency_key",
+    "token", "password", "secret", "tax_id", "contact_email", "phone",
+    "cedula",
 }
 
 
