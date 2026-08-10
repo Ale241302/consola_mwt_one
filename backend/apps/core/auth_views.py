@@ -1021,3 +1021,48 @@ class McpDiagView(APIView):
                 if row:
                     return _finish(cur, row)
         return None
+
+class SystemHealthView(APIView):
+    """GET /api/auth/system-health/ — estado del backend (Ola 3.7 · D1).
+
+    Verifica sin tocar datos de negocio: conexión a la DB (SELECT 1), estado de
+    Redis (PING), y latencia del endpoint. Autenticado con ServiceToken o JWT;
+    NO expone PII ni datos de negocio.
+    """
+
+    authentication_classes = [MwtServiceTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mcp_health"
+
+    def get(self, request):
+        import time
+
+        t0 = time.monotonic()
+        db_ok = False
+        try:
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            db_ok = True
+        except Exception:
+            db_ok = False
+
+        redis_ok = None
+        try:
+            import redis as _redis
+            from django.conf import settings as _dsettings
+
+            redis_url = getattr(_dsettings, "REDIS_URL", "redis://127.0.0.1:6379/0")
+            r = _redis.from_url(redis_url, socket_timeout=1.5)
+            redis_ok = bool(r.ping())
+        except Exception:
+            redis_ok = False
+
+        return Response({
+            "ok": bool(db_ok),
+            "db": bool(db_ok),
+            "redis": redis_ok,
+            "latency_ms": int((time.monotonic() - t0) * 1000),
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        })

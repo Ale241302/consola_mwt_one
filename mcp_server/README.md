@@ -192,9 +192,50 @@ Throttle por usuario en el backend (DRF `ScopedRateThrottle`):
 | `mcp-token` | 6/min | `POST /api/auth/mcp-token/` (token exchange) |
 | `mcp_audit` | 120/min | `POST /api/auth/mcp-audit/` (persistencia) |
 | `mcp_diag` | 10/min | `POST /api/auth/mcp-diag/` (diagnóstico) |
+| `mcp_health` | 30/min | `GET /api/auth/system-health/` (estado DB/Redis) |
 
 El MCP cachea el JWT de usuario 45 min, así que el token exchange no es un
 cuello de botella en sesiones normales.
+
+---
+
+## 3.7 Calidad y contrato (Ola 3.7 · Ejes C1/C2/C5/D1)
+
+### Proyección `campos` (C1)
+
+Todas las tools de detalle soportan `campos` (lista separada por comas) para
+proyectar solo los atributos que el agente necesita y ahorrar contexto:
+`cliente_obtener`, `producto_obtener`, `oc_obtener`, `expediente_obtener`,
+`expediente_lineas`, `expediente_edit_full_get`, `sap_obtener`, `nodo_obtener`,
+`transferencia_obtener`, `transfer_costos_listar`, `transfer_liquidacion_preview`,
+`pago_obtener`, y los listados (`cliente_listar`, `expediente_listar`, …).
+
+Ejemplo: `expediente_obtener(expediente_id="EXP-1027", campos="id,codigo,estado")`.
+
+La redacción por rol (3.5) se aplica ANTES de proyectar, así que un campo
+sensible pedido explícitamente en `campos` se devuelve redactado (`***`).
+
+### Validación de contratos (C2)
+
+`schemas.py` incluye validadores ligeros (no sustituyen al backend) para los
+dicts opacos de creación/edición: `validate_cliente_datos/cambios`,
+`validate_producto_datos/cambios`, `validate_nodo_datos/cambios`,
+`validate_cambios`. Detectan pronto dicts vacíos, campos desconocidos (typos)
+y faltas de campos requeridos, con un mensaje que lista los campos permitidos.
+
+### Errores con `hint` (C5)
+
+Todo error de la frontera (`_safe`/`_safe_role`) devuelve
+`{error, status, detail, url, hint}`. El `hint` es una guía accionable según el
+código HTTP (400 → revisa tipos/campos; 403 → rol/permisos; 404 → id/UUID;
+429 → rate limit; 500 → error interno, revisa logs de django).
+
+### `mwt_health` ampliado (D1)
+
+`mwt_health` ahora devuelve: `token_valid` (GET /auth/me/), `db` y `redis`
+(GET /api/auth/system-health/ con SELECT 1 + Redis PING, sin tocar datos de
+negocio), latencia, y el `healthz` de storage. Útil para detectar token
+expirado, DB caída o Redis lento antes de una sesión larga.
 
 ---
 

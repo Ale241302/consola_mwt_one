@@ -20,10 +20,23 @@ from .helpers import _persist_mcp_audit
 from .jwt_minter import get_identity_user
 from .redact import redact_for_user
 from .schemas import (
+    _DOCUMENTO_KEYS,
+    _EXPEDIENTE_KEYS,
+    _NODO_ARTEFACTO_KEYS,
+    _OC_KEYS,
+    _SAP_KEYS,
+    _TRANSFERENCIA_KEYS,
     pydantic_available,
     validate_aplicaciones,
+    validate_cambios,
+    validate_cliente_cambios,
+    validate_cliente_datos,
     validate_cost_lines,
     validate_lines,
+    validate_nodo_cambios,
+    validate_nodo_datos,
+    validate_producto_cambios,
+    validate_producto_datos,
 )
 from .tool_rbac import RbacFastMCP, TOOL_MODULES, allowed_tool_names
 
@@ -36,14 +49,35 @@ mcp = RbacFastMCP("mwt-one")
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+# Ola 3.7 · C5 — hints accionables por código HTTP en el shape de error.
+_HTTP_HINTS = {
+    400: "La API rechazó el payload. Revisa tipos, campos requeridos y valores (ej. qty>0, kind válido).",
+    401: "Autenticación fallida o token expirado. Verifica el token del MCP / la identidad del usuario.",
+    403: "No tienes permiso para esta operación con tu rol. Revisa la matriz /roles o usa mwt_diag_scope.",
+    404: "El recurso no existe o no está visible para tu scope. Verifica el id/UUID (o el código, ej. PO-…).",
+    405: "Método no permitido para este endpoint. Revisa si la tool usa GET vs POST.",
+    409: "Conflicto de estado (ej. transición ilegal, duplicado). Consulta el detalle del error.",
+    422: "Validación de datos fallida (Pydantic/DRF). Revisa el detalle campo a campo.",
+    429: "Rate limit alcanzado. Espera un momento y reintenta (throttle por usuario).",
+    500: "Error interno del servidor. Reintenta; si persiste, revisa los logs de django.",
+    502: "El backend no respondió (gateway). Reintenta en unos segundos.",
+    503: "Servicio temporalmente no disponible. Reintenta más tarde.",
+}
+
+
+def _err_hint(status) -> str:
+    return _HTTP_HINTS.get(int(status), "Consulta el detalle del error para más contexto.")
+
+
 def _safe(call):
     """Frontera de errores SIN redacción (meta-tools: mwt_*, tipo_cambio)."""
     try:
         return call()
     except MwtApiError as e:
-        return {"error": True, "status": e.status, "detail": e.payload, "url": e.url}
+        return {"error": True, "status": e.status, "detail": e.payload, "url": e.url,
+                "hint": _err_hint(e.status)}
     except Exception as e:  # noqa: BLE001 - frontera del MCP: nunca propagar crudo
-        return {"error": True, "detail": str(e)}
+        return {"error": True, "detail": str(e), "hint": _err_hint(500)}
 
 
 def _safe_role(call):
@@ -61,13 +95,15 @@ def _safe_role(call):
     try:
         data = call()
     except MwtApiError as e:
-        return {"error": True, "status": e.status, "detail": e.payload, "url": e.url}
+        return {"error": True, "status": e.status, "detail": e.payload, "url": e.url,
+                "hint": _err_hint(e.status)}
     except Exception as e:  # noqa: BLE001 - frontera del MCP: nunca propagar crudo
-        return {"error": True, "detail": str(e)}
+        return {"error": True, "detail": str(e), "hint": _err_hint(500)}
     try:
         user = get_identity_user()
     except Exception as e:  # noqa: BLE001 - sin perfil no se puede redactar con seguridad
-        return {"error": True, "detail": f"No se pudo resolver identidad para redactar: {e}"}
+        return {"error": True, "detail": f"No se pudo resolver identidad para redactar: {e}",
+                "hint": "Verifica que el gateway propague la identidad del usuario (X-Forwarded-User-*)."}
     return redact_for_user(data, user)
 
 
@@ -306,44 +342,86 @@ def _project(campos: str | None, data: Any) -> Any:
 # un diagnóstico claro con `ok:false` y la razón.
 @mcp.tool()
 def mwt_health(timeout: float | None = None) -> Any:
-    """Diagnóstico de conectividad y autenticación del MCP (NO toca datos).
+    """Diagnóstico de conectividad, autenticación y estado del backend (NO toca datos).
 
-    Comprueba que el servidor MCP alcanza al backend y que el token de
-    identidad (Servicio o usuario vía token exchange) sigue siendo válido.
-    Devuelve `{ok, api_base, http_status, latency_ms, message}`.
+    Comprueba que el servidor MCP alcanza al backend, que el token de identidad
+    (Servicio o usuario vía token exchange) sigue siendo válido, y el estado de
+    DB/Redis (endpoint `/api/auth/system-health/`, Ola 3.7 · D1).
+    Devuelve `{ok, api_base, http_status, latency_ms, token, db, redis, message}`.
     Útil antes de una sesión larga para detectar lentitud, token expirado o
-    red caída. No consume datos de negocio (usa un endpoint saludable)."""
+    red caída. No consume datos de negocio."""
     import time as _time
 
-    # healthz no requiere auth pero existe claramente en storage; es un GET
-    # barato que valida red + procesado del backend sin datos de dominio.
     t0 = _time.monotonic()
+    base_status = None
+    base_ok = False
     try:
         data = api.get("storage/healthz/")
+        base_status = 200
+        base_ok = True
         elapsed_ms = int((_time.monotonic() - t0) * 1000)
     except MwtApiError as e:
+        base_status = e.status
+        base_ok = False
+        elapsed_ms = int((_time.monotonic() - t0) * 1000)
         return {
             "ok": False,
             "api_base": settings.api_base,
             "http_status": e.status,
-            "latency_ms": int((_time.monotonic() - t0) * 1000),
+            "latency_ms": elapsed_ms,
+            "token": None,
             "message": f"Backend respondió {e.status}. {str(e)[:200]}",
+            "hint": _err_hint(e.status),
             "detail": e.payload if isinstance(e.payload, str) else None,
         }
     except Exception as e:  # noqa: BLE001
+        elapsed_ms = int((_time.monotonic() - t0) * 1000)
         return {
             "ok": False,
             "api_base": settings.api_base,
             "http_status": None,
-            "latency_ms": int((_time.monotonic() - t0) * 1000),
+            "latency_ms": elapsed_ms,
+            "token": None,
             "message": f"Sin conexión al backend: {e}",
         }
 
+    # Estado del token: GET /auth/me/ (401 si expiró/revocado).
+    token_ok = None
+    token_role = None
+    t1 = _time.monotonic()
+    try:
+        me = api.get("auth/me/")
+        token_ok = isinstance(me, dict) and not me.get("error")
+        if isinstance(me, dict):
+            token_role = me.get("role") or me.get("role_slug")
+    except MwtApiError as e:
+        token_ok = False
+        token_role = None
+
+    # Estado de DB/Redis: GET /api/auth/system-health/.
+    sys_health = None
+    try:
+        sys_health = api.get("auth/system-health/")
+        if not isinstance(sys_health, dict) or sys_health.get("error"):
+            sys_health = None
+    except Exception:  # noqa: BLE001 - diagnóstico opcional
+        sys_health = None
+
+    out = {
+        "ok": bool(base_ok and token_ok),
+        "api_base": settings.api_base,
+        "http_status": base_status,
+        "latency_ms": elapsed_ms,
+        "token_valid": token_ok,
+        "token_role": token_role,
+        "db": bool(sys_health and sys_health.get("db")),
+        "redis": bool(sys_health and sys_health.get("redis")),
+        "system_health": sys_health,
+        "message": "backend accesible, token válido" if base_ok and token_ok else "revisar token",
+    }
     if isinstance(data, dict):
-        return {"ok": True, "api_base": settings.api_base, "http_status": 200,
-                "latency_ms": elapsed_ms, "healthz": data, "message": "backend accesible"}
-    return {"ok": True, "api_base": settings.api_base, "http_status": 200,
-            "latency_ms": elapsed_ms, "message": "backend accesible"}
+        out["healthz"] = data
+    return out
 
 
 # Ola 3.6 · D2 — diagnóstico de scope del usuario conectado (quién soy + qué
@@ -483,9 +561,10 @@ def cliente_listar(
 
 
 @mcp.tool()
-def cliente_obtener(cliente_id: str) -> Any:
-    """Obtiene el detalle completo de un cliente por su id (UUID)."""
-    return _safe_role_read(lambda: api.get(f"clientes/{cliente_id}/"), "cliente_obtener")
+def cliente_obtener(cliente_id: str, campos: str | None = None) -> Any:
+    """Obtiene el detalle completo de un cliente por su id (UUID).
+    `campos`: lista separada por comas para proyectar solo esos atributos."""
+    return _project(campos, _safe_role_read(lambda: api.get(f"clientes/{cliente_id}/"), "cliente_obtener"))
 
 
 @mcp.tool()
@@ -499,6 +578,9 @@ def cliente_crear(datos: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_cliente_datos(datos)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Revisa la lista de campos permitidos de cliente_crear."}
     return _safe_role(lambda: api.post("clientes/", datos))
 
 
@@ -508,6 +590,9 @@ def cliente_editar(cliente_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_cliente_cambios(cambios)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía solo campos conocidos de cliente (ej. razon_social, estado)."}
     return _safe_role(lambda: api.patch(f"clientes/{cliente_id}/", cambios))
 
 
@@ -548,10 +633,11 @@ def producto_listar(
 
 
 @mcp.tool()
-def producto_obtener(producto_id: str) -> Any:
+def producto_obtener(producto_id: str, campos: str | None = None) -> Any:
     """Detalle completo de un producto, incluyendo `especificaciones`
-    (tallas, client_prices, ncm) y precios (precio_lista, precio_distribuidor, costo_estandar)."""
-    return _safe_role(lambda: api.get(f"productos/{producto_id}/"))
+    (tallas, client_prices, ncm) y precios (precio_lista, precio_distribuidor, costo_estandar).
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    return _project(campos, _safe_role(lambda: api.get(f"productos/{producto_id}/")))
 
 
 @mcp.tool()
@@ -568,6 +654,9 @@ def producto_crear(datos: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_producto_datos(datos)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Revisa la lista de campos permitidos de producto_crear."}
     return _safe_role(lambda: api.post("productos/", datos))
 
 
@@ -578,6 +667,9 @@ def producto_editar(producto_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_producto_cambios(cambios)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía solo campos conocidos de producto (ej. precio_lista, estado)."}
     return _safe_role(lambda: api.patch(f"productos/{producto_id}/", cambios))
 
 
@@ -632,9 +724,10 @@ def oc_listar(
 
 
 @mcp.tool()
-def oc_obtener(oc_id: str) -> Any:
-    """Detalle de una OC (acepta UUID o código, p.ej. PO-2026-04100)."""
-    return _safe_role(lambda: api.get(f"ocs/{oc_id}/"))
+def oc_obtener(oc_id: str, campos: str | None = None) -> Any:
+    """Detalle de una OC (acepta UUID o código, p.ej. PO-2026-04100).
+    `campos`: lista separada por comas para proyectar solo esos atributos."""
+    return _project(campos, _safe_role(lambda: api.get(f"ocs/{oc_id}/")))
 
 
 @mcp.tool()
@@ -645,6 +738,9 @@ def oc_editar(oc_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_cambios(cambios, label="cambios de OC", allowed_keys=_OC_KEYS)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía solo campos conocidos de OC (ej. brand_id, estado)."}
     return _safe_role(lambda: api.patch(f"ocs/{oc_id}/", cambios))
 
 
@@ -747,9 +843,10 @@ def expediente_buscar(
 
 
 @mcp.tool()
-def expediente_lineas(expediente_id: str) -> Any:
-    """Líneas (SKU/talla/cantidad/precios) de un expediente."""
-    return _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas")
+def expediente_lineas(expediente_id: str, campos: str | None = None) -> Any:
+    """Líneas (SKU/talla/cantidad/precios) de un expediente.
+    `campos`: lista separada por comas para proyectar solo esos atributos."""
+    return _project(campos, _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas"))
 
 
 @mcp.tool()
@@ -898,6 +995,9 @@ def expediente_editar(expediente_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_cambios(cambios, label="cambios de expediente", allowed_keys=_EXPEDIENTE_KEYS)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía solo campos conocidos de expediente (ej. brand_id, estado)."}
     return _safe_role(lambda: api.patch(f"expedientes/{expediente_id}/", cambios))
 
 
@@ -913,9 +1013,10 @@ def expediente_eliminar(expediente_id: str) -> Any:
 
 
 @mcp.tool()
-def expediente_edit_full_get(expediente_id: str) -> Any:
-    """Lee la edición GENERAL del expediente (todas las líneas y términos)."""
-    return _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/edit-full/"), "expediente_edit_full_get")
+def expediente_edit_full_get(expediente_id: str, campos: str | None = None) -> Any:
+    """Lee la edición GENERAL del expediente (todas las líneas y términos).
+    `campos`: lista separada por comas para proyectar solo esos atributos."""
+    return _project(campos, _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/edit-full/"), "expediente_edit_full_get"))
 
 
 @mcp.tool()
@@ -928,6 +1029,9 @@ def expediente_edit_full_patch(expediente_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_cambios(cambios, label="cambios de edit-full", allow_empty=False)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía al menos un campo (operating_company_id, forma_pago, lines_*)."}
     return _safe_role(lambda: api.patch(f"expedientes/{expediente_id}/edit-full/", cambios))
 
 
@@ -1053,6 +1157,9 @@ def documento_editar(documento_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_cambios(cambios, label="cambios de documento", allowed_keys=_DOCUMENTO_KEYS)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía solo campos conocidos de documento (ej. codigo, kind)."}
     return _safe_role(lambda: api.patch(f"documentos/{documento_id}/", cambios))
 
 
@@ -1105,9 +1212,10 @@ def sap_upsert(
 
 
 @mcp.tool()
-def sap_obtener(expediente_id: str, sap_id: str) -> Any:
-    """Detalle del SAP (líneas, términos, valores MWT/cliente) — editor por-SAP."""
-    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/sap/{sap_id}/"))
+def sap_obtener(expediente_id: str, sap_id: str, campos: str | None = None) -> Any:
+    """Detalle del SAP (líneas, términos, valores MWT/cliente) — editor por-SAP.
+    `campos`: lista separada por comas para proyectar solo esos atributos."""
+    return _project(campos, _safe_role(lambda: api.get(f"expedientes/{expediente_id}/sap/{sap_id}/")))
 
 
 @mcp.tool()
@@ -1117,6 +1225,9 @@ def sap_editar(expediente_id: str, sap_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_cambios(cambios, label="cambios de SAP", allowed_keys=_SAP_KEYS, allow_empty=False)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía al menos un campo de SAP (sap, fecha, valores…)."}
     return _safe_role(lambda: api.patch(f"expedientes/{expediente_id}/sap/{sap_id}/", cambios))
 
 
@@ -1258,9 +1369,9 @@ def nodo_listar(tipo: str | None = None, pais: str | None = None, status: str | 
 
 
 @mcp.tool()
-def nodo_obtener(nodo_id: str) -> Any:
-    """Detalle de un nodo."""
-    return _safe_role(lambda: api.get(f"nodos/{nodo_id}/"))
+def nodo_obtener(nodo_id: str, campos: str | None = None) -> Any:
+    """Detalle de un nodo. `campos`: lista separada por comas para proyectar."""
+    return _project(campos, _safe_role(lambda: api.get(f"nodos/{nodo_id}/")))
 
 
 @mcp.tool()
@@ -1270,6 +1381,9 @@ def nodo_crear(datos: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_nodo_datos(datos)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Revisa la lista de campos permitidos de nodo_crear."}
     return _safe_role(lambda: api.post("nodos/", datos))
 
 
@@ -1279,6 +1393,9 @@ def nodo_editar(nodo_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_nodo_cambios(cambios)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía solo campos conocidos de nodo (ej. nombre, status)."}
     return _safe_role(lambda: api.patch(f"nodos/{nodo_id}/", cambios))
 
 
@@ -1437,10 +1554,10 @@ def transferencia_listar(origen: str | None = None, destino: str | None = None, 
 
 
 @mcp.tool()
-def transferencia_obtener(transferencia_id: str) -> Any:
+def transferencia_obtener(transferencia_id: str, campos: str | None = None) -> Any:
     """Detalle de un movimiento (acepta UUID o código TRF-...), con líneas, eventos,
-    documentos y cost_lines."""
-    return _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/"), "transferencia_obtener")
+    documentos y cost_lines. `campos`: lista separada por comas para proyectar."""
+    return _project(campos, _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/"), "transferencia_obtener"))
 
 
 @mcp.tool()
@@ -1507,6 +1624,9 @@ def transferencia_editar(transferencia_id: str, cambios: dict) -> Any:
     g = _wguard()
     if g:
         return g
+    _verr = validate_cambios(cambios, label="cambios de transferencia", allowed_keys=_TRANSFERENCIA_KEYS)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía solo campos conocidos de transferencia (ej. eta, notes, value_usd)."}
     return _safe_role(lambda: api.patch(f"transferencias/{transferencia_id}/", cambios))
 
 
@@ -1544,9 +1664,10 @@ def transferencia_cancelar(transferencia_id: str, notes: str | None = None) -> A
 
 # --- Costos / impuestos / gastos del movimiento -----------------------------
 @mcp.tool()
-def transfer_costos_listar(transferencia_id: str) -> Any:
-    """Lista las líneas de costo (DUA/impuestos/gastos) de un movimiento."""
-    return _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/cost-lines/"), "transfer_costos_listar")
+def transfer_costos_listar(transferencia_id: str, campos: str | None = None) -> Any:
+    """Lista las líneas de costo (DUA/impuestos/gastos) de un movimiento.
+    `campos`: lista separada por comas para proyectar solo esos atributos."""
+    return _project(campos, _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/cost-lines/"), "transfer_costos_listar"))
 
 
 @mcp.tool()
@@ -1602,6 +1723,9 @@ def transfer_costo_editar(transferencia_id: str, cost_id: str, cambios: dict) ->
     g = _wguard()
     if g:
         return g
+    _verr = validate_cambios(cambios, label="cambios de línea de costo", allow_empty=False)
+    if _verr:
+        return {"error": True, "detail": _verr, "hint": "Envía al menos un campo (kind, amount, label, currency…)."}
     return _safe_role(lambda: api.patch(f"transferencias/{transferencia_id}/cost-lines/{cost_id}/", cambios))
 
 
@@ -1629,9 +1753,10 @@ def transfer_artefacto_crear(transferencia_id: str, template_id: int, template_t
 
 # --- Landed cost / factura / remisión ---------------------------------------
 @mcp.tool()
-def transfer_liquidacion_preview(transferencia_id: str) -> Any:
-    """Preview del landed cost (no persiste): FOB, costos extra, costo aterrizado por línea."""
-    return _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/liquidation_report/"), "transfer_liquidacion_preview")
+def transfer_liquidacion_preview(transferencia_id: str, campos: str | None = None) -> Any:
+    """Preview del landed cost (no persiste): FOB, costos extra, costo aterrizado por línea.
+    `campos`: lista separada por comas para proyectar solo esos atributos."""
+    return _project(campos, _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/liquidation_report/"), "transfer_liquidacion_preview"))
 
 
 @mcp.tool()
@@ -1701,9 +1826,10 @@ def pago_listar(expediente_id: str | None = None, estado: str | None = None, tra
 
 
 @mcp.tool()
-def pago_obtener(pago_id: str) -> Any:
-    """Detalle de un pago, incluyendo aplicaciones, evidencia y veredicto IA."""
-    return _safe_role_read(lambda: api.get(f"finance/payments/{pago_id}/"), "pago_obtener")
+def pago_obtener(pago_id: str, campos: str | None = None) -> Any:
+    """Detalle de un pago, incluyendo aplicaciones, evidencia y veredicto IA.
+    `campos`: lista separada por comas para proyectar solo esos atributos."""
+    return _project(campos, _safe_role_read(lambda: api.get(f"finance/payments/{pago_id}/"), "pago_obtener"))
 
 
 @mcp.tool()

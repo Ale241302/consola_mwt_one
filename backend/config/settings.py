@@ -199,6 +199,7 @@ REST_FRAMEWORK = {
         "mcp-token": "6/minute",
         "mcp_audit": "120/minute",
         "mcp_diag": "10/minute",
+        "mcp_health": "30/minute",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }

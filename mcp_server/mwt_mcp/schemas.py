@@ -225,5 +225,125 @@ def _first_err(e: Any) -> str:
         return str(e)
 
 
+# --------------------------------------------------------------------------- #
+# Ola 3.7 · C2 — validación ligera de dicts opacos (datos/cambios)
+#
+# Los `datos` de creación y los `cambios` de PATCH son dicts que el agente
+# arma al vuelo. Estos validadores NO sustituyen al backend (que es la
+# autoridad), pero detectan pronto errores obvios (dict vacío, campo clave
+# con tipo incorrecto) y documentan el contrato esperado en el error.
+# --------------------------------------------------------------------------- #
+
+# Catálogo de campos permitidos por entidad (whitelist): evita typos que el
+# backend rechazaría con 400 genérico. Un valor None = "cualquier tipo".
+_CLIENTE_KEYS = {
+    "razon_social", "nombre_comercial", "tax_id", "codigo_marluvas",
+    "cedula_juridica", "tipo", "segmento", "parent_id", "pais_iso2",
+    "ciudad", "direccion_entrega", "contacto_nombre", "contacto_email",
+    "canal", "incoterm", "medio_pago", "dias_credito", "moneda",
+    "credito_limit_usd", "comision_pct", "estado", "nodo_asignado_id",
+    "responsable_id",
+}
+_PRODUCTO_KEYS = {
+    "sku", "nombre", "marca_id", "categoria", "unidad", "costo_estandar",
+    "precio_lista", "precio_mwt", "hs_code", "pais_origen_iso2", "estado",
+    "colores", "tallas", "especificaciones", "descripcion",
+}
+_NODO_KEYS = {
+    "tipo", "nombre", "codigo", "pais_iso2", "ciudad", "direccion",
+    "status", "operador_id", "propietario_id", "capacidad", "metadata",
+    "parent_id",
+}
+_OC_KEYS = {
+    "brand_id", "proforma", "sap", "display_label", "proveedor_id",
+    "estado", "moneda", "client_id", "codigo",
+}
+_EXPEDIENTE_KEYS = {
+    "brand_id", "modo_operacion", "freight_mode", "dispatch_mode",
+    "incoterm", "forma_pago", "operating_company_id", "credit_days",
+    "credit_days_mwt", "credit_days_cliente", "moneda", "po_number",
+    "estado", "origin", "destination",
+}
+_SAP_KEYS = {"sap", "fecha", "fecha_fabricacion", "fecha_embarque", "eta",
+             "observaciones", "estado", "valores"}
+_DOCUMENTO_KEYS = {"codigo", "kind", "titulo", "notas", "fecha", "storage_url"}
+_TRANSFERENCIA_KEYS = {"origen", "destino", "tipo", "fecha_programada", "notas",
+                       "responsable_id", "nodo_origen_id", "nodo_destino_id",
+                       "estado", "legacy"}
+_NODO_ARTEFACTO_KEYS = {"tipo", "nombre", "codigo", "titulo", "estado",
+                        "data", "payload", "publicado", "metadata"}
+
+
+def _validate_dict(
+    value: Any,
+    *,
+    label: str,
+    allowed_keys: set[str] | None = None,
+    required: set[str] | None = None,
+    allow_empty: bool = False,
+) -> Optional[str]:
+    """Valida un dict opaco de creación/edición. Devuelve None si OK."""
+    if not _HAVE_PYDANTIC:
+        return None
+    if not isinstance(value, dict):
+        return f"{label} debe ser un objeto (dict)."
+    if not value and not allow_empty:
+        return f"{label} no puede estar vacío. Envía al menos un campo."
+    if allowed_keys:
+        desconocidas = set(value) - allowed_keys
+        if desconocidas:
+            top = ", ".join(sorted(desconocidas)[:5])
+            return (
+                f"{label} tiene campo(s) no reconocido(s): {top}. "
+                f"Permitidos: {', '.join(sorted(allowed_keys)[:12])}…"
+            )
+    if required:
+        faltan = [k for k in required if k not in value or value.get(k) in (None, "")]
+        if faltan:
+            return f"{label} requiere: {', '.join(faltan)}."
+    return None
+
+
+def validate_cliente_datos(datos: Any) -> Optional[str]:
+    """Validación ligera de `datos` de cliente_crear (C2)."""
+    return _validate_dict(datos, label="datos de cliente", allowed_keys=_CLIENTE_KEYS,
+                          required={"razon_social"})
+
+
+def validate_cliente_cambios(cambios: Any) -> Optional[str]:
+    """Validación ligera de `cambios` de cliente_editar (C2)."""
+    return _validate_dict(cambios, label="cambios de cliente", allowed_keys=_CLIENTE_KEYS,
+                          allow_empty=False)
+
+
+def validate_producto_datos(datos: Any) -> Optional[str]:
+    """Validación ligera de `datos` de producto_crear (C2)."""
+    return _validate_dict(datos, label="datos de producto", allowed_keys=_PRODUCTO_KEYS,
+                          required={"sku", "nombre"})
+
+
+def validate_producto_cambios(cambios: Any) -> Optional[str]:
+    """Validación ligera de `cambios` de producto_editar (C2)."""
+    return _validate_dict(cambios, label="cambios de producto", allowed_keys=_PRODUCTO_KEYS)
+
+
+def validate_nodo_datos(datos: Any) -> Optional[str]:
+    """Validación ligera de `datos` de nodo_crear (C2)."""
+    return _validate_dict(datos, label="datos de nodo", allowed_keys=_NODO_KEYS,
+                          required={"tipo", "nombre"})
+
+
+def validate_nodo_cambios(cambios: Any) -> Optional[str]:
+    """Validación ligera de `cambios` de nodo_editar (C2)."""
+    return _validate_dict(cambios, label="cambios de nodo", allowed_keys=_NODO_KEYS)
+
+
+def validate_cambios(cambios: Any, label: str = "cambios", allowed_keys: set[str] | None = None) -> Optional[str]:
+    """Validador genérico para PATCH (oc_editar/expediente_editar/sap_editar/
+    documento_editar/transferencia_editar/nodo_editar/artefacto_editar)."""
+    return _validate_dict(cambios, label=label, allowed_keys=allowed_keys,
+                          allow_empty=False)
+
+
 def pydantic_available() -> bool:
     return bool(_HAVE_PYDANTIC)
