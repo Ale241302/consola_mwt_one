@@ -140,8 +140,9 @@ Nunca strings literales en JSX para copy de UI: siempre `t('clave.de.texto')`.
 
 ## Tools (MCP)
 
-La operación se expone como tools MCP desde `mcp_server/` (FastMCP, ~88 tools sobre
-la API REST). Prefiere las tools MCP `mwt.*` para leer/mutar datos de negocio
+La operación se expone como tools MCP desde `mcp_server/` (FastMCP, 110 tools sobre
+la API REST, redactadas por rol y auditadas en `core.mcp_audit`). Prefiere las
+tools MCP `mwt.*` para leer/mutar datos de negocio
 (expedientes, clientes, productos, inventario, pagos) en vez de tocar la API a mano.
 El servidor se lanza con `python -m mwt_mcp` (transporte stdio por defecto) y
 requiere `MWT_API_BASE` + `MWT_MCP_TOKEN` (token de servicio de larga vida).

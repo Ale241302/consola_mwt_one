@@ -25,7 +25,7 @@ propagada (acceso directo / stdio).
                                         │                            │
                                         ▼                            ▼
                               ┌──────────────────────────────────────────────┐
-                              │  Servidor MCP (mwt_mcp/server.py, 106 tools)  │
+                              │  Servidor MCP (mwt_mcp/server.py, 110 tools)  │
                               │  · RBAC por rol: tool_rbac.py (list_tools)     │
                               │  · Redacción por rol: redact.py (_safe_role)   │
                               │  · Auditoría durable: core.mcp_audit           │
@@ -34,7 +34,7 @@ propagada (acceso directo / stdio).
 ```
 
 **Capas de defensa (defensa en profundidad):**
-1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 106 tools por
+1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 110 tools por
    `(módulo, acción)` de la matriz `core.roles.permissions`. Fail-closed.
 2. **CAPA 2 — Redacción por rol:** `redact.py` oscurece campos CEO_ONLY
    (costos/margen/comisiones/crédito/precio MWT) en la respuesta, aunque la
@@ -43,7 +43,7 @@ propagada (acceso directo / stdio).
 
 ---
 
-## 1. Qué puede hacer (106 herramientas)
+## 1. Qué puede hacer (110 herramientas)
 
 | Dominio      | Herramientas                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------------------- |
@@ -67,7 +67,7 @@ propagada (acceso directo / stdio).
 
 ### 1.1 Filtrado de tools por rol (RBAC) y fail-closed
 
-- **1 solo servidor MCP** (`mwt-one`) con las 106 tools. No se parte en 3
+- **1 solo servidor MCP** (`mwt-one`) con las 110 tools. No se parte en 3
   dominios; la reducción de contexto se logra ocultando al agente las tools que
   su rol no puede usar (`mcp_server/mwt_mcp/tool_rbac.py`).
 - `list_tools` consulta el perfil del usuario (rol + `permissions` de
@@ -90,7 +90,7 @@ consola). Como referencia operativa, los roles típicos:
 
 | Rol | Qué ve | Herramientas típicas | Redacción aplicada |
 |---|---|---|---|
-| **superadmin / admin / ceo** | Todo | Las 106 tools según la matriz configurada | Ninguna (acceso total) |
+| **superadmin / admin / ceo** | Todo | Las 110 tools según la matriz configurada | Ninguna (acceso total) |
 | **manager** | Operación + finanzas del área | expedientes, transferencias, pagos, clientes, productos | Sí: costos/margen/comisiones/precio MWT → `***` |
 | **operator** | Operación día a día (estados, líneas, docs) | expedientes, documentos, SAP, nodos, inventario | Sí: costos/margen/comisiones |
 | **finance** | Pagos/crédito | pagos, cobros, transferencias | Sí: comisiones/margen |

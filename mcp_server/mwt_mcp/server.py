@@ -40,7 +40,8 @@ from .schemas import (
 )
 from .tool_rbac import RbacFastMCP, TOOL_MODULES, allowed_tool_names
 
-# Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con las 105 tools.
+# Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con 110 tools
+# (106 @mcp.tool + 4 de visualización vía mcp.add_tool).
 # El filtrado por rol del usuario conectado se hace en list_tools vía
 # RbacFastMCP (tool_rbac.py), NO partiendo el server en 3 dominios.
 mcp = RbacFastMCP("mwt-one")
@@ -568,6 +569,7 @@ def cliente_obtener(cliente_id: str, campos: str | None = None) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def cliente_crear(datos: dict) -> Any:
     """Crea un cliente. `datos` admite: razon_social, nombre_comercial, tax_id,
     codigo_marluvas (10 dígitos), cedula_juridica, tipo (B2B/CONSUMIDOR/DISTRIBUIDOR),
@@ -585,6 +587,7 @@ def cliente_crear(datos: dict) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def cliente_editar(cliente_id: str, cambios: dict) -> Any:
     """Edita un cliente (PATCH parcial). `cambios` = subconjunto de los campos de cliente_crear."""
     g = _wguard()
@@ -641,6 +644,7 @@ def producto_obtener(producto_id: str, campos: str | None = None) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def producto_crear(datos: dict) -> Any:
     """Crea un producto. `datos`: sku, nombre, marca_id, categoria, unidad ("PAR" para
     calzado), costo_estandar, precio_lista, precio_mwt, hs_code, pais_origen_iso2 ("BR"),
@@ -661,6 +665,7 @@ def producto_crear(datos: dict) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def producto_editar(producto_id: str, cambios: dict) -> Any:
     """Edita un producto (PATCH). `cambios` = subconjunto de campos de producto_crear.
     Para cambiar precios por cliente, edita `especificaciones.client_prices`."""
@@ -689,6 +694,7 @@ def tallas_listar(tipo_producto: str = "calzado") -> Any:
 
 
 @mcp.tool()
+@write_tool
 def producto_alias_crear(producto_id: str, cliente_id: str, alias: str, cliente_sku: str | None = None, notas: str | None = None) -> Any:
     """Registra el part-number del cliente → producto MWT (upsert) para que el matching
     no falle la próxima vez. `alias`: el código base del cliente sin la talla
@@ -731,6 +737,7 @@ def oc_obtener(oc_id: str, campos: str | None = None) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def oc_editar(oc_id: str, cambios: dict) -> Any:
     """Edita campos de cabecera de una OC (PATCH parcial). `cambios` admite:
     brand_id, proforma (código limpio "2228-2026"), sap, display_label, proveedor_id,
@@ -862,6 +869,7 @@ def expediente_resolve_oc_preview(client_id: str, lines: list) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def expediente_crear(
     client_id: str,
     ocr_payload: dict | None = None,
@@ -961,6 +969,7 @@ def expedientes_crear_lote(items: list) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def lineas_actualizar_precios(updates: list) -> Any:
     """Fija los precios EXACTOS de las líneas (los leídos de la OC/proforma, no los
     de la BD). `updates`: [{linea_id, unit_price_mwt, unit_price_client}].
@@ -972,6 +981,7 @@ def lineas_actualizar_precios(updates: list) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def expediente_apply_pronto_pago(expediente_id: str, plazo_days: int, covered_pairs: list | None = None) -> Any:
     """Aplica el descuento de pronto pago al precio CLIENTE de un expediente.
     `plazo_days` ∈ {8,30,60,90,120}. `covered_pairs`: opcional, [{sku, size}] para acotar.
@@ -984,6 +994,7 @@ def expediente_apply_pronto_pago(expediente_id: str, plazo_days: int, covered_pa
 
 
 @mcp.tool()
+@write_tool
 def expediente_editar(expediente_id: str, cambios: dict) -> Any:
     """Edita campos de CABECERA del expediente (PATCH parcial /expedientes/{id}/). Usa esto
     para lo que `expediente_edit_full_patch` NO cubre: `brand_id` (UUID de `marca_listar`),
@@ -1002,6 +1013,7 @@ def expediente_editar(expediente_id: str, cambios: dict) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def expediente_eliminar(expediente_id: str) -> Any:
     """Borra (soft-delete) un expediente: DELETE /expedientes/{id}/. Si era el único
     expediente activo de su OC, la OC también se borra. Úsalo para expedientes FANTASMA
@@ -1020,6 +1032,7 @@ def expediente_edit_full_get(expediente_id: str, campos: str | None = None) -> A
 
 
 @mcp.tool()
+@write_tool
 def expediente_edit_full_patch(expediente_id: str, cambios: dict) -> Any:
     """Edita OPERADOR/FORMA DE PAGO/LÍNEAS de un expediente (CEO-only). `cambios` admite:
     operating_company_id, forma_pago, payment_days, client_id, lines_added [{producto_id,sku,talla,qty}],
@@ -1037,6 +1050,7 @@ def expediente_edit_full_patch(expediente_id: str, cambios: dict) -> Any:
 
 # --- Documentos -------------------------------------------------------------
 @mcp.tool()
+@write_tool
 def documento_subir(
     file_path: str | None = None,
     kind: str = "OTRO",
@@ -1089,6 +1103,7 @@ def documento_listar(
 
 
 @mcp.tool()
+@write_tool
 def documento_eliminar(documento_id: str) -> Any:
     """Elimina un documento por su id (DELETE /documentos/{id}/). Úsalo para borrar
     registros ROTOS/VACÍOS (storage_url=null o file_size_bytes=0) antes de re-subir el archivo bueno."""
@@ -1151,6 +1166,7 @@ def documento_descargar(documento_id: str, ttl_minutes: int | None = None) -> An
 
 
 @mcp.tool()
+@write_tool
 def documento_editar(documento_id: str, cambios: dict) -> Any:
     """Edita campos de un documento (PATCH parcial /documentos/{id}/).
     `cambios` admite: codigo (ej. "504990"), kind, audience, etc."""
@@ -1165,6 +1181,7 @@ def documento_editar(documento_id: str, cambios: dict) -> Any:
 
 # --- SAP --------------------------------------------------------------------
 @mcp.tool()
+@write_tool
 def sap_analizar(expediente_id: str, file_path: str) -> Any:
     """Pre-analiza un archivo de confirmación SAP (Excel/PDF) contra las líneas del
     expediente: autocompleta sap_id, detecta discrepancias. No persiste nada."""
@@ -1175,6 +1192,7 @@ def sap_analizar(expediente_id: str, file_path: str) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def sap_confirmar(
     expediente_id: str,
     sap_id: str,
@@ -1194,6 +1212,7 @@ def sap_confirmar(
 
 
 @mcp.tool()
+@write_tool
 def sap_upsert(
     expediente_id: str,
     sap_id: str,
@@ -1219,6 +1238,7 @@ def sap_obtener(expediente_id: str, sap_id: str, campos: str | None = None) -> A
 
 
 @mcp.tool()
+@write_tool
 def sap_editar(expediente_id: str, sap_id: str, cambios: dict) -> Any:
     """Edita un SAP (CEO-only). `cambios`: operating_company_id, forma_pago, payment_days,
     client_id, lines_added, lines_removed, lines_updated."""
@@ -1232,6 +1252,7 @@ def sap_editar(expediente_id: str, sap_id: str, cambios: dict) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def sap_sincronizar_discrepancias(expediente_id: str, actions: list) -> Any:
     """Aplica acciones de discrepancia SAP. `actions`: [{kind: ADD_LINE|UPDATE_QTY|ATTACH_SAP|NOTIFY_CLIENT,
     sku, talla, qty, unit_price?, line_id?, sap_doc?}]."""
@@ -1243,6 +1264,7 @@ def sap_sincronizar_discrepancias(expediente_id: str, actions: list) -> Any:
 
 # --- Matchmaker / balanceo IA ----------------------------------------------
 @mcp.tool()
+@write_tool
 def match_subir(expediente_id: str, document_type: str, file_path: str) -> Any:
     """Sube un documento (OC/Proforma/SAP) y lo cruza con IA contra las líneas del
     expediente, devolviendo discrepancias. `document_type`: ART-01_OC, ART-02_PROFORMA o ART-04_SAP.
@@ -1255,6 +1277,7 @@ def match_subir(expediente_id: str, document_type: str, file_path: str) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def match_resolver(expediente_id: str, log_id: str, actions: list, note: str | None = None) -> Any:
     """Resuelve un balanceo IA aplicando acciones. `actions`: [{kind: ADD_LINE|UPDATE_QTY|ATTACH_SAP|DELETE_LINE|MANUAL,
     sku, talla, qty, qty_doc?, unit_price?, sap_doc?, line_id?}]."""
@@ -1267,6 +1290,7 @@ def match_resolver(expediente_id: str, log_id: str, actions: list, note: str | N
 
 # --- Fusión -----------------------------------------------------------------
 @mcp.tool()
+@write_tool
 def expediente_fusionar(expediente_ids: list, label: str | None = None) -> Any:
     """Fusiona (agrupa visualmente) 2+ expedientes bajo un fusion_id.
     `expediente_ids`: lista de UUIDs (mínimo 2)."""
@@ -1277,6 +1301,7 @@ def expediente_fusionar(expediente_ids: list, label: str | None = None) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def expediente_fusion_label(fusion_id: str, label: str | None = None) -> Any:
     """Cambia/borra la etiqueta de un grupo de fusión."""
     g = _wguard()
@@ -1286,6 +1311,7 @@ def expediente_fusion_label(fusion_id: str, label: str | None = None) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def expediente_desfusionar(fusion_id: str | None = None, expediente_ids: list | None = None) -> Any:
     """Deshace una fusión por fusion_id o por lista de expediente_ids."""
     g = _wguard()
@@ -1296,6 +1322,7 @@ def expediente_desfusionar(fusion_id: str | None = None, expediente_ids: list | 
 
 # --- Proforma / Factura -----------------------------------------------------
 @mcp.tool()
+@write_tool
 def proforma_generar(expediente_id: str, audience: str = "CLIENT", codigo: str | None = None, payment_days: int | None = None) -> Any:
     """Genera y persiste la proforma del SISTEMA (HTML, código PF-AAAA-NNNN auto). `audience`:
     CLIENT / MWT_INTERNAL / ADMIN_ONLY. ⚠️ Usa las LÍNEAS ACTUALES del expediente: si lo llamas
@@ -1324,6 +1351,7 @@ def factura_payload(expediente_id: str) -> Any:
 
 # --- Estados SAP / pipeline -------------------------------------------------
 @mcp.tool()
+@write_tool
 def expediente_avanzar_estado(expediente_id: str, fase_to: str, note: str | None = None, idempotence_token: str | None = None, documento_id: str | None = None) -> Any:
     """Avanza el expediente/SAP a la siguiente fase. `fase_to`: REGISTRO, PRODUCCION,
     PREPARACION, DESPACHO, TRANSITO, EN_DESTINO o CERRADO. Registra un evento inmutable."""
@@ -1341,6 +1369,7 @@ def expediente_phase_durations_get(expediente_id: str) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def expediente_phase_durations_set(expediente_id: str, phase_durations: dict) -> Any:
     """Edita las fechas/duraciones por fase (CEO-only). `phase_durations`:
     {FASE: dias | null | {start, end}}, p.ej. {"TRANSITO": {"start":"2026-01-01","end":"2026-01-12"}}."""
@@ -1375,6 +1404,7 @@ def nodo_obtener(nodo_id: str, campos: str | None = None) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def nodo_crear(datos: dict) -> Any:
     """Crea un nodo. `datos`: codigo, nombre, tipo (HQ/OFICINA/ALMACEN/HUB), pais_iso2,
     ciudad, direccion, responsable_id, capacidad_m2, operating_company_id, capabilities, status."""
@@ -1388,6 +1418,7 @@ def nodo_crear(datos: dict) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def nodo_editar(nodo_id: str, cambios: dict) -> Any:
     """Edita un nodo (PATCH parcial)."""
     g = _wguard()
@@ -1409,6 +1440,7 @@ def nodo_artefactos_listar(nodo_id: str, template_id: int | None = None, limit: 
 
 
 @mcp.tool()
+@write_tool
 def nodo_artefacto_crear(nodo_id: str, template_id: int, template_title: str, data: dict, structure_snapshot: dict | None = None, lines: list | None = None) -> Any:
     """Agrega un artefacto del Builder a un nodo (AWB/BL, factura comercial, packing, etc.).
 
@@ -1504,6 +1536,7 @@ def inventario_lineas_en_nodo(nodo_id: str, expediente_ids: list | None = None) 
 
 
 @mcp.tool()
+@write_tool
 def recepcion_crear(items: list, cost_lines: list | None = None, recepcion_id: str | None = None) -> Any:
     """Crea una recepción en un nodo asignando productos de expedientes (bulk).
 
@@ -1523,6 +1556,7 @@ def recepcion_crear(items: list, cost_lines: list | None = None, recepcion_id: s
 
 
 @mcp.tool()
+@write_tool
 def inventario_transferir_asignaciones(origin_nodo_id: str, destination_nodo_id: str, items: list, transferencia_id: str | None = None) -> Any:
     """Mueve asignaciones de stock de un nodo a otro. `items`: [{expediente_id, producto_id, talla, qty}].
     `transferencia_id`: opcional, para enlazar el movimiento físico."""
@@ -1561,6 +1595,7 @@ def transferencia_obtener(transferencia_id: str, campos: str | None = None) -> A
 
 
 @mcp.tool()
+@write_tool
 def transferencia_crear(
     origen_id: str,
     destino_id: str,
@@ -1591,6 +1626,7 @@ def transferencia_crear(
     return _safe_role(lambda: api.post("transferencias/", body))
 
 
+@write_tool
 def _transfer_action(transferencia_id: str, action: str, body: dict | None = None):
     g = _wguard()
     if g:
@@ -1618,6 +1654,7 @@ def transferencia_despachar(transferencia_id: str, notes: str | None = None) -> 
 
 
 @mcp.tool()
+@write_tool
 def transferencia_editar(transferencia_id: str, cambios: dict) -> Any:
     """Edita campos del movimiento (PATCH): eta, dispatched_at, received_at, ref_tracking,
     value_usd, notes, context_data (AWB/BL van en context_data: bl_awb_number/awb_bl_number)."""
@@ -1671,6 +1708,7 @@ def transfer_costos_listar(transferencia_id: str, campos: str | None = None) -> 
 
 
 @mcp.tool()
+@write_tool
 def transfer_costo_agregar(
     transferencia_id: str,
     kind: str,
@@ -1718,6 +1756,7 @@ def transfer_costo_agregar(
 
 
 @mcp.tool()
+@write_tool
 def transfer_costo_editar(transferencia_id: str, cost_id: str, cambios: dict) -> Any:
     """Edita una línea de costo del movimiento (PATCH parcial)."""
     g = _wguard()
@@ -1730,6 +1769,7 @@ def transfer_costo_editar(transferencia_id: str, cost_id: str, cambios: dict) ->
 
 
 @mcp.tool()
+@write_tool
 def transfer_costo_eliminar(transferencia_id: str, cost_id: str) -> Any:
     """Elimina (soft) una línea de costo del movimiento."""
     g = _wguard()
@@ -1739,6 +1779,7 @@ def transfer_costo_eliminar(transferencia_id: str, cost_id: str) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def transfer_artefacto_crear(transferencia_id: str, template_id: int, template_title: str, data: dict, structure_snapshot: dict | None = None, lines: list | None = None) -> Any:
     """Agrega un artefacto del Builder (AWB/BL, factura, etc.) a un movimiento.
     Mismo formato de `data` (indexado por field.id; ver `nodo_artefacto_crear`),
@@ -1760,6 +1801,7 @@ def transfer_liquidacion_preview(transferencia_id: str, campos: str | None = Non
 
 
 @mcp.tool()
+@write_tool
 def transfer_liquidar(transferencia_id: str, method: str = "BY_VALUE") -> Any:
     """Liquida y persiste el landed cost. `method`: BY_VALUE (default), BY_QUANTITY o BY_VOLUME.
     El motor **excluye el IVA** del landed (crédito fiscal acreditable; va aparte en
@@ -1785,6 +1827,7 @@ def transfer_notas_listar(transferencia_id: str) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def transfer_nota_crear(transferencia_id: str, text: str, actor_name: str | None = None) -> Any:
     """Agrega una nota al movimiento."""
     g = _wguard()
@@ -1845,6 +1888,7 @@ def pago_dry_run(expediente_id: str, monto: float, direction: str, aplicaciones:
 
 
 @mcp.tool()
+@write_tool
 def pago_registrar(
     expediente_id: str,
     monto: float,
@@ -1885,6 +1929,7 @@ def pago_registrar(
 
 
 @mcp.tool()
+@write_tool
 def pago_conciliar(pago_id: str, bank_reference: str | None = None) -> Any:
     """Concilia un pago (botón CONCILIAR): pasa a CONFIRMADO_HUMANO y recién aquí
     impacta saldos y libera crédito. Es la acción que 'aplica' el pago."""
@@ -1895,6 +1940,7 @@ def pago_conciliar(pago_id: str, bank_reference: str | None = None) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def pago_liberar_credito(pago_id: str) -> Any:
     """Libera el crédito de un pago (CEO-only)."""
     g = _wguard()
@@ -1904,6 +1950,7 @@ def pago_liberar_credito(pago_id: str) -> Any:
 
 
 @mcp.tool()
+@write_tool
 def pago_rechazar(pago_id: str, rejection_reason: str, rejection_comment: str | None = None) -> Any:
     """Rechaza un pago (CEO-only). `rejection_reason`: REF_ERRONEA, MONTO_NO_COINCIDE,
     DUPLICADO, COMPROBANTE_INVALIDO, FUERA_DE_PLAZO, CONTRAPARTE_INCORRECTA, OTRO
@@ -1919,6 +1966,7 @@ def pago_rechazar(pago_id: str, rejection_reason: str, rejection_comment: str | 
 # STORAGE — subir el binario de un campo de archivo de artefacto (AWB/BL, factura)
 # =========================================================================== #
 @mcp.tool()
+@write_tool
 def storage_subir_archivo(file_path: str, scope: str = "artifact-field/misc", filename: str | None = None) -> Any:
     """Sube un ARCHIVO a MinIO y devuelve {ok, key, bucket, content_type, size}.
 
