@@ -155,7 +155,10 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "storage_subir_archivo": ("storage", "create"),
     "artefacto_archivo_descargar": ("storage", "download_doc"),
     # ── Visualización (Ola 3.10 · solo lectura) ────────────────────────────
-    "generar_grafico": ("analytics", "view"),
+    # generar_grafico es genérica (chart con datos que el agente ya tiene y que
+    # la capa 2 redacta por rol): se mapea a `dashboard`, presente en todas las
+    # matrices. cashflow/margen/dashboard_resumen son ejecutivos → `analytics`.
+    "generar_grafico": ("dashboard", "view"),
     "dashboard_resumen": ("analytics", "view"),
     "cashflow_chart": ("analytics", "view"),
     "margen_marcas_chart": ("analytics", "view"),

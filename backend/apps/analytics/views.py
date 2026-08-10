@@ -1806,7 +1806,13 @@ class WidgetCatViewSet(viewsets.ReadOnlyModelViewSet):
 class ChartRenderView(APIView):
     """POST /api/analytics/chart-render/ — genera un chart SVG (Ola 3.10)."""
 
-    required_module = "analytics"
+    # El renderizador es "tonto": recibe data ya redactada por el MCP y NO
+    # accede a datos de negocio (no es una fuente de datos). Se protege con
+    # required_action="view" sobre el módulo `dashboard` (presente en todas
+    # las matrices, incl. client_b2b). Los charts de datos ejecutivos
+    # (cashflow/margen) se protegen en SUS endpoints (analytics/cashflow,
+    # analytics/margen_marcas → CEO-only).
+    required_module = "dashboard"
     required_action = "view"
     permission_classes = [IsAuthenticated, RoleBasedPermission]
     throttle_classes = [_ChartRenderThrottle]
