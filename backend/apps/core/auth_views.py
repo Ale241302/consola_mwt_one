@@ -46,6 +46,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from .authentication import MwtServiceTokenAuthentication, ServiceTokenUser
+from .jwt_auth import MwtJWTAuthentication
 
 
 # ---------------------------------------------------------------------
@@ -1030,7 +1031,7 @@ class SystemHealthView(APIView):
     NO expone PII ni datos de negocio.
     """
 
-    authentication_classes = [MwtServiceTokenAuthentication]
+    authentication_classes = [MwtJWTAuthentication, MwtServiceTokenAuthentication]
     permission_classes = [IsAuthenticated]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "mcp_health"
