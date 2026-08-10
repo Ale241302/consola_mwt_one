@@ -2006,3 +2006,10 @@ from .visualization import (  # noqa: E402
     margen_marcas_chart,
 )
 
+# Registro en el server monolito (las funciones viven en visualization.py y
+# no llevan @mcp.tool() para no duplicar la instancia de FastMCP).
+mcp.add_tool(generar_grafico, name="generar_grafico")
+mcp.add_tool(cashflow_chart, name="cashflow_chart")
+mcp.add_tool(margen_marcas_chart, name="margen_marcas_chart")
+mcp.add_tool(dashboard_resumen, name="dashboard_resumen")
+
