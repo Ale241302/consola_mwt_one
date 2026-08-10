@@ -25,7 +25,7 @@ propagada (acceso directo / stdio).
                                         │                            │
                                         ▼                            ▼
                               ┌──────────────────────────────────────────────┐
-                              │  Servidor MCP (mwt_mcp/server.py, 110 tools)  │
+                              │  Servidor MCP (mwt_mcp/server.py, 119 tools)  │
                               │  · RBAC por rol: tool_rbac.py (list_tools)     │
                               │  · Redacción por rol: redact.py (_safe_role)   │
                               │  · Auditoría durable: core.mcp_audit           │
@@ -34,7 +34,7 @@ propagada (acceso directo / stdio).
 ```
 
 **Capas de defensa (defensa en profundidad):**
-1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 110 tools por
+1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 119 tools por
    `(módulo, acción)` de la matriz `core.roles.permissions`. Fail-closed.
 2. **CAPA 2 — Redacción por rol:** `redact.py` oscurece campos CEO_ONLY
    (costos/margen/comisiones/crédito/precio MWT) en la respuesta, aunque la
@@ -43,7 +43,7 @@ propagada (acceso directo / stdio).
 
 ---
 
-## 1. Qué puede hacer (110 herramientas)
+## 1. Qué puede hacer (119 herramientas)
 
 | Dominio      | Herramientas                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------------------- |
@@ -67,7 +67,7 @@ propagada (acceso directo / stdio).
 
 ### 1.1 Filtrado de tools por rol (RBAC) y fail-closed
 
-- **1 solo servidor MCP** (`mwt-one`) con las 110 tools. No se parte en 3
+- **1 solo servidor MCP** (`mwt-one`) con las 119 tools. No se parte en 3
   dominios; la reducción de contexto se logra ocultando al agente las tools que
   su rol no puede usar (`mcp_server/mwt_mcp/tool_rbac.py`).
 - `list_tools` consulta el perfil del usuario (rol + `permissions` de
@@ -90,7 +90,7 @@ consola). Como referencia operativa, los roles típicos:
 
 | Rol | Qué ve | Herramientas típicas | Redacción aplicada |
 |---|---|---|---|
-| **superadmin / admin / ceo** | Todo | Las 110 tools según la matriz configurada | Ninguna (acceso total) |
+| **superadmin / admin / ceo** | Todo | Las 119 tools según la matriz configurada | Ninguna (acceso total) |
 | **manager** | Operación + finanzas del área | expedientes, transferencias, pagos, clientes, productos | Sí: costos/margen/comisiones/precio MWT → `***` |
 | **operator** | Operación día a día (estados, líneas, docs) | expedientes, documentos, SAP, nodos, inventario | Sí: costos/margen/comisiones |
 | **finance** | Pagos/crédito | pagos, cobros, transferencias | Sí: comisiones/margen |
@@ -363,8 +363,8 @@ python -m pytest tests/ -q --no-header -p no:cacheprovider
 
 Cubre: `redact.py` (redacción por rol), `_safe_role` (frontera de errores),
 `tool_rbac.py` (RBAC + fail-closed), `jwt_minter.py` (token exchange
-fail-closed), auditoría durable, contratos (`campos`/hints/schemas) — **61
-tests**.
+fail-closed), auditoría durable, contratos (`campos`/hints/schemas) y el
+motor de presentación — **79 tests**.
 
 CI en GitHub Actions (`.github/workflows/mcp-ci.yml`): compila el paquete,
 corre la suite y verifica el mapeo de tools en cada push/PR que toque
@@ -372,32 +372,63 @@ corre la suite y verifica el mapeo de tools en cada push/PR que toque
 
 ---
 
-## 8. Visualización — charts server-side (Ola 3.10 · sección 0b del plan)
+## 8. Presentación — motor server-side (Ola 3.10 ampliada · 5 categorías)
 
-El MCP deja de ser solo-datos: las tools de visualización devuelven la **URL
-de un SVG renderizado server-side** que la IA puede mostrar en su respuesta
-(patrón `antvis/mcp-server-chart`).
+El MCP deja de ser solo-datos: las tools de presentación entregan el resultado
+en el formato más útil según la pregunta — imagen, tabla renderizada, reporte,
+dashboard o exportación (patrón `antvis/mcp-server-chart` ampliado).
 
-| Tool | Input | Output | Uso |
-|---|---|---|---|
-| `generar_grafico` | `{tipo, data, opciones}` | `{success, image_url, expires_at}` | Genérica: cualquier serie → line/area/bar/pie |
-| `cashflow_chart` | `{semanas?}` | `{success, image_url, data}` | Cashflow proyectado vs real (analytics/cashflow) |
-| `margen_marcas_chart` | `{}` | `{success, image_url, data}` | Margen por marca (CEO-only en backend) |
-| `dashboard_resumen` | `{periodo?, scope?}` | `{kpis, image_urls, resumen}` | KPIs + charts en un call |
+### P1 · Gráficos
 
-**Arquitectura:** el MCP envía los datos al backend `POST /api/analytics/chart-render/`
-(auth + throttle `chart_render` 20/min), que genera el SVG en Python
-(`apps/analytics/chart_svg.py`), lo sube a MinIO (`charts/<uuid>.svg`) y
-devuelve **URL firmada TTL 5 min** (mismo patrón que `storage/signed_url`).
+| Tool | Input | Uso |
+|---|---|---|
+| `generar_grafico` | `{tipo, data, opciones}` | Genérica: cualquier serie → line/area/bar/pie |
+| `cashflow_chart` | `{semanas?}` | Cashflow proyectado vs real (analytics/cashflow) |
+| `margen_marcas_chart` | `{}` | Margen por marca (**CEO-only** en backend) |
+| `aging_chart` | `{}` | Aging de cuentas por cobrar (analytics/aging) |
+| `exposicion_chart` | `{}` | Exposición por cliente (analytics/exposicion_clientes) |
 
-**Seguridad:**
-- **Sin SSRF:** el renderizador recibe SOLO `{tipo, data, opciones}` con
-  opciones en whitelist; nunca URLs ni HTML. Los textos se escapan en el SVG.
-- **Redacción por rol ANTES de renderizar:** `visualization.py` aplica
-  `redact_for_user` a los datos antes de enviarlos (un manager/client_b2b no
-  puede dibujar costos/margen).
-- **CEO-only:** `margen_marcas_chart` hereda el 403 del backend
-  (`analytics/margen_marcas` → `_deny_unless_ceo_admin`).
-- **URLs firmadas:** TTL 5 min, nunca acceso público permanente.
-- **RBAC:** las 4 tools se registran como `(analytics, view)` — la CAPA 1 las
-  filtra por rol igual que el resto.
+### P2 · Tablas
+
+| Tool | Input | Uso |
+|---|---|---|
+| `render_tabla` | `{columnas, filas, titulo?}` | Tabla SVG con branding MWT + `tabla_markdown` |
+
+### P3 · Reportes
+
+| Tool | Input | Uso |
+|---|---|---|
+| `generar_reporte` | `{titulo, secciones, formato}` | Markdown o PDF firmado (TTL 15 min) |
+| `reporte_cobranza` | `{mes, formato?}` | Reporte mensual de cobranza |
+| `reporte_expedientes` | `{periodo, formato?}` | Resumen de expedientes |
+
+### P4 · Dashboards
+
+| Tool | Input | Uso |
+|---|---|---|
+| `dashboard_resumen` | `{periodo?, scope?}` | KPIs + 4 charts en un call |
+| `comparar` | `{metricas, grupo}` | Comparativa por marca/cliente/nodo/mes |
+
+### P5 · Exportaciones
+
+| Tool | Input | Uso |
+|---|---|---|
+| `exportar_xlsx` | `{nombre_archivo, hojas}` | Excel firmado (TTL 15 min) |
+| `exportar_csv` | `{nombre_archivo, columnas, filas}` | CSV firmado |
+
+**Arquitectura:** el MCP envía datos puros al backend `POST /api/presentation/render/`
+(`kind` = chart|tabla|reporte|xlsx|csv; auth + throttle + `required_action=view`).
+El backend genera SVG/PDF/XLSX en Python (`apps/analytics/chart_svg.py`,
+`presentation.py`, `reporte_pdf.py`), lo sube a MinIO y devuelve **URL firmada
+TTL: 5 min imágenes/tablas, 15 min reportes/exportaciones**.
+
+**Seguridad (ampliada):**
+- **Sin SSRF:** el motor recibe SOLO datos puros (nunca URLs ni HTML); opciones
+  y tamaños en whitelist (chart ≤5000 filas, tabla ≤500, hojas ≤5).
+- **Redacción por rol ANTES de renderizar:** `presentation.py` aplica
+  `redact_for_user` a los datos antes de cualquier salida — ningún PNG/PDF/
+  tabla/xlsx puede filtrar costos/margen/comisiones que el rol no ve.
+- **Escape:** todo texto se escapa en SVG/XML/Markdown (previene inyección).
+- **CEO-only:** `margen_marcas_chart` hereda el 403 del backend.
+- **RBAC:** las tools de datos → `(analytics, view)`; las genéricas →
+  `(dashboard, view)` — la CAPA 1 las filtra por rol.

@@ -138,35 +138,47 @@ storage_subir_archivo(...) / artefacto_archivo_descargar(...)
 ncm_listar() / marca_listar() / tallas_listar()   [catálogos para crear]
 ```
 
-### Flujo 9 — Visualización (Ola 3.10 · charts server-side)
+### Flujo 9 — Presentación (Ola 3.10 ampliada · 5 categorías)
 
-Elige el tipo de chart según la pregunta del usuario:
+Elige el **formato de salida** según la pregunta del usuario:
 
-| Pregunta del usuario | Tipo de chart | Tool |
+| Pregunta del usuario | Categoría | Tool |
 |---|---|---|
-| ¿Tendencia a lo largo del tiempo? | `line` / `area` | `cashflow_chart(semanas)` |
-| ¿Comparación entre categorías? | `bar` / `column` | `margen_marcas_chart()` (CEO) |
-| ¿Distribución / composición? | `pie` | `generar_grafico("pie", ...)` |
-| ¿Un gráfico custom con datos que ya tengo? | cualquiera | `generar_grafico(tipo, data, opciones)` |
-| Todo el dashboard en un call | — | `dashboard_resumen(periodo, scope)` |
+| ¿Tendencia a lo largo del tiempo? | P1 Gráficos | `cashflow_chart(semanas)` |
+| ¿Comparación entre categorías/marcas? | P1 Gráficos | `margen_marcas_chart()` (CEO) / `comparar(...)` |
+| ¿Aging / exposición de cartera? | P1 Gráficos | `aging_chart()` / `exposicion_chart()` |
+| ¿Un gráfico custom con datos que ya tengo? | P1 Gráficos | `generar_grafico(tipo, data, opciones)` |
+| ¿Detalle tabular con estilo consistente? | P2 Tablas | `render_tabla(columnas, filas)` |
+| ¿Resumen ejecutivo (Markdown o PDF)? | P3 Reportes | `generar_reporte(titulo, secciones, formato)` |
+| ¿Reporte mensual de cobranza? | P3 Reportes | `reporte_cobranza(mes)` |
+| ¿Resumen de expedientes? | P3 Reportes | `reporte_expedientes(periodo)` |
+| ¿Panorama completo en un call? | P4 Dashboard | `dashboard_resumen(periodo)` |
+| ¿Comparativa entre grupos? | P4 Dashboard | `comparar(metricas, grupo)` |
+| ¿Exportar a Excel / CSV? | P5 Exportaciones | `exportar_xlsx(nombre, hojas)` / `exportar_csv(...)` |
 
 ```
-cashflow_chart(semanas=12)            → {success, image_url, expires_at, data}
-margen_marcas_chart()                 → {success, image_url, data}   (CEO-only)
-generar_grafico("bar",                → {success, image_url}
+generar_grafico("bar",                → {success, image_url, expires_at}
     [{"category":"Marluvas","value":120}],
     {"titulo":"Ventas por marca"})
-dashboard_resumen("30d")              → {kpis, image_urls:{cashflow, margen_marcas}}
+render_tabla([{key,label}], filas)    → {success, image_url, tabla_markdown}
+generar_reporte("R", secciones,
+    formato="pdf")                    → {success, url (TTL 15min), markdown}
+dashboard_resumen("30d")              → {kpis, image_urls:{cashflow, margen,
+                                             aging, exposicion}, resumen_markdown}
+exportar_xlsx("pagos", [hojas])       → {success, download_url (TTL 15min)}
 ```
 
 Reglas:
-- La URL de imagen está firmada con **TTL 5 min** — muéstrala pronto, no la
-  guardes ni la reuses en respuestas posteriores.
-- Los datos se redactan por rol ANTES de renderizar: un rol sin acceso a
-  costos/margen no puede dibujarlos (aunque pase los números).
-- `margen_marcas_chart` falla con 403 para roles no-CEO (igual que el
-  endpoint del backend).
-- Prefiere interpretar los números de `data` además de mostrar la imagen.
+- **Imágenes/tablas**: URL firmada **TTL 5 min**. **Reportes/exportaciones**:
+  **TTL 15 min**. Muéstralas/descárgalas pronto; no las guardes ni reuses.
+- **Los datos se redactan por rol ANTES de renderizar**: ningún PNG/PDF/tabla/
+  xlsx puede filtrar costos/margen/comisiones que el rol no ve.
+- `margen_marcas_chart` falla con 403 para roles no-CEO (backend).
+- `aging_chart`/`exposicion_chart`/`reporte_cobranza` leen `analytics/*`
+  (requieren `analytics.view`); las tools genéricas (`generar_grafico`,
+  `render_tabla`, `generar_reporte`, `exportar_*`) requieren `dashboard.view`.
+- Prefiere interpretar los números (`data`/`tabla_markdown`) además de mostrar
+  la imagen.
 
 ## Errores comunes y cómo leerlos
 

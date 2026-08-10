@@ -40,8 +40,8 @@ from .schemas import (
 )
 from .tool_rbac import RbacFastMCP, TOOL_MODULES, allowed_tool_names
 
-# Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con 110 tools
-# (106 @mcp.tool + 4 de visualización vía mcp.add_tool).
+# Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con 119 tools
+# (106 @mcp.tool + 13 de presentación vía mcp.add_tool).
 # El filtrado por rol del usuario conectado se hace en list_tools vía
 # RbacFastMCP (tool_rbac.py), NO partiendo el server en 3 dominios.
 mcp = RbacFastMCP("mwt-one")
@@ -2043,21 +2043,35 @@ def builder_template_obtener(template_id: int) -> Any:
 
 
 # =========================================================================== #
-# I) VISUALIZACIÓN (Ola 3.10 · capa de presentación, estilo antvis)
-#    Las tools devuelven URL de SVG firmada (TTL 5 min). Datos redactados
-#    por rol ANTES de renderizar. Solo lectura (acción view en RBAC).
+# I) PRESENTACIÓN (Ola 3.10 ampliada · 13 tools en 5 categorías)
+#    El MCP devuelve el resultado en el formato más útil (imagen, tabla,
+#    reporte, dashboard, exportación). Datos redactados por rol ANTES de
+#    renderizar. Solo lectura (acción view en RBAC).
 # =========================================================================== #
-from .visualization import (  # noqa: E402
+from .presentation import (  # noqa: E402
+    aging_chart,
     cashflow_chart,
+    comparar,
     dashboard_resumen,
+    exposicion_chart,
+    exportar_csv,
+    exportar_xlsx,
     generar_grafico,
+    generar_reporte,
     margen_marcas_chart,
+    render_tabla,
+    reporte_cobranza,
+    reporte_expedientes,
 )
 
-# Registro en el server monolito (las funciones viven en visualization.py y
+# Registro en el server monolito (las funciones viven en presentation.py y
 # no llevan @mcp.tool() para no duplicar la instancia de FastMCP).
-mcp.add_tool(generar_grafico, name="generar_grafico")
-mcp.add_tool(cashflow_chart, name="cashflow_chart")
-mcp.add_tool(margen_marcas_chart, name="margen_marcas_chart")
-mcp.add_tool(dashboard_resumen, name="dashboard_resumen")
+_PRESENTATION_TOOLS = [
+    generar_grafico, cashflow_chart, margen_marcas_chart, aging_chart,
+    exposicion_chart, render_tabla, generar_reporte, reporte_cobranza,
+    reporte_expedientes, dashboard_resumen, comparar, exportar_xlsx,
+    exportar_csv,
+]
+for _pt in _PRESENTATION_TOOLS:
+    mcp.add_tool(_pt, name=_pt.__name__)
 

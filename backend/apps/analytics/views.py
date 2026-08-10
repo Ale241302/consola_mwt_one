@@ -1878,3 +1878,187 @@ class ChartRenderView(APIView):
             "expires_at": signed.get("expires_at"),
             "errorMessage": None,
         })
+
+
+# ═══════════════════════════════════════════════════════════════════════ #
+# Ola 3.10 ampliada · PresentationRenderView — motor de presentación unificado
+#
+# Maneja las 5 categorías del motor de presentación:
+#   · kind="chart"   → SVG (line/area/bar/column/pie)            TTL 5 min
+#   · kind="tabla"   → SVG de tabla con branding MWT + markdown  TTL 5 min
+#   · kind="reporte" → Markdown largo, o PDF (reportlab)         TTL 15 min
+#   · kind="xlsx"    → workbook Excel (openpyxl)                 TTL 15 min
+#   · kind="csv"     → CSV descargable                           TTL 15 min
+#
+# Seguridad (mismas garantías que chart-render):
+#   · Recibe SOLO datos puros (dicts/lists), nunca URLs ni HTML (sin SSRF).
+#   · Texto escapado (SVG/XML) y datos limitados (tabla ≤500 filas, chart
+#     ≤5000 filas, hojas ≤5, filas por hoja ≤10000).
+#   · La redacción por rol la aplicó el MCP ANTES de llamar aquí.
+#   · required_action="view" sobre `dashboard` (solo lectura).
+# ═══════════════════════════════════════════════════════════════════════ #
+class PresentationRenderView(APIView):
+    """POST /api/presentation/render/ — motor de presentación (Ola 3.10 ampliada)."""
+
+    required_module = "dashboard"
+    required_action = "view"
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
+    throttle_classes = [_ChartRenderThrottle]
+
+    _KINDS = {"chart", "tabla", "reporte", "xlsx", "csv"}
+
+    @method_decorator(never_cache)
+    def post(self, request):
+        from apps.storage.services import (
+            generate_signed_url,
+            put_object_stream,
+        )
+        from .chart_svg import CHART_TYPES, render_chart
+        from .presentation import (
+            export_csv_bytes,
+            export_xlsx_bytes,
+            render_reporte_markdown,
+            render_tabla_markdown,
+            render_tabla_svg,
+        )
+
+        kind = (request.data.get("kind") or "").strip().lower()
+        if kind not in self._KINDS:
+            return Response(
+                {"detail": f"kind inválido. Válidos: {', '.join(sorted(self._KINDS))}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ── validación común de tamaño ──────────────────────────────────
+        def _check_max(data_list, limit, label):
+            if data_list is not None and len(data_list) > limit:
+                return Response(
+                    {"detail": f"{label} excede {limit} filas."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return None
+
+        if kind == "chart":
+            tipo = (request.data.get("tipo") or "").strip().lower()
+            data = request.data.get("data") or []
+            if tipo not in CHART_TYPES:
+                return Response(
+                    {"detail": f"tipo inválido. Válidos: {', '.join(CHART_TYPES)}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            err = _check_max(data, 5000, "data")
+            if err:
+                return err
+            opciones = {k: v for k, v in (request.data.get("opciones") or {}).items()
+                        if k in {"x", "y", "category", "value", "titulo",
+                                 "width", "height", "palette"}}
+            try:
+                svg = render_chart(tipo, data, opciones)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            body, content_type, ext, ttl, extra = (
+                svg.encode("utf-8"), "image/svg+xml", "svg", 300, {})
+            key_prefix = "charts"
+
+        elif kind == "tabla":
+            columnas = request.data.get("columnas") or []
+            filas = request.data.get("filas") or []
+            err = _check_max(filas, 500, "filas")
+            if err:
+                return err
+            if not columnas or not isinstance(columnas, list):
+                return Response({"detail": "columnas debe ser un array."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            svg = render_tabla_svg(
+                columnas, filas,
+                titulo=request.data.get("titulo") or "",
+                resaltar=request.data.get("resaltar"),
+            )
+            md = render_tabla_markdown(columnas, filas)
+            body, content_type, ext, ttl, extra = (
+                svg.encode("utf-8"), "image/svg+xml", "svg", 300,
+                {"tabla_markdown": md})
+            key_prefix = "tables"
+
+        elif kind == "reporte":
+            titulo = request.data.get("titulo") or "Reporte"
+            secciones = request.data.get("secciones") or []
+            formato = (request.data.get("formato") or "markdown").lower()
+            md = render_reporte_markdown(titulo, secciones)
+            if formato == "pdf":
+                try:
+                    from .reporte_pdf import reporte_pdf_bytes
+                    body = reporte_pdf_bytes(titulo, secciones)
+                except Exception as e:  # noqa: BLE001
+                    log.error("[presentation] reporte pdf falló: %s", e)
+                    return Response(
+                        {"detail": f"No se pudo generar el PDF: {e}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+                content_type, ext, ttl = "application/pdf", "pdf", 900
+            else:
+                body, content_type, ext, ttl = (
+                    md.encode("utf-8"), "text/markdown", "md", 900)
+            extra = {"markdown": md}
+            key_prefix = "reports"
+
+        elif kind == "xlsx":
+            nombre = request.data.get("nombre_archivo") or "export"
+            hojas = request.data.get("hojas") or []
+            if len(hojas) > 5:
+                return Response({"detail": "máx 5 hojas."},
+                                status=status.HTTP_400_BAD_REQUEST)
+            for hoja in hojas:
+                err = _check_max(hoja.get("filas") or [], 10000, "filas de hoja")
+                if err:
+                    return err
+            try:
+                body = export_xlsx_bytes(nombre, hojas)
+            except Exception as e:  # noqa: BLE001
+                return Response({"detail": f"Error XLSX: {e}"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            content_type, ext, ttl, extra = (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "xlsx", 900, {})
+            key_prefix = "exports"
+
+        else:  # csv
+            nombre = request.data.get("nombre_archivo") or "export"
+            columnas = request.data.get("columnas") or []
+            filas = request.data.get("filas") or []
+            err = _check_max(filas, 10000, "filas")
+            if err:
+                return err
+            try:
+                body = export_csv_bytes(columnas, filas)
+            except Exception as e:  # noqa: BLE001
+                return Response({"detail": f"Error CSV: {e}"},
+                                status=status.HTTP_400_BAD_REQUEST)
+            content_type, ext, ttl, extra = (
+                "text/csv", "csv", 900, {})
+            key_prefix = "exports"
+
+        # ── Subir a MinIO + URL firmada ─────────────────────────────────
+        key = f"{key_prefix}/{uuid.uuid4()}.{ext}"
+        try:
+            up = put_object_stream(key, __import__("io").BytesIO(body),
+                                   content_type=content_type, length=len(body))
+        except Exception as e:  # noqa: BLE001
+            log.error("[presentation] upload falló: %s", e)
+            up = {"ok": False, "error": str(e)}
+        if not up.get("ok"):
+            return Response(
+                {"detail": f"No se pudo almacenar la salida: {up.get('error', 'storage_unavailable')}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        signed = generate_signed_url(key, kind="get", ttl=ttl)
+        resp = {
+            "success": True,
+            "kind": kind,
+            "url": signed.get("url"),
+            "expires_at": signed.get("expires_at"),
+            "errorMessage": None,
+        }
+        resp.update(extra)
+        return Response(resp)

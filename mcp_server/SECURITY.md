@@ -110,6 +110,26 @@ no-CEO/Admin (y proveedores/PII para client_b2b):
   `dispatch_mode`, `price_basis`, `credit_days`, `is_blocked`, `phase_signal`,
   `factory_delay`, `available_transitions`.
 
+### 6b. Capa de presentación (Ola 3.10 ampliada)
+
+El motor de presentación (`presentation.py`, 13 tools en 5 categorías: gráficos,
+tablas, reportes, dashboards, exportaciones) extiende las garantías:
+
+- **Redacción ANTES de renderizar:** `redact_for_user` se aplica a los datos
+  antes de cualquier salida (SVG/PDF/tabla/xlsx) — ningún formato puede filtrar
+  datos que el rol no ve. Un manager no puede pedir un PDF de márgenes.
+- **Sin SSRF:** `POST /api/presentation/render/` recibe SOLO datos puros
+  (nunca URLs/HTML); kinds, opciones y tamaños en whitelist (chart ≤5000 filas,
+  tabla ≤500, hojas ≤5, filas por hoja ≤10000).
+- **Escape de salida:** todo texto se escapa en SVG/XML/Markdown (previene
+  inyección en la salida renderizada).
+- **URLs firmadas con TTL por tipo:** 5 min imágenes/tablas; 15 min
+  reportes/exportaciones (nunca acceso público permanente).
+- **Rate limit:** throttle `chart_render` sobre `/api/presentation/render/`.
+- **RBAC:** las tools de datos → `analytics.view`; las genéricas →
+  `dashboard.view`; `margen_marcas_chart`/`reporte_cobranza` restringidas por
+  CEO-only en sus endpoints de origen.
+
 ## 7. Respuesta ante una fuga o incidente
 
 ### Sospecha de fuga de datos por el MCP

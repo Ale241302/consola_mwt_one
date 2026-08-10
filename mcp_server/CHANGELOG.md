@@ -7,6 +7,23 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/).
 
 ## [1.0.0] — 2026-08-10
 
+### Ola 3.10 ampliada — Motor de presentación (13 tools · 5 categorías)
+- `backend/apps/analytics/presentation.py`: tablas SVG con branding MWT +
+  Markdown, reportes Markdown, exportaciones XLSX (openpyxl) y CSV.
+- `backend/apps/analytics/reporte_pdf.py`: PDF de reportes con ReportLab.
+- `POST /api/presentation/render/` (PresentationRenderView): unifica las 5
+  categorías con kind=chart|tabla|reporte|xlsx|csv; TTL 5 min (imágenes/tablas)
+  / 15 min (reportes/exportaciones); throttle y required_action=view.
+- `mcp_server/mwt_mcp/presentation.py`: 13 tools en 5 categorías:
+  P1 gráficos (generar_grafico, cashflow_chart, margen_marcas_chart,
+  aging_chart, exposicion_chart), P2 tablas (render_tabla), P3 reportes
+  (generar_reporte, reporte_cobranza, reporte_expedientes), P4 dashboards
+  (dashboard_resumen, comparar), P5 exportaciones (exportar_xlsx, exportar_csv).
+- `visualization.py` → shim de compatibilidad (re-exporta de presentation).
+- `redact_for_user` ANTES de renderizar en todas las salidas.
+- RBAC: 119 tools en TOOL_MODULES (las de datos → analytics.view; las
+  genéricas → dashboard.view).
+
 ### Ola 3.10 — Capa de presentación (charts server-side, sección 0b)
 - `backend/apps/analytics/chart_svg.py`: renderizador SVG puro (line/area/bar/
   column/pie) sin librerías; sin SSRF (solo datos), textos escapados, máx 5000

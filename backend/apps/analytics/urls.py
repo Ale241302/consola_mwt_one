@@ -25,6 +25,7 @@ from .views import (
     DashboardSnapshotViewSet,
     WidgetCatViewSet,
     ChartRenderView,
+    PresentationRenderView,
 )
 
 router = DefaultRouter()
@@ -38,4 +39,7 @@ urlpatterns = [
     # required_action="view" (POST pero conceptualmente solo-lectura).
     path("analytics/chart-render/", ChartRenderView.as_view(),
          name="analytics-chart-render"),
+    # Ola 3.10 ampliada · motor de presentación unificado (5 categorías).
+    path("presentation/render/", PresentationRenderView.as_view(),
+         name="presentation-render"),
 ]

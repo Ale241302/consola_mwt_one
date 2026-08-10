@@ -154,14 +154,26 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Storage ────────────────────────────────────────────────────────────
     "storage_subir_archivo": ("storage", "create"),
     "artefacto_archivo_descargar": ("storage", "download_doc"),
-    # ── Visualización (Ola 3.10 · solo lectura) ────────────────────────────
-    # generar_grafico es genérica (chart con datos que el agente ya tiene y que
-    # la capa 2 redacta por rol): se mapea a `dashboard`, presente en todas las
-    # matrices. cashflow/margen/dashboard_resumen son ejecutivos → `analytics`.
-    "generar_grafico": ("dashboard", "view"),
-    "dashboard_resumen": ("analytics", "view"),
-    "cashflow_chart": ("analytics", "view"),
-    "margen_marcas_chart": ("analytics", "view"),
+    # ── Presentación (Ola 3.10 ampliada · 5 categorías, solo lectura) ──────
+    # Dos grupos:
+    #   · De datos (leen analytics/*)  → `analytics` (el enforcement del
+    #     backend valida analytics.view para /api/analytics/*).
+    #   · Genéricas (solo envían datos al motor presentation/render que
+    #     valida `dashboard`) → `dashboard` (presente en todas las matrices,
+    #     incl. client_b2b).
+    "generar_grafico": ("dashboard", "view"),      # genérica
+    "cashflow_chart": ("analytics", "view"),       # lee analytics/cashflow
+    "margen_marcas_chart": ("analytics", "view"),  # lee analytics/margen_marcas (CEO-only backend)
+    "aging_chart": ("analytics", "view"),          # lee analytics/aging
+    "exposicion_chart": ("analytics", "view"),     # lee analytics/exposicion_clientes
+    "render_tabla": ("dashboard", "view"),         # genérica
+    "generar_reporte": ("dashboard", "view"),      # genérica
+    "reporte_cobranza": ("analytics", "view"),     # lee analytics/aging
+    "reporte_expedientes": ("analytics", "view"),  # lee analytics/by_status
+    "dashboard_resumen": ("analytics", "view"),    # lee analytics/*
+    "comparar": ("dashboard", "view"),             # genérica
+    "exportar_xlsx": ("dashboard", "view"),        # genérica
+    "exportar_csv": ("dashboard", "view"),         # genérica
 }
 
 

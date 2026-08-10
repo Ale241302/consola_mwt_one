@@ -140,7 +140,7 @@ Nunca strings literales en JSX para copy de UI: siempre `t('clave.de.texto')`.
 
 ## Tools (MCP)
 
-La operación se expone como tools MCP desde `mcp_server/` (FastMCP, 110 tools sobre
+La operación se expone como tools MCP desde `mcp_server/` (FastMCP, 119 tools sobre
 la API REST, redactadas por rol y auditadas en `core.mcp_audit`). Prefiere las
 tools MCP `mwt.*` para leer/mutar datos de negocio
 (expedientes, clientes, productos, inventario, pagos) en vez de tocar la API a mano.
