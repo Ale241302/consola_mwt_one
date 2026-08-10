@@ -16,6 +16,7 @@ from typing import Any
 from . import client as api
 from .client import MwtApiError
 from .config import settings
+from .helpers import _persist_mcp_audit
 from .jwt_minter import get_identity_user
 from .redact import redact_for_user
 from .schemas import (
@@ -24,7 +25,7 @@ from .schemas import (
     validate_cost_lines,
     validate_lines,
 )
-from .tool_rbac import RbacFastMCP
+from .tool_rbac import RbacFastMCP, TOOL_MODULES, allowed_tool_names
 
 # Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con las 105 tools.
 # El filtrado por rol del usuario conectado se hace en list_tools vía
@@ -68,6 +69,34 @@ def _safe_role(call):
     except Exception as e:  # noqa: BLE001 - sin perfil no se puede redactar con seguridad
         return {"error": True, "detail": f"No se pudo resolver identidad para redactar: {e}"}
     return redact_for_user(data, user)
+
+
+# Ola 3.6 · A3 — reads sensibles que se auditan de forma durable.
+# Tools de SOLO LECTURA que pueden exponer datos de costo/rentabilidad y que
+# además de redactarse se registran en core.mcp_audit (event="read") para
+# trazabilidad de "quién vio qué". Las writes ya se auditan vía @write_tool.
+SENSITIVE_READ_TOOLS = {
+    "expediente_obtener", "expediente_lineas", "expediente_edit_full_get",
+    "transferencia_obtener", "transfer_costos_listar",
+    "transfer_liquidacion_preview", "transfer_factura_payload",
+    "pago_obtener", "cliente_obtener", "cliente_kpis_pool",
+    "inventario_saldos_por_expediente", "inventario_artefactos_expediente",
+    "factura_payload",
+}
+
+
+def _safe_role_read(call, tool: str):
+    """Igual que `_safe_role` pero registra el read en la auditoría durable.
+
+    Se invoca desde las tools de SENSITIVE_READ_TOOLS. El registro es
+    best-effort (thread daemon) y nunca altera la respuesta."""
+    import time as _time
+
+    t0 = _time.monotonic()
+    data = _safe_role(call)
+    _log_mcp_audit(tool, {}, data, int((_time.monotonic() - t0) * 1000),
+                   event="read")
+    return data
 
 
 def _wguard():
@@ -147,6 +176,8 @@ def _log_mcp_audit(tool: str, args, result, duration_ms: float, identity: dict |
         print(_json.dumps(rec, ensure_ascii=False), file=_sys.stderr, flush=True)
     except Exception:  # noqa: BLE001 - nunca romper la tool por un log fallido
         pass
+    # Ola 3.6 · persistencia durable best-effort (Eje A3).
+    _persist_mcp_audit(event, tool, args, ok, status, duration_ms)
 
 
 def write_tool(func):
@@ -268,12 +299,6 @@ def _project(campos: str | None, data: Any) -> Any:
 # --------------------------------------------------------------------------- #
 # Salud / introspección
 # --------------------------------------------------------------------------- #
-@mcp.tool()
-def mwt_whoami() -> Any:
-    """Devuelve la identidad y permisos del token actual (GET /auth/me/).
-    Útil para verificar que el token MCP es válido y tiene rol CEO/ADMIN."""
-    return _safe(lambda: api.get("auth/me/"))
-
 
 # Ola 2 · 2.22 — health check independiente de datos de negocio.
 # Verifica conectividad con el backend y el estado del token sin tocar
@@ -319,6 +344,88 @@ def mwt_health(timeout: float | None = None) -> Any:
                 "latency_ms": elapsed_ms, "healthz": data, "message": "backend accesible"}
     return {"ok": True, "api_base": settings.api_base, "http_status": 200,
             "latency_ms": elapsed_ms, "message": "backend accesible"}
+
+
+# Ola 3.6 · D2 — diagnóstico de scope del usuario conectado (quién soy + qué
+# puedo hacer). Enriquece mwt_whoami con las tools permitidas y ocultas.
+@mcp.tool()
+def mwt_whoami() -> Any:
+    """Devuelve la identidad y permisos del token actual (GET /auth/me/), más
+    el diagnóstico RBAC: cuántas tools le están permitidas y cuáles ocultas.
+
+    Útil para verificar que el token MCP es válido, el rol, y qué puede hacer
+    el agente en esta sesión (Ola 3.6 · D2)."""
+    data = _safe(lambda: api.get("auth/me/"))
+    if not isinstance(data, dict) or data.get("error"):
+        return data
+    try:
+        user = get_identity_user()
+        allowed = allowed_tool_names(user) if user else None
+        all_tools = set(TOOL_MODULES.keys())
+        if allowed is None:
+            permitidas, ocultas = sorted(all_tools), []
+        else:
+            permitidas = sorted(allowed & all_tools)
+            ocultas = sorted(all_tools - allowed)
+        data = dict(data)
+        data["mwt_rbac"] = {
+            "tools_permitidas": permitidas,
+            "tools_ocultas": ocultas,
+            "total_permitidas": len(permitidas),
+            "total_ocultas": len(ocultas),
+        }
+    except Exception as e:  # noqa: BLE001 - diagnóstico nunca rompe la tool
+        data["mwt_rbac"] = {"error": str(e)}
+    return data
+
+
+# Ola 3.6 · D5 — herramienta de diagnóstico de scope para soporte (CEO-only).
+@mcp.tool()
+def mwt_diag_scope(email: str | None = None, user_id: str | None = None) -> Any:
+    """(CEO/Admin) Diagnóstico de scope de un usuario para soporte.
+
+    Dado un `email` (o `user_id`), devuelve qué legal_entities ve, qué rol
+    tiene, qué tools le están permitidas y cuáles le faltan. Imprescindible
+    para responder "¿por qué este usuario no ve tal tool?" sin tocar código.
+
+    Uso: `mwt_diag_scope(email="alvaro@muitowork.com")`. Solo rol
+    superadmin/admin/ceo (el gateway propaga el rol; el backend valida que el
+    ServiceToken tenga el scope)."""
+    caller = get_identity_user()
+    caller_role = (caller or {}).get("role") or (caller or {}).get("role_slug") or ""
+    if caller_role not in ("superadmin", "admin", "ceo"):
+        return {"error": True, "detail": "mwt_diag_scope es CEO-only (superadmin/admin/ceo)."}
+    if not email and not user_id:
+        return {"error": True, "detail": "Falta email o user_id."}
+
+    body = _params(email=email, user_id=user_id)
+    data = _safe(lambda: api.post("auth/mcp-diag/", body))
+    if not isinstance(data, dict) or data.get("error"):
+        return data
+
+    # Cruzar permisos con el mapa TOOL_MODULES para listar tools permitidas/ocultas.
+    target = dict(data)
+    try:
+        fake_user = {
+            "permissions": target.get("permissions") or {},
+            "role": target.get("role_slug") or "",
+        }
+        allowed = allowed_tool_names(fake_user)
+        all_tools = set(TOOL_MODULES.keys())
+        if allowed is None:
+            permitidas, ocultas = sorted(all_tools), []
+        else:
+            permitidas = sorted(allowed & all_tools)
+            ocultas = sorted(all_tools - allowed)
+        target["mwt_rbac"] = {
+            "tools_permitidas": permitidas,
+            "tools_ocultas": ocultas,
+            "total_permitidas": len(permitidas),
+            "total_ocultas": len(ocultas),
+        }
+    except Exception as e:  # noqa: BLE001 - diagnóstico nunca rompe la tool
+        target["mwt_rbac"] = {"error": str(e)}
+    return target
 
 
 # Ola 2 · 2.21-a — herramienta de auditoría que informa a los agentes qué
@@ -378,7 +485,7 @@ def cliente_listar(
 @mcp.tool()
 def cliente_obtener(cliente_id: str) -> Any:
     """Obtiene el detalle completo de un cliente por su id (UUID)."""
-    return _safe_role(lambda: api.get(f"clientes/{cliente_id}/"))
+    return _safe_role_read(lambda: api.get(f"clientes/{cliente_id}/"), "cliente_obtener")
 
 
 @mcp.tool()
@@ -413,7 +520,7 @@ def cliente_subsidiarias(cliente_id: str) -> Any:
 @mcp.tool()
 def cliente_kpis_pool(cliente_id: str) -> Any:
     """KPIs consolidados del pool de crédito (padre + subsidiarias)."""
-    return _safe_role(lambda: api.get(f"clientes/{cliente_id}/kpis_pool/"))
+    return _safe_role_read(lambda: api.get(f"clientes/{cliente_id}/kpis_pool/"), "cliente_kpis_pool")
 
 
 # =========================================================================== #
@@ -596,7 +703,7 @@ def expediente_obtener(expediente_id: str, campos: str | None = None) -> Any:
     """Detalle de un expediente (acepta UUID o código, p.ej. EXP-1027).
     `campos`: lista separada por comas (ej. "id,codigo,estado,client_id") para devolver
     solo esos atributos y ahorrar contexto (Ola 2 · 2.17)."""
-    return _project(campos, _safe_role(lambda: api.get(f"expedientes/{expediente_id}/")))
+    return _project(campos, _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/"), "expediente_obtener"))
 
 
 @mcp.tool()
@@ -642,7 +749,7 @@ def expediente_buscar(
 @mcp.tool()
 def expediente_lineas(expediente_id: str) -> Any:
     """Líneas (SKU/talla/cantidad/precios) de un expediente."""
-    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/lineas/"))
+    return _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas")
 
 
 @mcp.tool()
@@ -808,7 +915,7 @@ def expediente_eliminar(expediente_id: str) -> Any:
 @mcp.tool()
 def expediente_edit_full_get(expediente_id: str) -> Any:
     """Lee la edición GENERAL del expediente (todas las líneas y términos)."""
-    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/edit-full/"))
+    return _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/edit-full/"), "expediente_edit_full_get")
 
 
 @mcp.tool()
@@ -1101,7 +1208,7 @@ def proforma_html(expediente_id: str, codigo: str | None = None) -> Any:
 def factura_payload(expediente_id: str) -> Any:
     """Devuelve el payload estructurado de la factura comercial del expediente
     (líneas con FOB/landed/dai_rate/ncm, cost_breakdown, totales)."""
-    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/factura-payload/"))
+    return _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/factura-payload/"), "factura_payload")
 
 
 # --- Estados SAP / pipeline -------------------------------------------------
@@ -1260,7 +1367,7 @@ def stock_listar(nodo: str | None = None, producto: str | None = None, solo_disp
 def inventario_saldos_por_expediente(expediente_ids: list, nodo_id: str | None = None) -> Any:
     """Saldos pendientes de asignar por expediente. `expediente_ids`: lista de UUIDs (requerido)."""
     csv = ",".join(expediente_ids)
-    return _safe_role(lambda: api.get("inventario/saldos-por-expediente/", _params(expediente_ids=csv, nodo_id=nodo_id)))
+    return _safe_role_read(lambda: api.get("inventario/saldos-por-expediente/", _params(expediente_ids=csv, nodo_id=nodo_id)), "inventario_saldos_por_expediente")
 
 
 @mcp.tool()
@@ -1312,7 +1419,7 @@ def inventario_transferir_asignaciones(origin_nodo_id: str, destination_nodo_id:
 @mcp.tool()
 def inventario_artefactos_expediente(expediente_id: str) -> Any:
     """Lista los artefactos (Builder) ligados a un expediente vía inventario."""
-    return _safe_role(lambda: api.get(f"inventario/expedientes/{expediente_id}/artifacts/"))
+    return _safe_role_read(lambda: api.get(f"inventario/expedientes/{expediente_id}/artifacts/"), "inventario_artefactos_expediente")
 
 
 # =========================================================================== #
@@ -1333,7 +1440,7 @@ def transferencia_listar(origen: str | None = None, destino: str | None = None, 
 def transferencia_obtener(transferencia_id: str) -> Any:
     """Detalle de un movimiento (acepta UUID o código TRF-...), con líneas, eventos,
     documentos y cost_lines."""
-    return _safe_role(lambda: api.get(f"transferencias/{transferencia_id}/"))
+    return _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/"), "transferencia_obtener")
 
 
 @mcp.tool()
@@ -1439,7 +1546,7 @@ def transferencia_cancelar(transferencia_id: str, notes: str | None = None) -> A
 @mcp.tool()
 def transfer_costos_listar(transferencia_id: str) -> Any:
     """Lista las líneas de costo (DUA/impuestos/gastos) de un movimiento."""
-    return _safe_role(lambda: api.get(f"transferencias/{transferencia_id}/cost-lines/"))
+    return _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/cost-lines/"), "transfer_costos_listar")
 
 
 @mcp.tool()
@@ -1524,7 +1631,7 @@ def transfer_artefacto_crear(transferencia_id: str, template_id: int, template_t
 @mcp.tool()
 def transfer_liquidacion_preview(transferencia_id: str) -> Any:
     """Preview del landed cost (no persiste): FOB, costos extra, costo aterrizado por línea."""
-    return _safe_role(lambda: api.get(f"transferencias/{transferencia_id}/liquidation_report/"))
+    return _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/liquidation_report/"), "transfer_liquidacion_preview")
 
 
 @mcp.tool()
@@ -1543,7 +1650,7 @@ def transfer_liquidar(transferencia_id: str, method: str = "BY_VALUE") -> Any:
 def transfer_factura_payload(transferencia_id: str) -> Any:
     """Payload estructurado para generar la factura/remisión interna del movimiento
     (líneas, cost_breakdown, totales, operating_company, transfer_pricing)."""
-    return _safe_role(lambda: api.get(f"transferencias/{transferencia_id}/invoice_payload/"))
+    return _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/invoice_payload/"), "transfer_factura_payload")
 
 
 @mcp.tool()
@@ -1596,7 +1703,7 @@ def pago_listar(expediente_id: str | None = None, estado: str | None = None, tra
 @mcp.tool()
 def pago_obtener(pago_id: str) -> Any:
     """Detalle de un pago, incluyendo aplicaciones, evidencia y veredicto IA."""
-    return _safe_role(lambda: api.get(f"finance/payments/{pago_id}/"))
+    return _safe_role_read(lambda: api.get(f"finance/payments/{pago_id}/"), "pago_obtener")
 
 
 @mcp.tool()

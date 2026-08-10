@@ -39,6 +39,7 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Introspección / salud / utilidades (siempre visibles) ──────────────
     "mwt_whoami": _ALWAYS,
     "mwt_health": _ALWAYS,
+    "mwt_diag_scope": _ALWAYS,
     "mwt_audit_write_registry": _ALWAYS,
     "tipo_cambio": _ALWAYS,
     # ── Clientes ───────────────────────────────────────────────────────────

@@ -192,6 +192,13 @@ REST_FRAMEWORK = {
         "login": "5/minute",
         "logout": "10/minute",
         "password_reset": "3/minute",
+        # Ola 3.6 · rate limit por usuario del MCP (Eje A4):
+        #   · mcp-token  → token exchange (1 por usuario por 5 min; el MCP cachea 45 min).
+        #   · mcp-audit  → POST de auditoría (el MCP escribe por tool-call; generoso).
+        #   · mcp_diag   → diagnóstico de scope (soporte; poco uso).
+        "mcp-token": "6/minute",
+        "mcp_audit": "120/minute",
+        "mcp_diag": "10/minute",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }

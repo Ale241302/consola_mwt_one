@@ -15,7 +15,10 @@ Idealmente este módulo NO importa nada pesado; comparte `client`, `config`,
 from __future__ import annotations
 
 import re
+import threading
 from typing import Any
+
+import httpx
 
 from . import client as api
 from .client import MwtApiError
@@ -109,6 +112,42 @@ def _log_mcp_audit(tool: str, args, result, duration_ms: float, identity: dict |
         import sys as _sys
         print(_json.dumps(rec, ensure_ascii=False), file=_sys.stderr, flush=True)
     except Exception:  # noqa: BLE001 - nunca romper la tool por un log fallido
+        pass
+    # Ola 3.6 · persistencia durable best-effort (Eje A3). No debe retrasar ni
+    # romper la tool; el backend redacta PII de nuevo por su cuenta.
+    _persist_mcp_audit(event, tool, args, ok, status, duration_ms)
+
+
+def _persist_mcp_audit(event: str, tool: str, args, ok: bool, status, duration_ms: float) -> None:
+    """POST best-effort a /api/auth/mcp-audit/ (durable, Eje A3).
+
+    Se usa el token de servicio (no de usuario) para firmar: la auditoría
+    documenta QUÉ hizo el servidor MCP, no el actor final (que viaja en
+    identity). Timeout corto y nunca rompe la tool.
+    """
+
+    def _send():
+        try:
+            from .config import settings as _settings
+            from .jwt_minter import _service_auth_header as _svc_hdr
+
+            body = {
+                "event": event,
+                "tool": tool,
+                "args_sanitized": _audit_sanitize(args),
+                "ok": bool(ok),
+                "http_status": status,
+                "duration_ms": int(duration_ms or 0),
+            }
+            url = f"{_settings.api_base}/auth/mcp-audit/"
+            with httpx.Client(timeout=3.0) as c:
+                c.post(url, json=body, headers=_svc_hdr())
+        except Exception:  # noqa: BLE001 - best-effort: nunca romper la tool
+            pass
+
+    try:
+        threading.Thread(target=_send, daemon=True).start()
+    except Exception:  # noqa: BLE001
         pass
 
 

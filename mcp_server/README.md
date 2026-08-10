@@ -151,6 +151,53 @@ transfers, clientes, commercial e inventario.
 
 ---
 
+## 3.6 Auditoría durable y diagnóstico (Ola 3.6 · Ejes A3/D5)
+
+### Auditoría durable (`core.mcp_audit`)
+
+Cada tool-call de escritura (y los reads sensibles) emite un log JSON a
+stderr **y además** se persiste de forma durable en la tabla `core.mcp_audit`
+del backend vía `POST /api/auth/mcp-audit/` (best-effort, thread daemon,
+timeout 3s — nunca retrasa ni rompe la tool).
+
+La persistencia escribe: `event` (`write`/`read`), `tool`, `identity_sub`
+(ServiceToken firmante), `args_sanitized` (redacta PII/URLs firmadas), `ok`,
+`http_status`, `duration_ms`. El endpoint exige ServiceToken con scope
+`mcp:token_exchange` y está throttled (`mcp_audit: 120/min`).
+
+Consulta de auditoría en el VPS:
+
+```bash
+docker exec -i consola-mwt-one-postgres psql -U mwt -d mwt_one -c \
+  "SELECT at_created, tool, event, ok, http_status, identity_sub \
+     FROM core.mcp_audit ORDER BY at_created DESC LIMIT 20;"
+```
+
+### Diagnóstico de scope
+
+- **`mwt_whoami`** (enriquecido): además del perfil, devuelve `mwt_rbac` con
+  `tools_permitidas`, `tools_ocultas` y totales — para saber qué puede hacer
+  el agente en esta sesión.
+- **`mwt_diag_scope(email|user_id)`** (CEO-only): para soporte. Devuelve qué
+  legal_entities ve un usuario, su rol, y qué tools le están permitidas/ocultas
+  según la matriz `/roles`. Úsala para responder "¿por qué este usuario no ve
+  tal tool?" sin tocar código. Backend: `POST /api/auth/mcp-diag/`.
+
+### Rate limit (Eje A4)
+
+Throttle por usuario en el backend (DRF `ScopedRateThrottle`):
+
+| Scope | Rate | Endpoint |
+|---|---|---|
+| `mcp-token` | 6/min | `POST /api/auth/mcp-token/` (token exchange) |
+| `mcp_audit` | 120/min | `POST /api/auth/mcp-audit/` (persistencia) |
+| `mcp_diag` | 10/min | `POST /api/auth/mcp-diag/` (diagnóstico) |
+
+El MCP cachea el JWT de usuario 45 min, así que el token exchange no es un
+cuello de botella en sesiones normales.
+
+---
+
 ## 4. Registrar en clientes de IA
 
 ### Antigravity / Claude Desktop / Cursor (config JSON `mcpServers`)

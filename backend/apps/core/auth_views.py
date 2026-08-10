@@ -592,6 +592,8 @@ class McpTokenView(APIView):
 
     authentication_classes = [MwtServiceTokenAuthentication]
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mcp-token"
 
     def _service_token(self, request):
         user = request.user
@@ -811,3 +813,211 @@ class McpTokenView(APIView):
             "access": str(access),
             "user": _serialize_user(user),
         }, status=status.HTTP_200_OK)
+
+
+# =========================================================================== #
+# Ola 3.6 · Auditoría durable del MCP (Eje A3) y diagnóstico de scope (Eje D5)
+# =========================================================================== #
+class McpAuditView(APIView):
+    """POST /api/auth/mcp-audit/
+
+    Puerta de persistencia para la auditoría del MCP. El MCP server hace un
+    POST best-effort por cada tool-call (writes + reads sensibles) con el
+    ServiceToken (scope mcp:token_exchange) y este view persiste en
+    `core.mcp_audit` vía `services.audit_write`.
+
+    Body (todos opcionales salvo tool/event):
+      {event, tool, identity_sub, identity_roles, args_sanitized,
+       ok, http_status, duration_ms, idempotency_key}
+
+    La escritura es best-effort: nunca devuelve 500 por un fallo de auditoría.
+    """
+
+    authentication_classes = [MwtServiceTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mcp_audit"
+
+    def post(self, request):
+        from .services import audit_write, _audit_sanitize
+
+        data = request.data or {}
+        tool = str(data.get("tool") or "").strip()
+        event = str(data.get("event") or "write").strip()[:32]
+        if not tool:
+            return Response({"detail": "tool es obligatorio"}, status=400)
+        # El ServiceToken es la identidad que firma (sub = token id/name).
+        st = request.user
+        identity_sub = getattr(st, "email", None) or str(getattr(st, "token_id", ""))
+        roles = getattr(st, "scopes", None) or None
+
+        ok = bool(data.get("ok", True))
+        try:
+            http_status = int(data.get("http_status")) if data.get("http_status") is not None else None
+        except (TypeError, ValueError):
+            http_status = None
+        try:
+            duration_ms = int(data.get("duration_ms")) if data.get("duration_ms") is not None else None
+        except (TypeError, ValueError):
+            duration_ms = None
+
+        saved = audit_write(
+            event=event,
+            tool=tool,
+            identity_sub=identity_sub,
+            identity_roles=roles,
+            args_sanitized=_audit_sanitize(data.get("args_sanitized") or {}),
+            ok=ok,
+            http_status=http_status,
+            duration_ms=duration_ms,
+            idempotency_key=data.get("idempotency_key"),
+        )
+        if saved:
+            return Response({"saved": True, "event": event, "tool": tool})
+        # No romper al MCP; el registro quedó solo en stderr.
+        return Response(
+            {"saved": False, "detail": "auditoría no persistida (best-effort)"},
+            status=200,
+        )
+
+
+class McpDiagView(APIView):
+    """POST /api/auth/mcp-diag/
+
+    Diagnóstico de scope para soporte (Eje D5 · `mwt_diag_scope`).
+
+    El caller autentica con ServiceToken (scope mcp:token_exchange) y envía
+    en el body el usuario objetivo:
+      { email }  o  { user_id }
+    Respuesta: mismo shape de perfil que `/api/auth/mcp-token/` (rol,
+    permisos, legal_entity_ids) SIN emitir JWT — es solo lectura.
+
+    La autorización CEO-only la valida el MCP (el gateway propaga el rol del
+    usuario conectado; esta tool es `mwt_` y se filtra por RBAC si el CEO lo
+    desactiva). Aquí solo resolvemos el perfil objetivo.
+    """
+
+    authentication_classes = [MwtServiceTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mcp_diag"
+
+    def post(self, request):
+        email = (
+            request.META.get("HTTP_X_FORWARDED_USER_EMAIL")
+            or request.data.get("email")
+            or request.data.get("target_email")
+        )
+        uid = (
+            request.META.get("HTTP_X_FORWARDED_USER_ID")
+            or request.data.get("user_id")
+            or request.data.get("target_id")
+        )
+        email = (email or "").strip().lower()
+        uid = (uid or "").strip().lower()
+        if not email and not uid:
+            return Response({"detail": "Falta email o user_id"}, status=400)
+
+        # Reutiliza la resolución de perfil de McpTokenView (sin minting).
+        row = self._fetch_target(email, uid)
+        if not row:
+            return Response({"detail": "Usuario objetivo no encontrado"},
+                            status=404)
+        return Response({
+            "id": str(row["id"]),
+            "email_plain": row["email_plain"],
+            "full_name": row["full_name"],
+            "role_slug": row["role_slug"] or row["role"],
+            "role_name": row["role_name"],
+            "is_active": row["is_active"],
+            "permissions": row["permissions"],
+            "legal_entity_ids": row.get("legal_entity_ids") or [],
+        })
+
+    def _fetch_target(self, email, uid):
+        """Misma resolución que McpTokenView._fetch_target (rol + permisos + legal_ids)."""
+        from .permissions import permissions_for_role_exact
+
+        def _legal_ids(cursor, email_plain):
+            ids = []
+            try:
+                email_low = (email_plain or "").strip().lower()
+                if not email_low:
+                    return ids
+                cursor.execute(
+                    """
+                    SELECT COALESCE(legal_entity_ids, '{}'::TEXT[]) AS ids
+                      FROM users.mwtuser
+                     WHERE lower(trim(email_plain)) = %s
+                        OR lower(trim(COALESCE(contact_email, ''))) = %s
+                     ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                              cardinality(COALESCE(legal_entity_ids, '{}'::TEXT[])) DESC,
+                              updated_at DESC NULLS LAST
+                     LIMIT 1
+                    """,
+                    [email_low, email_low],
+                )
+                mrow = cursor.fetchone()
+                if mrow and mrow[0]:
+                    ids = [str(x) for x in mrow[0] if x]
+            except Exception:  # noqa: BLE001
+                pass
+            return ids
+
+        def _finish(cursor, row):
+            if not row:
+                return None
+            data = dict(
+                zip(
+                    ["id", "email_plain", "full_name", "role", "is_active",
+                     "is_staff", "last_login_at", "role_slug", "role_name"],
+                    row,
+                )
+            )
+            role_slug = data.get("role_slug") or data.get("role") or ""
+            data["permissions"] = permissions_for_role_exact(str(role_slug))
+            data["legal_entity_ids"] = _legal_ids(cursor, data.get("email_plain"))
+            return data
+
+        with connection.cursor() as cur:
+            if email:
+                cur.execute(
+                    """
+                    SELECT u.id, u.email_plain, u.full_name, u.role, u.is_active,
+                           u.is_staff, u.last_login_at,
+                           COALESCE(r.slug, u.role)  AS role_slug,
+                           COALESCE(r.name, u.role)  AS role_name
+                      FROM core.users u
+                      LEFT JOIN core.user_roles ur ON ur.user_uuid = u.id
+                      LEFT JOIN core.roles      r  ON r.id         = ur.role_uuid
+                     WHERE lower(u.email_plain) = %s
+                       AND u.deleted_at IS NULL
+                     ORDER BY ur.granted_at ASC NULLS LAST
+                     LIMIT 1
+                    """,
+                    [email],
+                )
+                row = cur.fetchone()
+                if row:
+                    return _finish(cur, row)
+            if uid:
+                cur.execute(
+                    """
+                    SELECT u.id, u.email_plain, u.full_name, u.role, u.is_active,
+                           u.is_staff, u.last_login_at,
+                           COALESCE(r.slug, u.role)  AS role_slug,
+                           COALESCE(r.name, u.role)  AS role_name
+                      FROM core.users u
+                      LEFT JOIN core.user_roles ur ON ur.user_uuid = u.id
+                      LEFT JOIN core.roles      r  ON r.id         = ur.role_uuid
+                     WHERE u.id = %s::uuid
+                       AND u.deleted_at IS NULL
+                     ORDER BY ur.granted_at ASC NULLS LAST
+                     LIMIT 1
+                    """,
+                    [uid],
+                )
+                row = cur.fetchone()
+                if row:
+                    return _finish(cur, row)
+        return None
