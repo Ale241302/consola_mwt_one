@@ -168,6 +168,10 @@ requiere `MWT_API_BASE` + `MWT_MCP_TOKEN` (token de servicio de larga vida).
   entrega JSX/TSX completo con la ruta exacta del archivo como cabecera del bloque.
 - **`revisa_ux`** — audita un componente buscando violaciones de R1–R6, falta de
   loading/error states, problemas de a11y y de visibilidad por rol.
+- **`mwt-operations`** — manual del operador del MCP `mwt-one`: qué tool usar en
+  cada flujo (expedientes, SAP, recepción, transferencias, liquidación, pagos),
+  el orden correcto, anti-patrones y cómo leer los errores. Referencia:
+  `mcp_server/README.md` §5–6 y `mcp_server/examples/README.md`.
 
 Entrega: bloques de código con la ruta como header
 (p. ej. `// frontend/src/components/expedientes/ArtifactSection.jsx`), listos para

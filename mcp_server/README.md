@@ -14,9 +14,36 @@ el MCP pide un JWT de ese usuario al backend y **las tools se filtran por su
 rol** (ver §1.1). El token de servicio solo se usa si NO hay identidad
 propagada (acceso directo / stdio).
 
+## Arquitectura
+
+```
+┌──────────────────┐     ┌─────────────────────────────┐     ┌──────────────┐
+│  Agente de IA    │     │  Gateway MCP (ContextForge)  │     │  MWT.ONE API │
+│  (Claude, Kimi,  │────▶│  · Authentik (OAuth)         │────▶│  (Django DRF)│
+│  Cursor…)        │MCP  │  · propaga X-Forwarded-User-*│JWT  │  · JWT + RBAC│
+└──────────────────┘     └──────────────┬──────────────┘     └──────┬───────┘
+                                        │                            │
+                                        ▼                            ▼
+                              ┌──────────────────────────────────────────────┐
+                              │  Servidor MCP (mwt_mcp/server.py, 106 tools)  │
+                              │  · RBAC por rol: tool_rbac.py (list_tools)     │
+                              │  · Redacción por rol: redact.py (_safe_role)   │
+                              │  · Auditoría durable: core.mcp_audit           │
+                              │  · Diagnóstico: mwt_health / mwt_diag_scope    │
+                              └──────────────────────────────────────────────┘
+```
+
+**Capas de defensa (defensa en profundidad):**
+1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 106 tools por
+   `(módulo, acción)` de la matriz `core.roles.permissions`. Fail-closed.
+2. **CAPA 2 — Redacción por rol:** `redact.py` oscurece campos CEO_ONLY
+   (costos/margen/comisiones/crédito/precio MWT) en la respuesta, aunque la
+   tool esté permitida.
+3. **CAPA 3 — Backend:** si se fuerza una llamada, Django niega (403).
+
 ---
 
-## 1. Qué puede hacer (105 herramientas)
+## 1. Qué puede hacer (106 herramientas)
 
 | Dominio      | Herramientas                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------------------- |
@@ -36,11 +63,11 @@ propagada (acceso directo / stdio).
 | **Costos / impuestos / gastos** | `transfer_costos_listar`, `transfer_costo_agregar`, `transfer_costo_editar`, `transfer_costo_eliminar`, `transfer_artefacto_crear` |
 | **Landed cost / factura** | `transfer_liquidacion_preview`, `transfer_liquidar`, `transfer_factura_payload`, `transfer_notas_listar`, `transfer_nota_crear` |
 | **Pagos** | `pago_applicables`, `pago_listar`, `pago_obtener`, `pago_dry_run`, `pago_registrar`, `pago_conciliar`, `pago_liberar_credito`, `pago_rechazar` |
-| **Salud** | `mwt_whoami` |
+| **Salud / diagnóstico** | `mwt_whoami`, `mwt_health`, `mwt_diag_scope` (CEO), `mwt_audit_write_registry`, `tipo_cambio` |
 
 ### 1.1 Filtrado de tools por rol (RBAC) y fail-closed
 
-- **1 solo servidor MCP** (`mwt-one`) con las 105 tools. No se parte en 3
+- **1 solo servidor MCP** (`mwt-one`) con las 106 tools. No se parte en 3
   dominios; la reducción de contexto se logra ocultando al agente las tools que
   su rol no puede usar (`mcp_server/mwt_mcp/tool_rbac.py`).
 - `list_tools` consulta el perfil del usuario (rol + `permissions` de
@@ -48,13 +75,31 @@ propagada (acceso directo / stdio).
   tools del mapa `TOOL_MODULES` cuyo `(módulo, acción)` el rol permite.
   Ejemplo: un usuario sin `clientes.create` no ve `cliente_crear`.
 - Sin identidad (ServiceToken puro / stdio / registro del server) → se listan
-  las 105. Admin/superadmin o `modules=["*"]` → las 105.
+  las 106. Admin/superadmin o `modules=["*"]` → las 106.
 - **Fail-closed:** si hay identidad propagada pero el backend no emite JWT
   (usuario inactivo/borrado), `list_tools` devuelve `[]` y cada llamada a la API
   falla con 401 — **nunca** se cae al token de servicio admin. Esto cierra la
   fuga "borro un usuario de la consola y sigue entrando por el MCP".
 - Flag: `MWT_MCP_RBAC=0` desactiva el filtro de listado (el enforcement real
   siempre vive en el backend, no en el MCP).
+
+### 1.2 Tabla de permisos por rol (referencia)
+
+La matriz real vive en `core.roles.permissions` (configurada en `/roles` de la
+consola). Como referencia operativa, los roles típicos:
+
+| Rol | Qué ve | Herramientas típicas | Redacción aplicada |
+|---|---|---|---|
+| **superadmin / admin / ceo** | Todo | Las 106 tools según la matriz configurada | Ninguna (acceso total) |
+| **manager** | Operación + finanzas del área | expedientes, transferencias, pagos, clientes, productos | Sí: costos/margen/comisiones/precio MWT → `***` |
+| **operator** | Operación día a día (estados, líneas, docs) | expedientes, documentos, SAP, nodos, inventario | Sí: costos/margen/comisiones |
+| **finance** | Pagos/crédito | pagos, cobros, transferencias | Sí: comisiones/margen |
+| **viewer** | Solo lectura, sin rentabilidad | tools `*_listar`/`*_obtener` de su módulo | Sí: costos/margen/comisiones |
+| **client_b2b** | Solo el Portal B2B | expedientes, documentos, pagos (view), pipeline | Sí: + proveedores, PII, operativa interna |
+
+> Nota: un `client_b2b` con acceso al MCP ve SOLO las tools del Portal y los
+> datos que su `legal_entity_id` le permite; los campos sensibles aparecen como
+> `***` (ver §3.5).
 
 ---
 
@@ -290,3 +335,16 @@ kimi mcp add mwt-one \
    `pago_conciliar` (recién aquí impacta saldos y crédito).
 
 Empieza siempre con `mwt_whoami` para confirmar que el token está activo.
+
+---
+
+## 6. Skills y ejemplos (Ola 3.8 · Eje G)
+
+- **Skill `mwt-operations`**: `harness/canonical/skills/mwt-operations/SKILL.md`.
+  Manual del operador: qué tool usar en cada flujo, en qué orden, anti-patrones
+  y cómo leer los errores. Instalable en clientes que soporten skills.
+- **Ejemplos completos**: `mcp_server/examples/README.md` — 8 flujos end-to-end
+  (alta de cliente/producto, expediente desde OC, SAP/proformas, recepción,
+  transferencias, liquidación landed, pagos y diagnóstico de soporte).
+- **Seguridad**: `mcp_server/SECURITY.md` — autenticación, las 3 capas de
+  protección, catálogo de campos redactados, y procedimientos ante una fuga.
