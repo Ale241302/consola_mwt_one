@@ -16,7 +16,7 @@ from typing import Any
 from . import client as api
 from .client import MwtApiError
 from .config import settings
-from .enrich import client_name, enrich_ids, present_expediente_codigos
+from .enrich import client_name, enrich_ids, enrich_producto, present_expediente_codigos
 from .helpers import _persist_mcp_audit
 from .jwt_minter import get_identity_user
 from .redact import redact_for_user
@@ -110,6 +110,19 @@ def _safe_role(call):
     # Ola 3.7 · Calidad — adjunta nombres legibles para los *_id (client_id ->
     # nombre_comercial, etc.). Fail-safe: si no resuelve, deja el UUID tal cual.
     return enrich_ids(data)
+
+
+def _safe_role_producto(call):
+    """Igual que `_safe_role` + enriquecimiento específico de productos:
+    tallas resueltas a nombre+equivalencias y client_prices filtrado por rol."""
+    data = _safe_role(call)
+    if isinstance(data, dict) and data.get("error"):
+        return data
+    try:
+        user = get_identity_user() or {}
+    except Exception:  # noqa: BLE001
+        user = {}
+    return enrich_producto(data, user)
 
 
 # Ola 3.6 · A3 — reads sensibles que se auditan de forma durable.
@@ -665,8 +678,10 @@ def producto_listar(
     offset: int | None = None,
 ) -> Any:
     """Lista productos (SKU, nombre, precios). Filtros: q (busca en nombre+sku+desc),
-    marca (UUID), categoria, estado, proveedor (UUID), limit, offset."""
-    return _safe_role(
+    marca (UUID), categoria, estado, proveedor (UUID), limit, offset.
+    Las tallas se devuelven resueltas a su nombre (33, 35, ...) con equivalencias,
+    y `client_prices` se filtra por rol (CEO/Admin: todos; client_b2b: solo sus empresas)."""
+    return _safe_role_producto(
         lambda: api.get(
             "productos/",
             _params(q=q, marca=marca, categoria=categoria, estado=estado,
@@ -678,9 +693,20 @@ def producto_listar(
 @mcp.tool()
 def producto_obtener(producto_id: str, campos: str | None = None) -> Any:
     """Detalle completo de un producto, incluyendo `especificaciones`
-    (tallas, client_prices, ncm) y precios (precio_lista, precio_distribuidor, costo_estandar).
+    (tallas resueltas a nombre+equivalencias, client_prices filtrado por rol, ncm)
+    y precios (precio_lista, precio_distribuidor, costo_estandar).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
-    return _project(campos, _safe_role(lambda: api.get(f"productos/{producto_id}/")))
+    return _project(campos, _safe_role_producto(lambda: api.get(f"productos/{producto_id}/")))
+
+
+@mcp.tool()
+def producto_ficha_tecnica(producto_id: str) -> Any:
+    """Descarga la ficha técnica (PDF) de un producto y devuelve la ruta del archivo.
+
+    El PDF se genera desde el backend (`/api/productos/{id}/ficha-tecnica/pdf/`) y se
+    guarda localmente en el entorno del MCP. Devuelve `{ok, path, filename, size_bytes}`.
+    Útil cuando el CEO/Admin o un cliente pide la ficha técnica de un calzado."""
+    return _safe(lambda: api.download(f"productos/{producto_id}/ficha-tecnica/pdf/"))
 
 
 @mcp.tool()

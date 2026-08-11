@@ -149,3 +149,117 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
     if partes:
         out["codigos_presentacion"] = " · ".join(partes)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Enriquecimiento de PRODUCTOS (Ola 3.7 · Calidad)
+# --------------------------------------------------------------------------- #
+_talla_cache: dict[str, dict] = {}
+_talla_cache_exp: float = 0.0
+
+
+def _ensure_tallas_loaded() -> None:
+    global _talla_cache, _talla_cache_exp
+    if time.time() < _talla_cache_exp:
+        return
+    try:
+        data = api.get("sizing/tallas/", {"limit": 500})
+        rows = data if isinstance(data, list) else (data or {}).get("results") or []
+        _talla_cache = {str(r.get("id")): r for r in rows if r.get("id")}
+        _talla_cache_exp = time.time() + _CACHE_TTL
+    except Exception:  # noqa: BLE001
+        _talla_cache_exp = time.time() + 60
+
+
+def resolve_tallas(sizes: list | None) -> list[dict]:
+    """Resuelve una lista de UUIDs de talla a su nombre + equivalencias.
+
+    Ej. `["71e3feb6-..."]` -> `[{"id": "...", "nombre": "33", "eu": "35",
+    "us_men": "3-3.5", "cm": "22.34"}]`. Fail-safe: deja el UUID si no resuelve.
+    """
+    if not sizes:
+        return []
+    _ensure_tallas_loaded()
+    out = []
+    for s in sizes:
+        sid = str(s)
+        t = _talla_cache.get(sid)
+        if not t:
+            out.append({"id": sid, "nombre": sid})
+            continue
+        out.append({
+            "id": sid,
+            "nombre": t.get("nombre") or t.get("talla_base") or sid,
+            "talla_base": t.get("talla_base"),
+            "eu": t.get("eu"),
+            "us_men": t.get("us_men"),
+            "us_women": t.get("us_women"),
+            "uk_men": t.get("uk_men"),
+            "cm": t.get("cm"),
+            "br": t.get("br"),
+        })
+    return out
+
+
+def _client_ids_for_user(user: dict | None) -> set[str]:
+    """Legal entity ids del usuario conectado (para filtrar client_prices)."""
+    if not user:
+        return set()
+    ids = user.get("legal_entity_ids") or []
+    return {str(x) for x in ids}
+
+
+def enrich_producto(payload: Any, user: dict | None = None) -> Any:
+    """Enriquece un producto (o lista):
+      · `tallas`/`especificaciones.sizes` -> array con nombre + equivalencias.
+      · `especificaciones.client_prices` -> filtrado por rol:
+        CEO/Admin: todos; client_b2b: solo sus legal_entity_ids.
+      · `ficha_pdf` se deja como referencia (el MCP la descarga en demanda).
+    """
+    from .redact import is_ceo_or_admin, is_client
+
+    role = (user or {}).get("role") or (user or {}).get("role_slug") or ""
+
+    def _one(row: dict) -> dict:
+        if not isinstance(row, dict):
+            return row
+        out = dict(row)
+        spec = out.get("especificaciones")
+        if isinstance(spec, dict):
+            spec = dict(spec)
+            sizes = spec.get("sizes") or []
+            if sizes:
+                spec["sizes"] = resolve_tallas(sizes)
+            cp = spec.get("client_prices") or {}
+            if isinstance(cp, dict) and cp:
+                if is_ceo_or_admin(role):
+                    pass  # CEO/Admin: todos los precios
+                elif is_client(role):
+                    allowed = _client_ids_for_user(user)
+                    spec["client_prices"] = {
+                        k: v for k, v in cp.items()
+                        if k in allowed or _is_uuid_in(user, k)
+                    }
+                else:
+                    # staff no-CEO: sin precios por cliente (evita fuga)
+                    spec["client_prices"] = {}
+            out["especificaciones"] = spec
+        tallas = out.get("tallas") or []
+        if tallas:
+            out["tallas"] = resolve_tallas(tallas)
+        return out
+
+    def _is_uuid_in(user, cid):
+        # comparación tolerante: algunos client_prices usan el id de legal_entity
+        le = user.get("legal_entity_ids") or []
+        return str(cid) in {str(x) for x in le}
+
+    if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+        payload = dict(payload)
+        payload["results"] = [_one(r) for r in payload["results"]]
+        return payload
+    if isinstance(payload, list):
+        return [_one(r) for r in payload]
+    if isinstance(payload, dict):
+        return _one(payload)
+    return payload

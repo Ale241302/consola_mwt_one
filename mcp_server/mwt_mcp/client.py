@@ -140,6 +140,33 @@ def post_multipart(
             opened.close()
 
 
+def download(path: str, dest_dir: str = "/tmp") -> dict:
+    """Descarga un binario (PDF, etc.) a un archivo temporal y devuelve la ruta.
+
+    Devuelve `{ok: True, path, filename, size_bytes}` o `{error: True, ...}`.
+    No usa _handle (que parsea JSON); guarda el cuerpo crudo a disco.
+    """
+    import uuid as _uuid
+
+    with httpx.Client(timeout=settings.http_timeout) as c:
+        r = c.get(_url(path), headers=_auth_headers())
+        if r.status_code >= 400:
+            return {"error": True, "status": r.status_code,
+                    "detail": _parse(r), "url": str(r.request.url)}
+        if not r.content:
+            return {"error": True, "detail": "Respuesta vacía (sin PDF)."}
+        fname = f"mwt_download_{_uuid.uuid4().hex[:12]}.pdf"
+        fpath = os.path.join(dest_dir, fname)
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+            with open(fpath, "wb") as f:
+                f.write(r.content)
+            return {"ok": True, "path": fpath, "filename": fname,
+                    "size_bytes": len(r.content)}
+        except Exception as e:  # noqa: BLE001
+            return {"error": True, "detail": f"No se pudo guardar el PDF: {e}"}
+
+
 def _form_fields(data: dict | None) -> dict[str, str]:
     out: dict[str, str] = {}
     for k, v in (data or {}).items():
