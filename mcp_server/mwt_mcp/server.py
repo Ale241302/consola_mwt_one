@@ -16,6 +16,7 @@ from typing import Any
 from . import client as api
 from .client import MwtApiError
 from .config import settings
+from .enrich import client_name, enrich_ids, present_expediente_codigos
 from .helpers import _persist_mcp_audit
 from .jwt_minter import get_identity_user
 from .redact import redact_for_user
@@ -105,7 +106,10 @@ def _safe_role(call):
     except Exception as e:  # noqa: BLE001 - sin perfil no se puede redactar con seguridad
         return {"error": True, "detail": f"No se pudo resolver identidad para redactar: {e}",
                 "hint": "Verifica que el gateway propague la identidad del usuario (X-Forwarded-User-*)."}
-    return redact_for_user(data, user)
+    data = redact_for_user(data, user)
+    # Ola 3.7 · Calidad — adjunta nombres legibles para los *_id (client_id ->
+    # nombre_comercial, etc.). Fail-safe: si no resuelve, deja el UUID tal cual.
+    return enrich_ids(data)
 
 
 # Ola 3.6 · A3 — reads sensibles que se auditan de forma durable.
@@ -249,6 +253,32 @@ def write_tool(func):
 def _is_write_tool(func) -> bool:
     """Devuelve True si la tool está marcada como de escritura."""
     return bool(getattr(func, "_mwt_write", False))
+
+
+def _present_codigos(data: Any) -> Any:
+    """Ola 3.7 · Calidad — añade `codigos_presentacion` a expedientes según el rol.
+
+    CEO/Admin -> "PF 2393-2025 · PO 504302 · 257021" (proforma + oc + sap).
+    client_b2b -> "PO 504302 · 257021" (oc + sap, sin proforma interna).
+    Se aplica sobre listas (respuesta paginada) o un dict (detalle). Fail-safe."""
+    try:
+        user = get_identity_user() or {}
+        role = user.get("role") or user.get("role_slug") or ""
+    except Exception:  # noqa: BLE001
+        role = ""
+
+    def _one(row: dict) -> dict:
+        return present_expediente_codigos(row, role)
+
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        data = dict(data)
+        data["results"] = [_one(r) for r in data["results"]]
+        return data
+    if isinstance(data, list):
+        return [_one(r) for r in data]
+    if isinstance(data, dict):
+        return _one(data)
+    return data
 
 
 # Listado nominal de tools que, aunque siguen siendo "preview"/"dry-run",
@@ -453,6 +483,16 @@ def mwt_whoami() -> Any:
             "total_permitidas": len(permitidas),
             "total_ocultas": len(ocultas),
         }
+        # Ola 3.7 · Calidad — adjunta los NOMBRES de las entidades legales
+        # (en vez de solo UUIDs) para que whoami sea legible.
+        le_ids = data.get("legal_entity_ids") or []
+        le_names = []
+        for le_id in le_ids:
+            le_names.append({
+                "id": le_id,
+                "nombre": client_name(le_id) or "—",
+            })
+        data["legal_entities"] = le_names
     except Exception as e:  # noqa: BLE001 - diagnóstico nunca rompe la tool
         data["mwt_rbac"] = {"error": str(e)}
     return data
@@ -790,7 +830,7 @@ def expediente_listar(
     `campos`: lista separada por comas (ej. "id,codigo,estado") para proyectar y ahorrar contexto
     (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    return _project(
+    data = _project(
         campos,
         _safe_role(
             lambda: api.get(
@@ -799,6 +839,7 @@ def expediente_listar(
             )
         )
     )
+    return _present_codigos(data)
 
 
 @mcp.tool()
@@ -806,7 +847,7 @@ def expediente_obtener(expediente_id: str, campos: str | None = None) -> Any:
     """Detalle de un expediente (acepta UUID o código, p.ej. EXP-1027).
     `campos`: lista separada por comas (ej. "id,codigo,estado,client_id") para devolver
     solo esos atributos y ahorrar contexto (Ola 2 · 2.17)."""
-    return _project(campos, _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/"), "expediente_obtener"))
+    return _present_codigos(_project(campos, _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/"), "expediente_obtener")))
 
 
 @mcp.tool()
