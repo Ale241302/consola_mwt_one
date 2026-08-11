@@ -168,7 +168,14 @@ export default function ScreenExpedientes() {
   const [ocChoiceOpen, setOcChoiceOpen] = useState(false);
   // Viewport efectivo (ADMIN | CLIENT). Re-renderiza cuando el CEO usa
   // el toggle "Tweaks → Viewport" para simular al cliente.
-  const { isAdmin, isClient, can, user } = useRole();
+  const { isAdmin, isClient, can, canAction, user } = useRole();
+
+  // Permisos de acción granular según la matriz RBAC de /roles.
+  // isAdmin siempre puede; CLIENT depende de can_create/can_delete/... del rol.
+  const canCreateExp  = isAdmin || canAction("expedientes", "create");
+  const canDeleteExp  = isAdmin || canAction("expedientes", "delete");
+  const canViewDocs   = isAdmin || canAction("expedientes", "view_doc");
+  const canDownloadDocs = isAdmin || canAction("expedientes", "download_doc");
 
   // ── Data desde API (con caché stale-while-revalidate) ────────
   // Auditoría de carga 2026-06-14: sembramos el último snapshot conocido

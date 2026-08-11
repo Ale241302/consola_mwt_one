@@ -77,6 +77,54 @@ export const CLIENT_ALLOWED_MODULES = new Set([
   "tickets",  // Modulo de soporte interno (LOTE_SM_TICKETS) — visible para todos
 ]);
 
+// Mapeo sidebar-key → module_slug de la matriz RBAC (users.role_permission).
+// Se usa para resolver can_read/can_create/can_update/can_delete/can_*_doc
+// cuando el login trae permissions reales del rol. Claves sin entrada caen
+// al comportamiento legacy (CLIENT_ALLOWED_MODULES).
+const SIDEBAR_KEY_TO_MODULE = {
+  dashboard:       "dashboard",
+  expedientes:     "expedientes",
+  cronograma:      "expedientes",   // el cronograma vive bajo expedientes
+  pipeline:        "expedientes",
+  portal:          "portal",
+  pagos:           "pagos",
+  ai:              "portal",        // Asistente MWT scoped al portal
+  tickets:         "tickets",
+  transfers:       "transferencias",
+  nodos:           "nodos",
+  inventario:      "inventario",
+  clientes:        "clientes",
+  brands:          "marcas",
+  productos:       "productos",
+  "price-history": "historial-precios",
+  history:         "notificaciones",
+  collections:     "cartera",
+  usuarios:        "usuarios",
+  roles:           "roles",
+  "mesa-trabajo":  "expedientes",
+  sizing:          "sizing",
+};
+
+// Convierte la matriz CRUD (de /api/permissions/groups/<slug>/) a la shape
+// {modules:[...], actions:[...]} que ya consume el frontend.
+function matrixToPermissions(matrix = []) {
+  const modules = [];
+  const actions = [];
+  const push = (m, act) => { if (!m) return; if (!modules.includes(m)) modules.push(m); actions.push(`${m}.${act}`); };
+  for (const cell of matrix) {
+    if (!cell || !cell.module) continue;
+    const m = String(cell.module);
+    if (cell.can_read)       push(m, "view");
+    if (cell.can_create)     push(m, "create");
+    if (cell.can_update)     push(m, "update");
+    if (cell.can_delete)     push(m, "delete");
+    if (cell.can_upload_doc) push(m, "upload_doc");
+    if (cell.can_download_doc) push(m, "download_doc");
+    if (cell.can_view_doc)   push(m, "view_doc");
+  }
+  return { modules, actions };
+}
+
 // Capacidades CEO-ONLY — si isClient, estas acciones se ocultan/deshabilitan.
 // Mantener sincronizado con POL_VISIBILIDAD.md en la KB.
 export const CEO_ONLY_CAPABILITIES = new Set([
@@ -151,6 +199,26 @@ export function RoleProvider({ children }) {
   const isAdmin  = role === "ADMIN";
   const isClient = role === "CLIENT";
 
+  // Matriz real del rol (si el backend la mandó). Shape esperado:
+  //   { modules: ["expedientes", "portal", ...],
+  //     actions: ["expedientes.view", "expedientes.create", ...] }
+  // Fuente: core.roles.permissions (editado en /roles → sync A6). Si el
+  // login trae la shape de la matriz CRUD (array de celdas), la convertimos.
+  const rawPerms = useMemo(() => user?.permissions || {}, [user]);
+  const rolePerms = useMemo(() => {
+    if (Array.isArray(rawPerms?.matrix)) return matrixToPermissions(rawPerms.matrix);
+    if (Array.isArray(rawPerms)) return { modules: rawPerms, actions: [] };
+    return {
+      modules: Array.isArray(rawPerms?.modules) ? rawPerms.modules : [],
+      actions: Array.isArray(rawPerms?.actions) ? rawPerms.actions : [],
+    };
+  }, [rawPerms]);
+  const hasRealMatrix = useMemo(
+    () => Array.isArray(rolePerms.modules) && rolePerms.modules.length > 0,
+    [rolePerms],
+  );
+  const matrixHasWildcard = rolePerms.modules.includes("*");
+
   // Helper para consultar capacidades CEO-ONLY.
   const can = useCallback((capability) => {
     if (!CEO_ONLY_CAPABILITIES.has(capability)) return true; // no es CEO-only → siempre permitido
@@ -158,10 +226,30 @@ export function RoleProvider({ children }) {
   }, [isAdmin]);
 
   // Helper para módulos del Sidebar.
+  // Si el backend mandó la matriz real del rol, la usamos (can_read).
+  // Si no (login legacy sin permissions), caemos a la whitelist por viewport.
   const canSeeModule = useCallback((moduleKey) => {
     if (isAdmin) return true;
-    return CLIENT_ALLOWED_MODULES.has(moduleKey);
-  }, [isAdmin]);
+    if (!hasRealMatrix) return CLIENT_ALLOWED_MODULES.has(moduleKey);
+    if (matrixHasWildcard) return true;
+    const moduleSlug = SIDEBAR_KEY_TO_MODULE[moduleKey] || moduleKey;
+    return rolePerms.modules.includes(moduleSlug);
+  }, [isAdmin, hasRealMatrix, matrixHasWildcard, rolePerms.modules]);
+
+  // Acción granular (create/update/delete/view_doc/download_doc/upload_doc).
+  // fallback: si no hay matriz real, ADMIN=true / CLIENT=false para acciones
+  // de escritura; las de lectura/docs respetan la whitelist legacy.
+  const canAction = useCallback((moduleKeyOrSlug, action) => {
+    if (isAdmin) return true;
+    const moduleSlug = SIDEBAR_KEY_TO_MODULE[moduleKeyOrSlug] || moduleKeyOrSlug;
+    if (hasRealMatrix) {
+      if (matrixHasWildcard) return true;
+      return rolePerms.actions.includes(`${moduleSlug}.${action}`);
+    }
+    // Legacy (sin matriz): cliente no edita nada en el ERP.
+    const readLike = ["view", "view_doc", "download_doc"].includes(action);
+    return readLike && CLIENT_ALLOWED_MODULES.has(moduleKeyOrSlug);
+  }, [isAdmin, hasRealMatrix, matrixHasWildcard, rolePerms.actions]);
 
   const value = useMemo(() => ({
     // estado
@@ -178,10 +266,13 @@ export function RoleProvider({ children }) {
     // helpers
     can,
     canSeeModule,
+    canAction,
     // metadata útil
     backendRole,
     user,
-  }), [role, isAdmin, isClient, isCeoAdmin, baseViewport, canTweak, override, setOverride, can, canSeeModule, backendRole, user]);
+    rolePerms,
+    hasRealMatrix,
+  }), [role, isAdmin, isClient, isCeoAdmin, baseViewport, canTweak, override, setOverride, can, canSeeModule, canAction, rolePerms, hasRealMatrix, backendRole, user]);
 
   return <RoleContext.Provider value={value}>{children}</RoleContext.Provider>;
 }

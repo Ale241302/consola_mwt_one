@@ -30,6 +30,7 @@ Notas:
 =====================================================================
 """
 import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -60,6 +61,18 @@ def _row_to_dict(cursor, row):
     cols = [c[0] for c in cursor.description]
     return dict(zip(cols, row))
 
+
+def _normalize_permissions(value):
+    """Normaliza permissions (JSONB→dict o TEXT→dict) a dict canónico."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+    return {}
 
 def _fetch_user(usuario: str):
     """
@@ -110,10 +123,25 @@ def _fetch_user(usuario: str):
             user["permissions"] = role["permissions"] or {}
         else:
             # Fallback: no hay fila en core.user_roles → usamos el string u.role
+            # y leemos SU matriz desde core.roles.permissions (la fuente que
+            # el CEO edita en /roles y se sincroniza vía A6_unify_rbac.sql).
+            # Antes se devolvía {} para todo rol no-admin, así el frontend
+            # de clientes recibía permissions vacías aunque el rol tuviera
+            # can_read=true en expedientes/portal/etc.
             user["role_uuid"] = None
             user["role_slug"] = user["role"]
             user["role_name"] = user["role"].title() if user["role"] else None
-            user["permissions"] = {"modules": ["*"]} if user["role"] in ("admin", "superadmin") else {}
+            user["permissions"] = {}
+            try:
+                cur.execute(
+                    "SELECT permissions FROM core.roles WHERE slug = %s LIMIT 1",
+                    [user["role"]],
+                )
+                prow = cur.fetchone()
+                if prow:
+                    user["permissions"] = _normalize_permissions(prow[0])
+            except Exception:  # noqa: BLE001 — degradación segura
+                user["permissions"] = {}
 
     return user
 
@@ -513,9 +541,21 @@ class MeView(APIView):
                 user["role_name"]  = role["name"]
                 user["permissions"] = role["permissions"] or {}
             else:
+                # Fallback: sin fila en core.user_roles → matriz del rol
+                # desde core.roles.permissions (fuente que edita el CEO).
                 user["role_slug"]  = user["role"]
                 user["role_name"]  = (user["role"] or "").title()
-                user["permissions"] = {"modules": ["*"]} if user["role"] in ("admin", "superadmin") else {}
+                user["permissions"] = {}
+                try:
+                    cur.execute(
+                        "SELECT permissions FROM core.roles WHERE slug = %s LIMIT 1",
+                        [user["role"]],
+                    )
+                    prow = cur.fetchone()
+                    if prow:
+                        user["permissions"] = _normalize_permissions(prow[0])
+                except Exception:  # noqa: BLE001 — degradación segura
+                    user["permissions"] = {}
 
             # Sprint 2026-05-21 · Portal multi-empresa · single source.
             # `MwtJWTAuthentication.get_user` ya inyecta legal_entity_ids
