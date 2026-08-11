@@ -2339,23 +2339,108 @@ class MarluvasSaveSimulationView(APIView):
                 brand_id, cliente_id, hist_exc,
             )
 
+    @staticmethod
+    def _enabled_skus_for_client(brand_id, cliente_id, skus):
+        """Subconjunto de `skus` que siguen habilitados para el cliente.
+
+        Misma fuente de verdad que MarluvasClientEnabledSkusView:
+        productos.producto.especificaciones->'visibility' (visible_to_all
+        OR client_overrides[cliente]). Devuelve set(); ante fallo de DB
+        devuelve vacío para no bloquear el save (degradación segura).
+        """
+        if not skus:
+            return set()
+        cid_str = str(cliente_id)
+        rows = []
+        try:
+            with connection.cursor() as cur:
+                cur.execute("""
+                    SELECT sku
+                      FROM productos.producto
+                     WHERE sku = ANY(%(skus)s)
+                       AND COALESCE(is_active, TRUE) = TRUE
+                       AND (%(brand_id)s IS NULL OR marca_id = %(brand_id)s)
+                       AND (
+                         COALESCE(
+                           (especificaciones #>> '{visibility,visible_to_all}')::boolean,
+                           FALSE
+                         ) = TRUE
+                         OR
+                         COALESCE(
+                           (especificaciones #>> ARRAY['visibility','client_overrides', %(cid)s])::boolean,
+                           FALSE
+                         ) = TRUE
+                       )
+                """, {
+                    "skus": list(skus),
+                    "brand_id": str(brand_id) if brand_id else None,
+                    "cid": cid_str,
+                })
+                rows = [r[0] for r in cur.fetchall()]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("_enabled_skus_for_client failed (brand=%s cliente=%s): %s",
+                        brand_id, cliente_id, exc)
+        return set(rows)
+
     @classmethod
     def persist_snapshot(cls, *, brand_id, cliente_id, skus_payload,
                          custom_plazos, banda_vigente_id,
                          fecha_ini, fecha_fin, notas, user_id):
-        # Snapshot por REEMPLAZO: desactiva TODOS los SKUs activos del par
+        # Snapshot por REEMPLAZO: desactiva los SKUs activos del par
         # (marca, cliente) y reinserta los enviados. Devuelve
         # {saved, cells, size_overrides_saved}.
+        #
+        # Guard anti-borrado accidental (2026-08-11): el frontend del
+        # simulador manda solo los SKUs cargados en su estado. Si por
+        # cualquier razon el estado llega parcial (filtro enabled-skus,
+        # carga incompleta), un REPLACE total desactivaria silenciosamente
+        # las matrices de los SKUs omitidos. Para evitarlo, los SKUs
+        # activos que NO figuran en el payload (ni activos ni inactivos)
+        # y que siguen habilitados para el cliente se PRESERVAN: no se
+        # desactivan ni se borran. Los SKUs que sí vienen en el payload
+        # (aunque sea con activo=false) mantienen la semántica REPLACE.
         from .models import MarluvasClientSkuPricing
 
         rows = cls._build_price_rows(
             skus_payload, brand_id=brand_id, cliente_id=cliente_id,
             custom_plazos=custom_plazos, fecha_ini=fecha_ini, fecha_fin=fecha_fin,
         )
+
+        payload_sku_ids = {
+            (item.get("sku") or "").strip()
+            for item in skus_payload
+            if isinstance(item, dict) and (item.get("sku") or "").strip()
+        }
+        preserve_skus = set()
+        if payload_sku_ids:
+            try:
+                active_skus = set(
+                    MarluvasClientSkuPricing.objects
+                        .filter(brand_id=brand_id, cliente_id=cliente_id, is_active=True)
+                        .values_list("sku", flat=True)
+                )
+                omitted = active_skus - payload_sku_ids
+                if omitted:
+                    preserve_skus = cls._enabled_skus_for_client(
+                        brand_id, cliente_id, omitted,
+                    )
+                    if preserve_skus:
+                        log.warning(
+                            "persist_snapshot preserva %d SKU(s) habilitados no incluidos "
+                            "en el payload (brand=%s cliente=%s): %s",
+                            len(preserve_skus), brand_id, cliente_id,
+                            sorted(preserve_skus),
+                        )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("persist_snapshot guard skipped (%s): %s", exc, exc)
+                preserve_skus = set()
+
         with transaction.atomic():
-            (MarluvasClientSkuPricing.objects
-                .filter(brand_id=brand_id, cliente_id=cliente_id, is_active=True)
-                .update(is_active=False))
+            deact_qs = (MarluvasClientSkuPricing.objects
+                        .filter(brand_id=brand_id, cliente_id=cliente_id, is_active=True))
+            if preserve_skus:
+                deact_qs = deact_qs.exclude(sku__in=preserve_skus)
+            deact_qs.update(is_active=False)
             if rows:
                 MarluvasClientSkuPricing.objects.bulk_create(rows)
 
