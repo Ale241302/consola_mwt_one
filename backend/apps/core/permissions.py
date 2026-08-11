@@ -289,7 +289,8 @@ class RoleBasedPermission(BasePermission):
             if not actions or "*" in actions:
                 return True
             required_action = self._effective_action(request, view)
-            return required_action in actions
+            # Igual que consola: actions son "<modulo>.<accion>".
+            return f"{required_module}.{required_action}" in actions
 
         if isinstance(request.auth, dict):
             role_slug = request.auth.get("role")
@@ -343,4 +344,6 @@ class RoleBasedPermission(BasePermission):
         if not actions or "*" in actions:
             return True
         required_action = self._effective_action(request, view)
-        return required_action in actions
+        # Las actions se guardan como "<modulo>.<accion>" (ej. "portal.view").
+        # Comparar SOLO la acción ("view" in actions) era un bug: nunca coincide.
+        return f"{required_module}.{required_action}" in actions
