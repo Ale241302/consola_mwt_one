@@ -52,6 +52,8 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Productos / NCM / tallas / marcas ──────────────────────────────────
     "producto_listar": ("productos", "view"),
     "producto_obtener": ("productos", "view"),
+    "producto_precio_cliente": ("productos", "view"),
+    "producto_ficha_tecnica": ("productos", "view"),
     "producto_crear": ("productos", "create"),
     "producto_editar": ("productos", "update"),
     "producto_alias_crear": ("productos", "create"),

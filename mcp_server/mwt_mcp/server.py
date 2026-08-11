@@ -710,6 +710,48 @@ def producto_ficha_tecnica(producto_id: str) -> Any:
 
 
 @mcp.tool()
+def producto_precio_cliente(
+    sku: str,
+    marca_id: str | None = None,
+    plazo_dias: int | None = None,
+    banda_id: int | None = None,
+    usar_tc_actual: bool = True,
+) -> Any:
+    """Precio de un producto por cliente, en la BANDA VIGENTE y el PLAZO pedido.
+
+    Fuente: `commercial/marluvas/product-clients-matrix` (matriz precalculada).
+
+    Comportamiento:
+      · `plazo_dias` (8/15/30/60/90; default 90) → precio de ese plazo.
+      · Banda: usa la VIGENTE según el TC USD/BRL actual (ej. TC 5.08 → banda 6,
+        rango 5,00–5,20) salvo que pases `banda_id` explícito.
+      · `usar_tc_actual=true` (default) consulta el TC en vivo para elegir banda.
+      · Rol: CEO/Admin ve TODOS los clientes; client_b2b solo sus empresas;
+        staff no-CEO NO ve precios por cliente (solo la banda/plazo).
+
+    Devuelve `{sku, banda_vigente, plazo_dias, clientes: [{cliente_id,
+    razon_social, nombre_comercial, com_pct, banda, plazo_dias, precio,
+    precio_por_plazos}]}`."""
+    def _call():
+        import json as _json
+        from .marluvas_pricing import resolve_precio_cliente
+        matrix = api.get(
+            "commercial/marluvas/product-clients-matrix/",
+            _params(sku=sku, brand_id=marca_id),
+        )
+        if not isinstance(matrix, dict):
+            return matrix
+        return resolve_precio_cliente(
+            matrix,
+            user=get_identity_user(),
+            plazo_dias=plazo_dias,
+            banda_id=banda_id,
+            usar_tc_actual=usar_tc_actual,
+        )
+    return _safe_role(_call)
+
+
+@mcp.tool()
 @write_tool
 def producto_crear(datos: dict) -> Any:
     """Crea un producto. `datos`: sku, nombre, marca_id, categoria, unidad ("PAR" para
