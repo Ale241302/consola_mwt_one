@@ -477,12 +477,32 @@ def mwt_whoami() -> Any:
 
     Útil para verificar que el token MCP es válido, el rol, y qué puede hacer
     el agente en esta sesión (Ola 3.6 · D2)."""
+    # Diagnóstico de identidad: si el gateway no propagó la identidad del
+    # usuario, /auth/me/ falla con 401 (el ServiceToken no autentica ahí).
+    # Mejor devolver un mensaje claro que un "Access denied" críptico.
+    try:
+        user = get_identity_user()
+    except Exception as e:  # noqa: BLE001
+        return {
+            "error": True,
+            "detail": f"No se pudo resolver la identidad del usuario: {e}",
+            "hint": "Verifica que el gateway (ContextForge) propague X-Forwarded-User-* "
+                    "para la sesión MCP. Sin identidad, /auth/me/ rechaza el ServiceToken.",
+        }
+    if not user:
+        return {
+            "ok": False,
+            "error": True,
+            "detail": "No hay identidad de usuario propagada (solo ServiceToken).",
+            "hint": "Esta sesión MCP no trae X-Forwarded-User-*. Re-conecta el MCP en "
+                    "Claude (desconectar + conectar) para que ContextForge propague tu "
+                    "usuario OAuth, y vuelve a ejecutar mwt_whoami.",
+        }
     data = _safe(lambda: api.get("auth/me/"))
     if not isinstance(data, dict) or data.get("error"):
         return data
     try:
-        user = get_identity_user()
-        allowed = allowed_tool_names(user) if user else None
+        allowed = allowed_tool_names(user)
         all_tools = set(TOOL_MODULES.keys())
         if allowed is None:
             permitidas, ocultas = sorted(all_tools), []
