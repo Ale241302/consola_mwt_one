@@ -39,9 +39,12 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Introspección / salud / utilidades (siempre visibles) ──────────────
     "mwt_whoami": _ALWAYS,
     "mwt_health": _ALWAYS,
-    "mwt_diag_scope": _ALWAYS,
     "mwt_audit_write_registry": _ALWAYS,
     "tipo_cambio": _ALWAYS,
+    # mwt_diag_scope es CEO-only (diagnóstico de usuarios/permisos). Se mapea
+    # a "roles.view" para que SOLO roles con acceso a la matriz de roles (admin/
+    # superadmin) la vean en el listado; un client_b2b no la tiene.
+    "mwt_diag_scope": ("roles", "view"),
     # ── Clientes ───────────────────────────────────────────────────────────
     "cliente_listar": ("clientes", "view"),
     "cliente_obtener": ("clientes", "view"),
