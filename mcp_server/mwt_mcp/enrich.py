@@ -32,21 +32,32 @@ _cache_lock = threading.Lock()
 
 
 def _resolver(identity_email: str | None = None) -> None:
-    """Carga el mapa id -> nombre_comercial de TODOS los clientes visibles.
+    """Carga el mapa id -> nombre_comercial de las empresas del usuario.
 
-    Usa el mismo `api.get("clientes/")` que las tools; el resultado trae
-    `id` + `nombre_comercial`/`razon_social`. Fail-safe: ante error, cachea
+    Usa `portal/me/` como fuente PRIMARIA porque es accesible para TODOS los
+    roles (incluido client_b2b, que recibe 403 en `/clientes/`). El `me`
+    devuelve `empresas: [{id, nombre, razon_social}]`. Para staff, se añade un
+    fallback a `clientes/` (más completo). Fail-safe: ante error, cachea
     vacío para no repetir la llamada por cada tool.
     """
     global _client_cache, _client_cache_exp
     try:
-        data = api.get("clientes/", {"limit": 500})
-        rows = data if isinstance(data, list) else (data or {}).get("results") or []
-        _client_cache = {
-            str(r.get("id")): (r.get("nombre_comercial") or r.get("razon_social") or "")
-            for r in rows
-            if r.get("id")
-        }
+        names: dict[str, str] = {}
+        try:
+            data = api.get("portal/me/")
+            empresas = (data or {}).get("empresas") or []
+            for e in empresas:
+                if e.get("id"):
+                    names[str(e["id"])] = e.get("nombre") or e.get("razon_social") or ""
+        except Exception:  # noqa: BLE001 - fallback a clientes/
+            pass
+        if not names:
+            data = api.get("clientes/", {"limit": 500})
+            rows = data if isinstance(data, list) else (data or {}).get("results") or []
+            for r in rows:
+                if r.get("id"):
+                    names[str(r["id"])] = (r.get("nombre_comercial") or r.get("razon_social") or "")
+        _client_cache = names
         _client_cache_exp = time.time() + _CACHE_TTL
     except Exception:  # noqa: BLE001 - fail-safe
         _client_cache_exp = time.time() + 60  # reintenta pronto
