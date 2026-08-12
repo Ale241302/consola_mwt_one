@@ -44,6 +44,7 @@ from .serializers import (
 )
 from apps.productos.models import Producto
 from apps.expedientes.models import Expediente
+from apps.expedientes.po_alias_matcher import format_po_codigo
 
 log = logging.getLogger(__name__)
 
@@ -619,6 +620,11 @@ class PortalViewSet(viewsets.ViewSet):
             """,
             list(cids) + list(cids) + list(cids) + [limit, offset],
         )
+        # Normalizar el código de OC al prefijo canónico "PO" (consistencia
+        # con /expedientes). El doc puede guardarse sin prefijo.
+        for r in rows:
+            if r.get("client_ref"):
+                r["client_ref"] = format_po_codigo(r["client_ref"]) or r["client_ref"]
         return Response(rows)
 
     # ── /api/portal/mis_expedientes/ ──────────────────────────
@@ -690,6 +696,11 @@ class PortalViewSet(viewsets.ViewSet):
             r["estado_cliente_es"]   = m.get("es", r.get("estado"))
             r["estado_cliente_en"]   = m.get("en", r.get("estado"))
             r["estado_cliente_step"] = m.get("step", 0)
+            # Normalizar código de OC al prefijo canónico "PO".
+            if r.get("oc_codigo"):
+                r["oc_codigo"] = format_po_codigo(r["oc_codigo"]) or r["oc_codigo"]
+            if r.get("client_ref"):
+                r["client_ref"] = format_po_codigo(r["client_ref"]) or r["client_ref"]
         return Response(rows)
 
     # ── /api/portal/mis_pagos/ ────────────────────────────────

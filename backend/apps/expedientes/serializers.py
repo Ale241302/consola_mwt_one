@@ -8,6 +8,7 @@ from .models import (
     TransicionCat, EventLog, OcrParsingLog,
     BuilderArtifactInstance,
 )
+from .po_alias_matcher import format_po_codigo
 
 
 log = logging.getLogger(__name__)
@@ -213,7 +214,9 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
                     created_at or datetime.min, -len(cod))
 
         chosen = sorted(docs, key=_sort_key)[0][0]
-        ocs_docs[eid] = [chosen]
+        # Siempre mostrar el código con prefijo canónico "PO" (el documento
+        # puede guardarse sin prefijo, ej. codigo='505243' → 'PO 505243').
+        ocs_docs[eid] = [format_po_codigo(chosen) or chosen]
 
     # Fallback del código interno (commercial.oc) SOLO para expedientes
     # sin documento OC subido — misma política que el getter por-fila.
@@ -229,7 +232,7 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
         for eid, ocid in missing.items():
             cod = oc_map.get(str(ocid))
             if cod:
-                ocs_docs[eid] = [cod]
+                ocs_docs[eid] = [format_po_codigo(cod) or cod]
 
     sap_rows = (Linea.objects
                 .filter(expediente_id__in=exp_ids, is_active=True)
@@ -404,7 +407,9 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
                 doc_code = None
 
             codes_to_use = [doc_code] if doc_code else principal_codes
-            return [c for c in codes_to_use if c]
+            # Normalizar a "PO <n>" siempre (el doc puede guardarse sin
+            # prefijo, ej. '505243' → 'PO 505243'). Idempotente.
+            return [format_po_codigo(c) or c for c in codes_to_use if c]
         except Exception:  # noqa: BLE001
             return []
 

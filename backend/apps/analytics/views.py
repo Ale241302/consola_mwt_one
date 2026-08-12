@@ -50,6 +50,7 @@ from apps.core.scoped_querysets import (
     is_bypass,
 )
 from apps.core.permissions import RoleBasedPermission, user_is_ceo_or_admin
+from apps.expedientes.po_alias_matcher import format_po_codigo
 
 log = logging.getLogger(__name__)
 
@@ -670,6 +671,11 @@ class AnalyticsViewSet(viewsets.ViewSet):
             ORDER BY e.is_blocked DESC, e.credit_days DESC
             LIMIT 20
         """)
+        # Normalizar el código de OC al prefijo canónico "PO" (el documento
+        # puede guardarse sin prefijo, ej. '505243' → 'PO 505243').
+        for r in rows:
+            if r.get("oc_codigo"):
+                r["oc_codigo"] = format_po_codigo(r["oc_codigo"]) or r["oc_codigo"]
         return Response(rows)
 
     # ══════════════════════════════════════════════════════════
