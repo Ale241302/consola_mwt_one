@@ -167,9 +167,10 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
             lst.append(cod)
 
     # Listado / kanban: mostrar UNA sola OC por expediente. Preferimos el
-    # documento OC cuyo código normalizado coincida con el código principal
-    # de la OC (PO canónico). Si hay varios con la misma fecha, caemos al
-    # más antiguo y luego al más largo. Fix 2026-07-28.
+    # documento OC que tiene ARCHIVO REAL (el PDF que el cliente subió —
+    # fuente de verdad), luego el que coincide con el código principal de
+    # la OC (PO canónico). Si hay varios con la misma fecha, caemos al
+    # más antiguo y luego al más largo. Fix 2026-07-28 + 2026-08-11.
     oc_qs = (Documento.objects
              .filter(expediente_id__in=exp_ids, is_active=True)
              .filter(kind__iregex=r"^OC(\s|_|$)")
@@ -177,11 +178,12 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
     # R3 · clientes solo ven documentos OC con audience=CLIENT.
     if is_client:
         oc_qs = oc_qs.filter(audience="CLIENT")
-    oc_rows = oc_qs.order_by("expediente_id", "created_at").values_list("expediente_id", "codigo", "created_at")
+    oc_rows = oc_qs.order_by("expediente_id", "created_at").values_list(
+        "expediente_id", "codigo", "created_at", "storage_url")
     docs_by_eid = {}
-    for eid, cod, created_at in oc_rows:
-        docs_by_eid.setdefault(str(eid), []).append((cod, created_at))
-
+    for eid, cod, created_at, storage_url in oc_rows:
+        docs_by_eid.setdefault(str(eid), []).append(
+            (cod, created_at, bool(storage_url)))
     exp_oc_ids = {str(e.id): str(e.oc_id) for e in expedientes if e.oc_id}
     oc_principal = {}
     if exp_oc_ids:
@@ -200,11 +202,15 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
         principal_norm = _normalize_po_code(principal)
 
         def _sort_key(item):
-            cod, created_at = item
+            cod, created_at, has_file = item
             norm = _normalize_po_code(cod)
             matches = (norm == principal_norm) if principal_norm else False
-            # Coincidencia con principal primero, luego más antiguo, luego más largo
-            return (-int(matches), created_at or datetime.min, -len(cod))
+            # 1) Con archivo real del cliente primero (PO canónico — el
+            #    documento auto-generado por el wizard suele ir sin archivo
+            #    y con el código interno de la OC, no el PO del cliente).
+            # 2) Coincidencia con principal. 3) más antiguo. 4) más largo.
+            return (-int(has_file), -int(matches),
+                    created_at or datetime.min, -len(cod))
 
         chosen = sorted(docs, key=_sort_key)[0][0]
         ocs_docs[eid] = [chosen]
@@ -358,9 +364,11 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             return pre.get(str(obj.id), [])
         try:
             # Listado / kanban: una sola OC por expediente. Preferimos el
-            # documento OC cuyo código normalizado coincida con el código
-            # principal de la OC; si no, el más antiguo; si empatan, el más
-            # largo. Fix 2026-07-28.
+            # documento OC con ARCHIVO REAL (el PDF que el cliente subió),
+            # luego el que coincide con el código principal de la OC; si no,
+            # el más antiguo; si empatan, el más largo.
+            # Fix 2026-07-28 + 2026-08-11 (PO real del cliente por encima
+            # del documento auto-generado por el wizard sin archivo).
             doc_qs = (
                 Documento.objects
                 .filter(expediente_id=obj.id, is_active=True)
@@ -370,7 +378,8 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             )
             if self._is_client():
                 doc_qs = doc_qs.filter(audience="CLIENT")
-            doc_rows = list(doc_qs.order_by("created_at").values_list("codigo", "created_at"))
+            doc_rows = list(doc_qs.order_by("created_at").values_list(
+                "codigo", "created_at", "storage_url"))
 
             # OC principal (FK directa al expediente) — codigo auto-
             # generado por el wizard. Solo como fallback.
@@ -385,10 +394,11 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
 
             if doc_rows:
                 def _sort_key(item):
-                    cod, created_at = item
+                    cod, created_at, has_file = item
                     norm = _normalize_po_code(cod)
                     matches = (norm == principal_norm) if principal_norm else False
-                    return (-int(matches), created_at or datetime.min, -len(cod))
+                    return (-int(has_file), -int(matches),
+                            created_at or datetime.min, -len(cod))
                 doc_code = sorted(doc_rows, key=_sort_key)[0][0]
             else:
                 doc_code = None
