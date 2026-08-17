@@ -132,6 +132,14 @@ class _FakeAKClient:
             pk = int(path.split("/")[-2])
             self.providers.pop(pk, None)
             return _Resp({}, 204)
+        if path.startswith("/core/applications/"):
+            slug = path.split("/")[-2]
+            self.apps.pop(slug, None)
+            return _Resp({}, 204)
+        if path.startswith("/core/groups/"):
+            pk = path.split("/")[-2]
+            self.groups.pop(pk, None)
+            return _Resp({}, 204)
         return _Resp({}, 204)
 
 
@@ -254,3 +262,55 @@ def test_serializer_mcp_app_secret_solo_staff(monkeypatch, ak_client, cliente_so
     s_client = ClienteSerializer(cliente_sondel, context=nonstaff_ctx)
     assert s_staff.data["mcp_app"]["oauth_client_secret"] is not None
     assert s_client.data["mcp_app"]["oauth_client_secret"] is None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 3.4b — ciclo de vida automático (crear/editar/eliminar)
+# ─────────────────────────────────────────────────────────────────────
+def test_sync_after_update_kill_switch(monkeypatch, ak_client, cliente_sondel):
+    """Editar un cliente a INACTIVO dispara el kill-switch (deshabilitar+revocar)."""
+    _patch_client(monkeypatch, ak_client)
+    prov.provision_mcp_app(cliente_sondel)
+    assert McpApp.objects.filter(cliente_id=cliente_sondel.id).first().estado == "PROVISIONED"
+
+    cliente_sondel.estado = "INACTIVO"
+    cliente_sondel.save()
+    result = prov.sync_mcp_app_after_update(cliente_sondel, estado_prev="ACTIVO")
+    assert result["ok"] is True
+    # provider revocado
+    assert len(ak_client.providers) == 0
+    # registro DEPROVISIONED
+    assert McpApp.objects.filter(cliente_id=cliente_sondel.id).first().estado == "DEPROVISIONED"
+
+
+def test_sync_after_update_reactiva(monkeypatch, ak_client, cliente_sondel):
+    """Volver un cliente a ACTIVO re-provisiona la app."""
+    _patch_client(monkeypatch, ak_client)
+    prov.provision_mcp_app(cliente_sondel)
+    prov.deprovision_mcp_app(cliente_sondel)
+    assert McpApp.objects.filter(cliente_id=cliente_sondel.id).first().estado == "DEPROVISIONED"
+
+    cliente_sondel.estado = "ACTIVO"
+    cliente_sondel.save()
+    result = prov.sync_mcp_app_after_update(cliente_sondel, estado_prev="INACTIVO")
+    assert result["ok"] is True
+    app = McpApp.objects.filter(cliente_id=cliente_sondel.id).first()
+    assert app.estado == "PROVISIONED"
+    assert app.oauth_client_id is not None
+
+
+def test_delete_mcp_app_borra_todo(monkeypatch, ak_client, cliente_sondel):
+    """Eliminar un cliente borra app + provider + grupo + registro local."""
+    _patch_client(monkeypatch, ak_client)
+    prov.provision_mcp_app(cliente_sondel)
+    assert McpApp.objects.filter(cliente_id=cliente_sondel.id).count() == 1
+    assert len(ak_client.providers) == 1
+    assert len(ak_client.apps) == 1
+    assert len(ak_client.groups) == 1
+
+    result = prov.delete_mcp_app(cliente_sondel)
+    assert result["ok"] is True
+    assert len(ak_client.providers) == 0
+    assert len(ak_client.apps) == 0
+    assert len(ak_client.groups) == 0
+    assert McpApp.objects.filter(cliente_id=cliente_sondel.id).count() == 0

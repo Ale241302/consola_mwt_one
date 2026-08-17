@@ -91,6 +91,33 @@ def _provision_mcp_app(cliente) -> dict:
     return result
 
 
+def _sync_mcp_app_after_update(cliente, estado_prev: str | None = None,
+                               razon_prev: str | None = None) -> dict:
+    """Ola 3 · 3.4 — ciclo de vida automático al EDITAR el cliente.
+
+    Aplica kill-switch si pasa a inactivo/bloqueado; re-provisiona si vuelve
+    a activo; refresca el nombre si cambió la razón social.
+    """
+    from . import authentik_provisioning as prov
+
+    try:
+        return prov.sync_mcp_app_after_update(cliente, estado_prev, razon_prev)
+    except Exception as e:  # noqa: BLE001
+        log.warning("sync_mcp_app_after_update falló cliente=%s: %s", getattr(cliente, "id", "?"), e)
+        return {"ok": False, "detail": str(e)}
+
+
+def _delete_mcp_app(cliente) -> dict:
+    """Ola 3 · 3.4 — borra la app MCP por completo al ELIMINAR el cliente."""
+    from . import authentik_provisioning as prov
+
+    try:
+        return prov.delete_mcp_app(cliente)
+    except Exception as e:  # noqa: BLE001
+        log.warning("delete_mcp_app falló cliente=%s: %s", getattr(cliente, "id", "?"), e)
+        return {"ok": False, "detail": str(e)}
+
+
 def _kill_switch_cliente(cliente) -> dict:
     """Ola 3 · 3.4 — kill-switch al desactivar/eliminar un cliente."""
     from . import authentik_provisioning as prov
@@ -311,10 +338,18 @@ class ClienteViewSet(viewsets.ViewSet):
         # Ola 1 · 1.4c — scope-check en edición.
         if not _cliente_in_scope(request, str(c.id)):
             return Response({"detail": "Cliente no existe"}, status=404)
+        estado_prev = c.estado
+        razon_prev = c.razon_social
         s = ClienteSerializer(c, data=request.data, partial=True,
                               context=self._ctx(request))
         s.is_valid(raise_exception=True)
         s.save()
+        # Ola 3 · 3.4 — ciclo de vida automático: kill-switch si pasa a
+        # inactivo/bloqueado, re-provision si vuelve a activo, refresh nombre.
+        try:
+            _sync_mcp_app_after_update(s.instance, estado_prev, razon_prev)
+        except Exception as e:  # noqa: BLE001
+            log.warning("sync MCP post-update falló cliente=%s: %s", str(c.id), e)
         return Response(s.data)
     partial_update = update
 
@@ -331,12 +366,12 @@ class ClienteViewSet(viewsets.ViewSet):
             cliente = None
         Cliente.objects.filter(pk=pk).update(is_active=False)
         Cliente.objects.filter(parent_id=str(pk), is_active=True).update(is_active=False)
-        # Ola 3 · 3.4 — kill-switch: deshabilitar app MCP + revocar provider.
+        # Ola 3 · 3.4 — borrado COMPLETO de la app MCP (app + provider + grupo).
         if cliente is not None:
             try:
-                _kill_switch_cliente(cliente)
+                _delete_mcp_app(cliente)
             except Exception as e:  # noqa: BLE001
-                log.warning("kill-switch MCP destroy falló: %s", e)
+                log.warning("delete MCP destroy falló: %s", e)
         return Response(status=204)
 
     # ═══════════════════════════════════════════════════════════════

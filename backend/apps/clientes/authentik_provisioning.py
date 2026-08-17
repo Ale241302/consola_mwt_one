@@ -330,3 +330,91 @@ def deprovision_mcp_app(cliente) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         log.exception("deprovision_mcp_app error cliente=%s: %s", cid, e)
         return {"ok": False, "detail": str(e)}
+
+
+def delete_mcp_app(cliente) -> dict[str, Any]:
+    """Ola 3 · 3.4 — borrado COMPLETO de la app MCP del cliente.
+
+    Difiere de `deprovision_mcp_app` (kill-switch reversible) en que esto
+    ELIMINA la app, provider y grupo de Authentik y el registro de core.mcp_app.
+    Se usa al ELIMINAR un cliente (destroy).
+
+    Acciones:
+      1. DELETE application (si existe).
+      2. DELETE provider (revoca refresh tokens y credenciales OAuth).
+      3. DELETE grupo mcp-cliente-<slug> (si existe).
+      4. DELETE registro en core.mcp_app.
+    """
+    c = _client()
+    if c is None:
+        return {"ok": False, "detail": "Authentik no configurado."}
+    cid = str(cliente.id)
+    slug = app_slug(cid, cliente.razon_social or "")
+    gname = group_name(cid, cliente.razon_social or "")
+    try:
+        from apps.core.models import McpApp
+
+        mcp_app = McpApp.objects.filter(cliente_id=cliente.id).first()
+        provider_pk = mcp_app.authentik_provider_pk if mcp_app else None
+        with c:
+            # 1. Borrar application (DELETE completo)
+            r_app = c.delete(f"/core/applications/{slug}/")
+            if r_app.status_code not in (200, 204):
+                log.warning("delete app(%s): HTTP %s", slug, r_app.status_code)
+            # 2. Borrar provider (revoca tokens)
+            if provider_pk:
+                r_prov = c.delete(f"/providers/oauth2/{provider_pk}/")
+                if r_prov.status_code not in (200, 204):
+                    log.warning("delete provider(%s): HTTP %s", provider_pk, r_prov.status_code)
+            # 3. Borrar grupo (si quedó huérfano)
+            grp = _find(c, "/core/groups/", gname)
+            if grp:
+                r_grp = c.delete(f"/core/groups/{grp['pk']}/")
+                if r_grp.status_code not in (200, 204):
+                    log.warning("delete group(%s): HTTP %s", gname, r_grp.status_code)
+            # 4. Borrar registro local
+            if mcp_app:
+                mcp_app.delete()
+            return {"ok": True, "detail": "app MCP eliminada por completo", "app_slug": slug}
+    except Exception as e:  # noqa: BLE001
+        log.exception("delete_mcp_app error cliente=%s: %s", cid, e)
+        return {"ok": False, "detail": str(e)}
+
+
+def sync_mcp_app_after_update(cliente, estado_prev: str | None = None,
+                              razon_prev: str | None = None) -> dict[str, Any]:
+    """Ola 3 · 3.4 — sincroniza la app MCP tras editar el cliente.
+
+    Reglas (ciclo de vida automático crear/editar/eliminar):
+      · estado -> ACTIVO: si no había app (o estaba DEPROVISIONED), provisiona.
+      · estado -> INACTIVO/BLOQUEADO/PAUSADO: kill-switch (deshabilita + revoca).
+      · razon_social cambió: actualiza el nombre del registro local (el slug
+        del provider/grupo se mantiene por estabilidad; el nombre visible sí
+        se refresca).
+    """
+    cid = str(cliente.id)
+    estado = (cliente.estado or "ACTIVO").upper()
+    from apps.core.models import McpApp
+
+    mcp_app = McpApp.objects.filter(cliente_id=cliente.id).first()
+
+    # Cambio de estado a inactivo/bloqueado/pausado -> kill-switch
+    if estado in ("INACTIVO", "BLOQUEADO", "PAUSADO"):
+        if mcp_app and mcp_app.estado != "DEPROVISIONED":
+            res = deprovision_mcp_app(cliente)
+            log.info("sync_mcp_app: cliente %s → %s (kill-switch) %s", cid, estado, res.get("detail"))
+            return res
+        return {"ok": True, "detail": f"cliente {estado}; sin app activa", "app_slug": None}
+
+    # Estado ACTIVO (o sin estado): asegurar app provisionada
+    if not mcp_app or mcp_app.estado != "PROVISIONED":
+        res = provision_mcp_app(cliente)
+        if not res.get("ok"):
+            log.warning("sync_mcp_app: re-provision falló para %s: %s", cid, res.get("detail"))
+        return res
+
+    # Ya provisionada: solo refrescar el nombre visible si cambió la razón
+    if mcp_app and razon_prev and cliente.razon_social and cliente.razon_social != razon_prev:
+        mcp_app.nombre = cliente.razon_social
+        mcp_app.save(update_fields=["nombre", "updated_at"])
+    return {"ok": True, "detail": "app MCP ya provisionada; sin cambios", "app_slug": mcp_app.slug}
