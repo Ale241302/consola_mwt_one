@@ -202,6 +202,17 @@ export default function ScreenClienteDetail() {
   // Lo mantengo declarado para no romper la función si algún effect lo refería.
   const [showEdit, setShowEdit] = useState(false);   // eslint-disable-line no-unused-vars
 
+  // Ola 4 · mostrar/copiar credenciales MCP del cliente
+  const [mcpShowSecret, setMcpShowSecret] = useState(false);
+  const [mcpCopied, setMcpCopied] = useState(null);
+
+  const copyMcp = (what, value) => {
+    if (!value) return;
+    navigator.clipboard?.writeText(String(value)).catch(() => {});
+    setMcpCopied(what);
+    setTimeout(() => setMcpCopied(null), 1600);
+  };
+
   // Estado para el modal de confirmación de eliminación
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting,      setDeleting]      = useState(false);
@@ -677,19 +688,53 @@ export default function ScreenClienteDetail() {
                 <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
                   {rawClient.mcp_app.mcp_url || 'https://mcp.mwt.one/servers/<pendiente>/mcp'}
                 </span>
-                {rawClient.mcp_app.mcp_url && <IconCopy size={13} style={{color:'var(--text-tertiary)', flexShrink:0, cursor:'pointer'}}/>}
+                {rawClient.mcp_app.mcp_url && (
+                  <button className="btn btn-ghost btn-sm" title="Copiar"
+                          onClick={()=>copyMcp('url', rawClient.mcp_app.mcp_url)}
+                          style={{padding:'2px 6px', flexShrink:0}}>
+                    <IconCopy size={13}/>
+                    {mcpCopied==='url' ? ' ✓' : ''}
+                  </button>
+                )}
               </div>
             </div>
             <div className="mono-sm">
               <div className="caption" style={{marginBottom:4}}>OAuth Client ID</div>
-              <div style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-                {rawClient.mcp_app.oauth_client_id || '—'}
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
+                <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                  {rawClient.mcp_app.oauth_client_id || '—'}
+                </span>
+                {rawClient.mcp_app.oauth_client_id && (
+                  <button className="btn btn-ghost btn-sm" title="Copiar"
+                          onClick={()=>copyMcp('cid', rawClient.mcp_app.oauth_client_id)}
+                          style={{padding:'2px 6px', flexShrink:0}}>
+                    <IconCopy size={13}/>
+                    {mcpCopied==='cid' ? ' ✓' : ''}
+                  </button>
+                )}
               </div>
             </div>
             <div className="mono-sm">
               <div className="caption" style={{marginBottom:4}}>OAuth Client Secret</div>
-              <div style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-                {rawClient.mcp_app.oauth_client_secret ? '••••••••••••••••' : '—'}
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
+                <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                  {mcpShowSecret ? (rawClient.mcp_app.oauth_client_secret || '—') : '••••••••••••••••'}
+                </span>
+                {rawClient.mcp_app.oauth_client_secret && (
+                  <>
+                    <button className="btn btn-ghost btn-sm" title={mcpShowSecret ? 'Ocultar' : 'Revelar'}
+                            onClick={()=>setMcpShowSecret(s=>!s)}
+                            style={{padding:'2px 6px', flexShrink:0}}>
+                      {mcpShowSecret ? <IconMcpEyeOff size={13}/> : <IconMcpEye size={13}/>}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" title="Copiar"
+                            onClick={()=>copyMcp('sec', rawClient.mcp_app.oauth_client_secret)}
+                            style={{padding:'2px 6px', flexShrink:0}}>
+                      <IconCopy size={13}/>
+                      {mcpCopied==='sec' ? ' ✓' : ''}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
