@@ -43,7 +43,11 @@ _DEFAULT_IDS = (
 def _server_ids() -> set:
     raw = os.environ.get("MWT_SERVER_IDS", "").strip()
     ids = [x.strip() for x in raw.split(",") if x.strip()] if raw else []
-    ids = ids or [x.strip() for x in _DEFAULT_IDS.split(",") if x.strip()]
+    if not ids:
+        if isinstance(_DEFAULT_IDS, (tuple, list)):
+            ids = [str(x).strip() for x in _DEFAULT_IDS if str(x).strip()]
+        else:
+            ids = [x.strip() for x in str(_DEFAULT_IDS).split(",") if x.strip()]
     return set(ids)
 
 
