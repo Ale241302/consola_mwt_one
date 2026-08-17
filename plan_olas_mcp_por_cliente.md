@@ -231,6 +231,15 @@ datos; `logistica2@sondelsa.com` en el vsid de Sondel solo ve Sondel.
 **Objetivo:** crear/editar/eliminar un Cliente en la consola crea/edita/elimina
 su Application en Authentik, con Client ID/Secret propios.
 
+### 3.0 Matriz de roles para client_b2b (corrección del CEO)
+- Hoy `client_b2b` NO tiene `productos` en su matriz (`/roles`) → el MCP del
+  cliente **no muestra** `producto_listar/obtener/buscar/precio_cliente/
+  ficha_tecnica` (solo 33 tools).
+- Cambio (SQL nuevo `H2_*`): `client_b2b` gana `productos.can_read=true`
+  (resto false: NO create/update/delete/docs) + re-sync a `core.roles.permissions`.
+- Resultado: 39 tools visibles para client_b2b, todas de lectura (verificado
+  con simulación de `allowed_tool_names`).
+
 ### 3.1 Sync de grupos consola→Authentik
 `backend/apps/users/authentik_sync.py`
 - Nueva función `sync_groups(email, legal_entity_ids)`:

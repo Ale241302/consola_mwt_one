@@ -119,6 +119,8 @@ class ClienteSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
     is_subsidiary       = serializers.BooleanField(read_only=True)
     subsidiarias_count  = serializers.SerializerMethodField()
     kpis_pool           = serializers.SerializerMethodField()
+    # Ola 3 · app MCP del cliente (credenciales; secret solo para staff).
+    mcp_app             = serializers.SerializerMethodField()
 
     class Meta:
         model  = Cliente
@@ -145,6 +147,8 @@ class ClienteSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
             "credito_disponible", "tasa_utilizacion",
             "kpis_pool",                 # ← consolidación padre + subsidiarias
             "comision_pct",
+            # Ola 3 · app MCP del cliente
+            "mcp_app",
             # Estado
             "estado", "estado_operativo",
             # Asignación interna
@@ -305,6 +309,30 @@ class ClienteSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
         reflejan el pool del PADRE (límite operativo compartido).
         """
         return o.calcular_kpis_consolidados()
+
+    def get_mcp_app(self, o):
+        """Ola 3 · credenciales de la app MCP del cliente.
+
+        El OAuth Client Secret SOLO se entrega a staff (admin/CEO). Para
+        cualquier otro rol el campo llega null (no se filtra el resto).
+        """
+        try:
+            from apps.core.models import McpApp
+
+            app = McpApp.objects.filter(cliente_id=o.id).first()
+        except Exception:  # noqa: BLE001 - tabla puede no existir en legacy
+            return None
+        if not app:
+            return None
+        staff = _is_admin_request(self.context)
+        return {
+            "slug": app.slug,
+            "nombre": app.nombre,
+            "mcp_url": app.mcp_url,
+            "oauth_client_id": app.oauth_client_id,
+            "oauth_client_secret": app.oauth_client_secret if staff else None,
+            "estado": app.estado,
+        }
 
     # ── Validación parent_id (regla 2 niveles) ─────────────────
     def validate_parent_id(self, value):

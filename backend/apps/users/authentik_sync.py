@@ -189,3 +189,131 @@ def set_active(email: str, is_active: bool) -> bool:
     except Exception as e:  # noqa: BLE001 - fail-safe
         log.exception("authentik set_active(%s) error: %s", email, e)
         return False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Ola 3 · 3.1 — sync de GRUPOS de cliente (membresía MCP por empresa)
+# ═══════════════════════════════════════════════════════════════════
+def _slugify_client(razon_social: str, cliente_id: str | None = None) -> str:
+    """Slug canónico de grupo: `mcp-cliente-<slug>`.
+
+    Deriva un slug corto desde razon_social (ASCII, lowercase, guiones);
+    si queda vacío usa los primeros 8 chars del UUID del cliente.
+    """
+    import re
+
+    s = (razon_social or "").strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    if len(s) > 40:
+        s = s[:40].rstrip("-")
+    if not s and cliente_id:
+        s = str(cliente_id).replace("-", "")[:12]
+    return s or "cliente"
+
+
+def client_group_name(cliente_id: str, razon_social: str | None = None) -> str:
+    """Nombre del grupo Authentik para un cliente: `mcp-cliente-<slug>`."""
+    return f"mcp-cliente-{_slugify_client(razon_social, cliente_id)}"
+
+
+def _find_group(c: httpx.Client, name: str) -> dict | None:
+    r = c.get("/core/groups/", params={"name": name})
+    if r.status_code != 200:
+        return None
+    results = (r.json() or {}).get("results") or []
+    return results[0] if results else None
+
+
+def _ensure_group(c: httpx.Client, name: str) -> dict | None:
+    """Obtiene o crea el grupo; devuelve su dict o None si falla."""
+    existing = _find_group(c, name)
+    if existing:
+        return existing
+    r = c.post("/core/groups/", json={"name": name, "is_superuser": False})
+    if r.status_code not in (200, 201):
+        log.warning("authentik create group(%s): HTTP %s %s", name, r.status_code, r.text[:200])
+        return None
+    return r.json()
+
+
+def _group_user_pks(c: httpx.Client, group_pk) -> set[int]:
+    """Pks de usuarios actualmente en el grupo (campo `users` = lista ints)."""
+    r = c.get(f"/core/groups/{group_pk}/")
+    if r.status_code != 200:
+        return set()
+    g = r.json() or {}
+    return {int(u) for u in (g.get("users") or []) if u}
+
+
+def _set_group_users(c: httpx.Client, group_pk, user_pks: set[int]) -> bool:
+    """Reemplaza la membresía del grupo (PATCH users=[...]). True si OK."""
+    r = c.patch(f"/core/groups/{group_pk}/", json={"users": sorted(user_pks)})
+    if r.status_code not in (200, 204):
+        log.warning("authentik set users(%s): HTTP %s", group_pk, r.status_code)
+        return False
+    return True
+
+
+def sync_groups(email: str, legal_entity_ids: list[str],
+                client_names: dict[str, str] | None = None) -> dict:
+    """Ola 3 · 3.1 — sincroniza la membresía del usuario en grupos de cliente.
+
+    Regla: por cada `legal_entity_id` del usuario se crea/obtiene el grupo
+    `mcp-cliente-<slug>` (si no existe) y se añade al usuario. Si el usuario
+    estaba en grupos de clientes que ya no tiene asignados, se remueve.
+
+    Args:
+      email:            email del usuario (users.mwtuser).
+      legal_entity_ids: clientes.cliente.id asignados (pool del usuario).
+      client_names:     opcional, mapa cliente_id -> razon_social (para slug).
+
+    Returns:
+      {"ok": bool, "groups": [nombre_grupo], "detail": str}
+    """
+    email = (email or "").strip().lower()
+    c = _client()
+    if c is None or not email:
+        return {"ok": False, "groups": [], "detail": "sync desactivado o sin email"}
+    try:
+        user = find_user(email)
+        if not user:
+            return {"ok": False, "groups": [], "detail": f"usuario {email} no existe en Authentik"}
+        user_pk = int(user["pk"])
+        target_groups: list[str] = []
+        names = client_names or {}
+        with c:
+            # Construir mapa grupo_nombre -> conjunto de pks (incluye al usuario).
+            # Un usuario multi-empresa debe pertenecer a TODOS sus grupos de cliente.
+            by_group: dict[str, set[int]] = {}
+            for cid in (legal_entity_ids or []):
+                cid_str = str(cid)
+                name = names.get(cid_str) or ""
+                gname = client_group_name(cid_str, name)
+                by_group.setdefault(gname, set()).add(user_pk)
+                target_groups.append(gname)
+
+            # Aplicar membresía en todos los grupos mcp-cliente-*.
+            r = c.get("/core/groups/", params={"page_size": 100})
+            if r.status_code != 200:
+                return {"ok": False, "groups": [], "detail": "no se pudo listar grupos"}
+            all_groups = (r.json() or {}).get("results") or []
+            for g in all_groups:
+                gname = g.get("name") or ""
+                if not gname.startswith("mcp-cliente-"):
+                    continue
+                gp = g["pk"]
+                wanted = by_group.get(gname, set())
+                current = _group_user_pks(c, gp)
+                if wanted != current:
+                    _set_group_users(c, gp, wanted)
+            # Crear grupos de cliente que aún no existen (asegurar).
+            for gname in by_group:
+                grp = _ensure_group(c, gname)
+                if grp:
+                    current = _group_user_pks(c, grp["pk"])
+                    if by_group[gname] != current:
+                        _set_group_users(c, grp["pk"], by_group[gname])
+            return {"ok": True, "groups": target_groups, "detail": f"sync OK para {email}"}
+    except Exception as e:  # noqa: BLE001 - fail-safe
+        log.exception("authentik sync_groups(%s) error: %s", email, e)
+        return {"ok": False, "groups": [], "detail": str(e)}

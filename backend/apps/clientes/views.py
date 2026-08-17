@@ -81,6 +81,26 @@ def _cliente_in_scope(request, cliente_id: str) -> bool:
     return scope is not None and str(cliente_id).lower() in {str(s).lower() for s in scope}
 
 
+def _provision_mcp_app(cliente) -> dict:
+    """Ola 3 · 3.2 — provisiona la app MCP del cliente (best-effort)."""
+    from . import authentik_provisioning as prov
+
+    result = prov.provision_mcp_app(cliente)
+    if not result.get("ok"):
+        log.warning("provision_mcp_app falló cliente=%s: %s", getattr(cliente, "id", "?"), result.get("detail"))
+    return result
+
+
+def _kill_switch_cliente(cliente) -> dict:
+    """Ola 3 · 3.4 — kill-switch al desactivar/eliminar un cliente."""
+    from . import authentik_provisioning as prov
+
+    result = prov.deprovision_mcp_app(cliente)
+    if not result.get("ok"):
+        log.warning("kill-switch MCP falló cliente=%s: %s", getattr(cliente, "id", "?"), result.get("detail"))
+    return result
+
+
 def _build_cliente_list_batches(rows):
     """Fable5 · pre-cómputo batch para ClienteListSerializer.
 
@@ -276,6 +296,11 @@ class ClienteViewSet(viewsets.ViewSet):
         # es inyectarlo como kwarg de save(): se mergea a validated_data
         # antes de llamar a create(). Mismo patrón aplicado en nodos.
         s.save(id=uuid.uuid4())
+        # Ola 3 · 3.2 — provisionar la app MCP del cliente (best-effort).
+        try:
+            _provision_mcp_app(s.instance)
+        except Exception as e:  # noqa: BLE001
+            log.warning("provision_mcp_app post-create falló: %s", e)
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
@@ -300,8 +325,18 @@ class ClienteViewSet(viewsets.ViewSet):
         # Soft delete + cascada lógica a subsidiarias activas (Parent-Child).
         # Si el padre se desactiva, sus subsidiarias también — mantienen el
         # historial pero salen del dashboard. Reversible vía PATCH is_active.
+        try:
+            cliente = Cliente.objects.filter(pk=pk).first()
+        except Cliente.DoesNotExist:
+            cliente = None
         Cliente.objects.filter(pk=pk).update(is_active=False)
         Cliente.objects.filter(parent_id=str(pk), is_active=True).update(is_active=False)
+        # Ola 3 · 3.4 — kill-switch: deshabilitar app MCP + revocar provider.
+        if cliente is not None:
+            try:
+                _kill_switch_cliente(cliente)
+            except Exception as e:  # noqa: BLE001
+                log.warning("kill-switch MCP destroy falló: %s", e)
         return Response(status=204)
 
     # ═══════════════════════════════════════════════════════════════
@@ -370,6 +405,73 @@ class ClienteViewSet(viewsets.ViewSet):
         except Cliente.DoesNotExist:
             return Response({"detail": "Cliente no existe"}, status=404)
         return Response(cli.calcular_kpis_consolidados())
+
+    # ═════════════════════════════════════════════════════════════════
+    # Ola 3 · App MCP del cliente (provisionar / ver / deprovisionar)
+    # ═════════════════════════════════════════════════════════════════
+    @action(detail=True, methods=["get"], url_path="mcp-app")
+    def mcp_app(self, request, pk=None):
+        """GET /api/clientes/<id>/mcp-app/ — credenciales de la app MCP.
+
+        Devuelve URL del servidor MCP remoto, OAuth Client ID, OAuth Client
+        Secret y estado. Solo staff (bypass) — nunca un client_b2b.
+        """
+        if not _cliente_in_scope(request, str(pk)):
+            return Response({"detail": "Cliente no existe"}, status=404)
+        from apps.core.models import McpApp
+
+        app = McpApp.objects.filter(cliente_id=pk).first()
+        if not app:
+            return Response({"detail": "Este cliente no tiene app MCP provisionada."}, status=404)
+        return Response({
+            "cliente_id": str(app.cliente_id),
+            "slug": app.slug,
+            "nombre": app.nombre,
+            "mcp_url": app.mcp_url,
+            "oauth_client_id": app.oauth_client_id,
+            "oauth_client_secret": app.oauth_client_secret,
+            "estado": app.estado,
+            "created_at": app.created_at.isoformat() if app.created_at else None,
+        })
+
+    @action(detail=True, methods=["post"], url_path="mcp-app/provision")
+    def mcp_app_provision(self, request, pk=None):
+        """POST /api/clientes/<id>/mcp-app/provision/ — crea/actualiza la app."""
+        if not _cliente_in_scope(request, str(pk)):
+            return Response({"detail": "Cliente no existe"}, status=404)
+        try:
+            cli = Cliente.objects.get(pk=pk)
+        except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente no existe"}, status=404)
+        result = _provision_mcp_app(cli)
+        return Response(result, status=200 if result.get("ok") else 400)
+
+    @action(detail=True, methods=["post"], url_path="mcp-app/deprovision")
+    def mcp_app_deprovision(self, request, pk=None):
+        """POST /api/clientes/<id>/mcp-app/deprovision/ — kill-switch manual."""
+        if not _cliente_in_scope(request, str(pk)):
+            return Response({"detail": "Cliente no existe"}, status=404)
+        try:
+            cli = Cliente.objects.get(pk=pk)
+        except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente no existe"}, status=404)
+        result = _kill_switch_cliente(cli)
+        return Response(result, status=200 if result.get("ok") else 400)
+
+    @action(detail=True, methods=["post"], url_path="mcp-app/sync-members")
+    def mcp_app_sync_members(self, request, pk=None):
+        """POST /api/clientes/<id>/mcp-app/sync-members/ — re-sincroniza los
+        usuarios del cliente en el grupo Authentik."""
+        if not _cliente_in_scope(request, str(pk)):
+            return Response({"detail": "Cliente no existe"}, status=404)
+        try:
+            cli = Cliente.objects.get(pk=pk)
+        except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente no existe"}, status=404)
+        from .authentik_provisioning import sync_cliente_group_members
+
+        result = sync_cliente_group_members(cli)
+        return Response(result, status=200 if result.get("ok") else 400)
 
     # ── Selects ────────────────────────────────────────
     @action(detail=False, methods=["get"])
