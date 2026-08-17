@@ -17,7 +17,7 @@ import {
   IconChevLeft, IconMapPin, IconUser, IconMail, IconCreditCard,
   IconClock, IconAlert, IconCheck, IconX, IconShield, IconDollar,
   IconTrend, IconBoxes, IconFolder, IconHistory, IconGlobe, IconLock,
-  IconRefresh, IconUsers,
+  IconRefresh, IconUsers, IconKey, IconCopy, IconPlug, IconMcpEye, IconMcpEyeOff,
 } from "../lib/icons.jsx";
 import { fmtMoney, fmtShortDate } from "../lib/i18n.js";
 import { clientesApi, apiFetch, getToken, financePaymentsApi } from "../lib/api.js";
@@ -653,6 +653,48 @@ export default function ScreenClienteDetail() {
           </div>
         </div>
       </div>
+
+      {/* ── Integración MCP [CEO-ONLY] ─────────── */}
+      {!isClient && rawClient?.mcp_app && (
+        <div className="card" style={{marginTop: 16, padding: '14px 16px'}}>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:10, flexWrap:'wrap'}}>
+            <span style={{display:'inline-flex', color:'var(--text-primary)'}}><IconPlug size={13}/></span>
+            <span style={{font:'700 12px/1 var(--font-body)', color:'var(--text-primary)', textTransform:'uppercase', letterSpacing:0.4}}>
+              {lang==='es' ? 'Integración MCP' : 'MCP Integration'}
+            </span>
+            <span className={`badge ${rawClient.mcp_app.estado === 'PROVISIONED' ? 'badge-success' : 'badge-outline'}`}>
+              {rawClient.mcp_app.estado}
+            </span>
+            <button className="btn btn-ghost" style={{marginLeft:'auto'}}
+                    onClick={()=>navigate(`/clientes/${clienteId}/editar`)}>
+              {lang==='es' ? 'Gestionar' : 'Manage'}
+            </button>
+          </div>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(220px, 1fr))', gap:12}}>
+            <div className="mono-sm" style={{overflow:'hidden'}}>
+              <div className="caption" style={{marginBottom:4}}>{lang==='es' ? 'URL del servidor MCP remoto' : 'Remote MCP server URL'}</div>
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
+                <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                  {rawClient.mcp_app.mcp_url || 'https://mcp.mwt.one/servers/<pendiente>/mcp'}
+                </span>
+                {rawClient.mcp_app.mcp_url && <IconCopy size={13} style={{color:'var(--text-tertiary)', flexShrink:0, cursor:'pointer'}}/>}
+              </div>
+            </div>
+            <div className="mono-sm">
+              <div className="caption" style={{marginBottom:4}}>OAuth Client ID</div>
+              <div style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                {rawClient.mcp_app.oauth_client_id || '—'}
+              </div>
+            </div>
+            <div className="mono-sm">
+              <div className="caption" style={{marginBottom:4}}>OAuth Client Secret</div>
+              <div style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                {rawClient.mcp_app.oauth_client_secret ? '••••••••••••••••' : '—'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Tabs ─────────────────── */}
       <div className="tab-bar" style={{marginTop: 20, display:'flex', alignItems:'center'}}>

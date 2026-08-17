@@ -21,12 +21,14 @@
 //
 // POL_VISIBILIDAD: sección 5 + payload filtrado si !isAdmin.
 // =====================================================================
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconX, IconCheck, IconUser, IconMapPin, IconCreditCard, IconShield,
   IconLock, IconAlert, IconDollar, IconPercent, IconChevLeft,
+  IconGlobe, IconKey, IconRefresh, IconCopy, IconPlug, IconPlugOff,
+  IconMcpEye, IconMcpEyeOff,
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { CLIENTS } from "../data/mockData.js";
@@ -124,6 +126,59 @@ export default function ScreenClienteFormView() {
   // En modo "nuevo" arranca con form vacío (defaults).
   const [initial, setInitial] = useState(null);
   const [loadingInitial, setLoadingInitial] = useState(false);
+
+  // ── Ola 4 · App MCP del cliente (credenciales del servidor remoto) ──
+  const [mcpApp, setMcpApp] = useState(null);
+  const [mcpLoading, setMcpLoading] = useState(false);
+  const [mcpAction, setMcpAction] = useState(null);   // "provision"|"deprovision"|"sync"
+  const [mcpError, setMcpError] = useState(null);
+  const [mcpShowSecret, setMcpShowSecret] = useState(false);
+  const [mcpCopied, setMcpCopied] = useState(null);
+
+  const loadMcpApp = useCallback(async (cid) => {
+    if (!cid) return;
+    setMcpLoading(true);
+    setMcpError(null);
+    try {
+      const data = await clientesApi.action("mcp-app", cid);
+      setMcpApp(data);
+    } catch (err) {
+      // 404 = no provisionada aún → estado null (se muestra "provisionar").
+      if (String(err?.status || err?.response?.status || "") === "404") {
+        setMcpApp(null);
+      } else {
+        setMcpApp(null);
+        setMcpError(String(err?.message || err));
+      }
+    } finally {
+      setMcpLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isEdit && clienteId) loadMcpApp(clienteId);
+  }, [isEdit, clienteId, loadMcpApp]);
+
+  const runMcpAction = async (action) => {
+    if (!clienteId) return;
+    setMcpAction(action);
+    setMcpError(null);
+    try {
+      await clientesApi.action(`mcp-app/${action}`, clienteId, {});
+      await loadMcpApp(clienteId);
+    } catch (err) {
+      setMcpError(String(err?.message || err));
+    } finally {
+      setMcpAction(null);
+    }
+  };
+
+  const copyMcp = (what, value) => {
+    if (!value) return;
+    navigator.clipboard?.writeText(String(value)).catch(() => {});
+    setMcpCopied(what);
+    setTimeout(() => setMcpCopied(null), 1600);
+  };
 
   useEffect(() => {
     if (!isEdit) { setInitial(null); return; }
@@ -692,6 +747,130 @@ export default function ScreenClienteFormView() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* ─── Sección 6 · App MCP [CEO-ONLY, solo edición] ─── */}
+        <AnimatePresence>
+          {isAdmin && isEdit ? (
+            <motion.div
+              key="mcp-section"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
+              style={{ overflow: "hidden" }}
+            >
+              <Section
+                icon={<IconGlobe size={14}/>}
+                title={lang === "es" ? "App MCP del cliente" : "Client MCP App"}
+                subtitle={lang === "es"
+                  ? "Integración del MCP remoto: el cliente conecta su IA (Claude etc.) con estas credenciales."
+                  : "Remote MCP integration: the client connects their AI with these credentials."}
+                badge={{ label: "MCP", color: "#0B1E3A", icon: <IconPlug size={9}/> }}
+                highlight={INK}
+              >
+                {mcpLoading ? (
+                  <div style={{ padding: "14px 0", color: MUTED, font: "500 12px/1.4 var(--font-body)" }}>
+                    {lang === "es" ? "Cargando integración…" : "Loading integration…"}
+                  </div>
+                ) : mcpError && !mcpApp ? (
+                  <div style={{
+                    padding: "12px 14px", background: `${RED}0D`, border: `1px solid ${RED}33`,
+                    borderRadius: 8, color: "#991B1B", font: "500 12px/1.4 var(--font-body)",
+                    display: "flex", alignItems: "flex-start", gap: 8,
+                  }}>
+                    <IconAlert size={12} style={{ marginTop: 2, flexShrink: 0 }}/>
+                    <span>{mcpError}</span>
+                  </div>
+                ) : mcpApp ? (
+                  <>
+                    {/* URL del servidor MCP remoto */}
+                    <McpRow
+                      icon={<IconGlobe size={13}/>}
+                      label={lang === "es" ? "URL del servidor MCP remoto" : "Remote MCP server URL"}
+                      value={mcpApp.mcp_url || "https://mcp.mwt.one/servers/<pendiente>/mcp"}
+                      hint={!mcpApp.mcp_url ? (lang === "es" ? "Se completará al registrar el virtual server (Ola 5)." : "Filled once the virtual server is registered (Wave 5).") : null}
+                      onCopy={mcpApp.mcp_url ? () => copyMcp("url", mcpApp.mcp_url) : null}
+                      copied={mcpCopied === "url"}
+                    />
+                    <McpRow
+                      icon={<IconKey size={13}/>}
+                      label="OAuth Client ID"
+                      value={mcpApp.oauth_client_id || "—"}
+                      mono
+                      onCopy={mcpApp.oauth_client_id ? () => copyMcp("cid", mcpApp.oauth_client_id) : null}
+                      copied={mcpCopied === "cid"}
+                    />
+                    <McpRow
+                      icon={<IconLock size={13}/>}
+                      label="OAuth Client Secret"
+                      value={mcpShowSecret ? (mcpApp.oauth_client_secret || "—") : "••••••••••••••••"}
+                      mono
+                      secret
+                      onCopy={mcpApp.oauth_client_secret ? () => copyMcp("sec", mcpApp.oauth_client_secret) : null}
+                      copied={mcpCopied === "sec"}
+                      onToggle={() => setMcpShowSecret(s => !s)}
+                    />
+
+                    {/* Estado + acciones */}
+                    <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{
+                        padding: "4px 10px", borderRadius: 12,
+                        background: mcpApp.estado === "PROVISIONED" ? `${MINT}18` : `${AMBER}18`,
+                        color: mcpApp.estado === "PROVISIONED" ? MINT : AMBER,
+                        font: "700 10px/1 var(--font-body)", letterSpacing: 0.5, textTransform: "uppercase",
+                      }}>
+                        {mcpApp.estado}
+                      </span>
+                      <button type="button" className="btn btn-sm"
+                        onClick={() => runMcpAction("sync-members")}
+                        disabled={mcpAction}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        <IconRefresh size={13}/>
+                        {lang === "es" ? "Sincronizar usuarios" : "Sync users"}
+                      </button>
+                      <button type="button" className="btn btn-sm"
+                        onClick={() => runMcpAction("deprovision")}
+                        disabled={mcpAction}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, color: RED }}>
+                        <IconPlugOff size={13}/>
+                        {lang === "es" ? "Desactivar app" : "Deactivate app"}
+                      </button>
+                      {mcpError && (
+                        <span style={{ color: RED, font: "500 11px/1.3 var(--font-body)" }}>
+                          {mcpError}
+                        </span>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{
+                      padding: "12px 14px", background: `${INK}0A`, border: `1px dashed var(--border)`,
+                      borderRadius: 8, color: MUTED, font: "500 12px/1.5 var(--font-body)",
+                      marginBottom: 14,
+                    }}>
+                      {lang === "es"
+                        ? "Este cliente aún no tiene una app MCP provisionada. Al crearla se genera su URL, Client ID y Client Secret en Authentik (grupo de usuarios + provider OAuth2)."
+                        : "This client has no MCP app provisioned yet. Creating it generates its URL, Client ID and Client Secret in Authentik (user group + OAuth2 provider)."}
+                    </div>
+                    <button type="button" className="btn btn-sm btn-primary"
+                      onClick={() => runMcpAction("provision")}
+                      disabled={mcpAction}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <IconPlug size={13}/>
+                      {lang === "es" ? "Provisionar app MCP" : "Provision MCP app"}
+                    </button>
+                    {mcpError && (
+                      <div style={{ marginTop: 10, color: RED, font: "500 11px/1.4 var(--font-body)" }}>
+                        {mcpError}
+                      </div>
+                    )}
+                  </>
+                )}
+              </Section>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </div>
 
       {/* ─── Footer sticky ─── */}
@@ -885,8 +1064,7 @@ function defaultsFrom(initial) {
 // ═════════════════════════════════════════════════════════════
 // Primitivas de UI
 // ═════════════════════════════════════════════════════════════
-function Section({ icon, title, subtitle, badge, highlight, children }) {
-  return (
+function Section({ icon, title, subtitle, badge, highlight, children }) {  return (
     <section style={{
       padding: "18px 20px",
       background: "var(--surface-raised)",
@@ -1093,5 +1271,54 @@ function Textarea({ value, onChange, rows = 3, ...rest }) {
         resize: "vertical",
       }}
     />
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// Ola 4 · fila de credencial MCP (label + valor + copiar/revelar)
+// ═════════════════════════════════════════════════════════════
+function McpRow({ icon, label, value, hint, mono, secret, onCopy, copied, onToggle }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+        <span style={{ color: MUTED, display: "inline-flex" }}>{icon}</span>
+        <span style={{ font: "600 10.5px/1 var(--font-body)", color: NAVY,
+          textTransform: "uppercase", letterSpacing: 0.4 }}>
+          {label}
+        </span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <code style={{
+          flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+          whiteSpace: "nowrap", padding: "7px 10px",
+          background: SOFT, border: "1px solid var(--border)", borderRadius: 6,
+          font: `600 12px/1.3 ${mono ? "var(--font-mono, ui-monospace)" : "var(--font-body)"}`,
+          color: NAVY,
+          fontVariantNumeric: "tabular-nums",
+        }}>
+          {value}
+        </code>
+        {onToggle && (
+          <button type="button" className="btn btn-ghost btn-sm"
+            onClick={onToggle} title={secret ? "Revelar" : "Ocultar"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            {secret ? <IconMcpEye size={14}/> : <IconMcpEyeOff size={14}/>}
+          </button>
+        )}
+        {onCopy && (
+          <button type="button" className="btn btn-ghost btn-sm"
+            onClick={onCopy} title="Copiar"
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            <IconCopy size={14}/>
+            {copied ? "✓" : ""}
+          </button>
+        )}
+      </div>
+      {hint && (
+        <div style={{ font: "500 10.5px/1.3 var(--font-body)", color: MUTED, marginTop: 3 }}>
+          {hint}
+        </div>
+      )}
+    </div>
   );
 }

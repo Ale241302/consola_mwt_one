@@ -81,3 +81,9 @@ export const IconStop         = mkIcon(<rect x="6" y="6" width="12" height="12" 
 export const IconPin          = mkIcon(<><path d="M12 2v6"/><path d="M9 8h6l1 6H8z"/><path d="M12 14v8"/></>);
 export const IconArchive      = mkIcon(<><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8"/><path d="M10 13h4"/></>);
 export const IconImage        = mkIcon(<><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 16-5-5-9 9"/></>);
+// ─── MCP por cliente (Ola 4) ──────────────────────────────────────────
+export const IconKey          = mkIcon(<><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9"/><path d="m18 5 2 2"/><path d="m16 7 2 2"/></>);
+export const IconPlug         = mkIcon(<><path d="M9 2v6M15 2v6"/><path d="M7 8h10v4a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></>);
+export const IconPlugOff      = mkIcon(<><path d="M9 2v4M15 2v4"/><path d="M7 8h6"/><path d="M7 8v4a5 5 0 0 0 6 4.9"/><path d="M12 17v5"/><path d="m3 3 18 18"/></>);
+export const IconMcpEye       = mkIcon(<><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></>);
+export const IconMcpEyeOff    = mkIcon(<><path d="M3 3l18 18"/><path d="M10 5.5A10.5 10.5 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-2.5 3.5M14.5 14.5A3 3 0 0 1 9.5 11.5"/><path d="M6.5 6.5A17 17 0 0 0 2 12s3.5 7 10 7a10 10 0 0 0 3-.5"/></>);
