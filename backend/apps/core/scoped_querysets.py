@@ -61,8 +61,18 @@ def _user_role(user) -> str:
 
 
 def is_bypass(user, bypass_roles: Iterable[str] = BYPASS_ROLES) -> bool:
-    """¿El usuario puede ver TODOS los datos sin filtro?"""
+    """¿El usuario puede ver TODOS los datos sin filtro?
+
+    Ola 1 · 1.2 — Guard anti-bypass: un token del MCP con scope forzado
+    (`user.mcp_scoped=True`, inyectado por MwtJWTAuthentication.get_user
+    cuando el JWT trae `legal_entity_ids`/`tenant_id` del claim) NUNCA
+    bypasea, aunque el rol sea admin/superadmin. Así un admin conectado a
+    una app de cliente solo ve SU cliente (P0-6).
+    """
     if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    # Token MCP con scope del claim → el bypass no aplica (fail-closed).
+    if getattr(user, "mcp_scoped", False):
         return False
     # is_superuser cubre el bootstrap (seed_admins) por si role_default
     # quedo vacio. NO usamos `is_staff` porque MwtUser.is_staff=True para
@@ -78,7 +88,15 @@ _is_bypass = is_bypass
 
 
 def _scope_ids(user) -> List[str]:
-    """Lista canonica de UUIDs (lowercase) de empresas asignadas al usuario."""
+    """Lista canonica de UUIDs (lowercase) de empresas asignadas al usuario.
+
+    Ola 1 · 1.2 — si el token MCP trae un `tenant_id` quemado (cliente de la
+    app), el scope se fija a ESE único cliente (ignora el resto de
+    legal_entity_ids del usuario). Es la garantía de aislamiento por app.
+    """
+    forced = getattr(user, "tenant_id", None)
+    if forced:
+        return [str(forced).lower()]
     raw = list(getattr(user, "legal_entity_ids", None) or [])
     return [str(x).lower() for x in raw if x]
 

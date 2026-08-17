@@ -59,3 +59,29 @@ class ServiceTokenScope(models.Model):
     class Meta:
         managed = False
         db_table = 'core"."service_token_scope'
+
+
+class McpApp(models.Model):
+    """App MCP por cliente (Ola 1 · 1.5). Ver backend/sql/H1_mcp_app_por_cliente.sql.
+
+    Relaciona un Cliente (clientes.cliente) con su Application en Authentik y
+    su ServiceToken scopeado. Expone en la consola la URL del servidor MCP
+    remoto y las credenciales OAuth (Client ID/Secret).
+    """
+    id = models.UUIDField(primary_key=True)
+    cliente_id = models.UUIDField(unique=True)
+    slug = models.TextField(unique=True)
+    nombre = models.TextField(default="")
+    authentik_application_uid = models.UUIDField(null=True, blank=True)
+    authentik_provider_pk = models.IntegerField(null=True, blank=True)
+    oauth_client_id = models.TextField(null=True, blank=True)
+    oauth_client_secret = models.TextField(null=True, blank=True)
+    mcp_url = models.TextField(null=True, blank=True)
+    service_token_id = models.UUIDField(null=True, blank=True)
+    estado = models.TextField(default="PROVISIONED")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'core"."mcp_app'

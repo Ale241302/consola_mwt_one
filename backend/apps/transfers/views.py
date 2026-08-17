@@ -99,6 +99,72 @@ def _confidence_to_pct(level):
     return {"HIGH": 90.0, "MEDIUM": 70.0, "LOW": 45.0}.get(s)
 
 
+# ════════════════════════════════════════════════════════════
+# Ola 1 · 1.4a — scoping por cliente de transferencias (P0-3)
+# ════════════════════════════════════════════════════════════
+def _scope_transferencia_ids(request):
+    """UUIDs de transferencia visibles al usuario, o None si bypass (ver todas).
+
+    La transferencia NO tiene client_id directo: se vincula a expedientes vía
+    `inventario.expediente_nodo_assignment.transferencia_id`, y el expediente
+    sí tiene `client_id` (+ `operating_company_id`). Un usuario no-bypass solo
+    ve transferencias cuyo expediente pertenezca a su scope (cliente final OR
+    empresa operadora, igual que expedientes).
+
+    Returns:
+      None              → bypass (admin/superadmin o mcp_scoped con bypass).
+      lista de UUIDs    → ids visibles (posiblemente vacía).
+    """
+    from apps.core.scoped_querysets import is_bypass, _scope_ids
+
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return None
+    if is_bypass(user):
+        return None
+    scope = _scope_ids(user)
+    if not scope:
+        return []
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT a.transferencia_id::text
+                  FROM inventario.expediente_nodo_assignment a
+                  JOIN expedientes.expediente e ON e.id = a.expediente_id
+                 WHERE a.is_active = TRUE
+                   AND a.transferencia_id IS NOT NULL
+                   AND (e.client_id::text = ANY(%(scope)s::text[])
+                        OR e.operating_company_id::text = ANY(%(scope)s::text[]))
+                """,
+                {"scope": scope},
+            )
+            return [row[0] for row in cur.fetchall()]
+    except Exception as e:  # noqa: BLE001
+        log.exception("_scope_transferencia_ids falló (fail-closed): %s", e)
+        return []
+
+
+def _transferencia_visible(request, t) -> bool:
+    """¿El usuario puede ver la transferencia `t`?
+
+    Usa el mismo set de ids visibles que `list`; para detalle por pk (UUID o
+    codigo) sin depender del queryset.
+    """
+    from apps.core.scoped_querysets import is_bypass
+
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return True
+    if is_bypass(user):
+        return True
+    ids = _scope_transferencia_ids(request)
+    return str(t.id) in ids
+
+
+# ════════════════════════════════════════════════════════════
+
+
 def _recompute_line_discrepancy(linea):
     """OK / WITHIN_TOLERANCE / OVER / UNDER según qty_received vs qty_transfer."""
     if linea.qty_received is None:
@@ -281,6 +347,11 @@ class TransferenciaViewSet(viewsets.ViewSet):
     required_module = "transferencias"
     def list(self, request):
         qs = Transferencia.objects.filter(is_active=True).order_by("-created_at")
+        # Ola 1 · 1.4a — scoping por cliente (P0-3): un usuario no-bypass solo
+        # ve transferencias vinculadas a expedientes de su scope.
+        scope_ids = _scope_transferencia_ids(request)
+        if scope_ids is not None:
+            qs = qs.filter(id__in=scope_ids)
         for p, f in (("origen", "origen_id"), ("destino", "destino_id"),
                      ("estado", "estado"), ("legal_context", "legal_context")):
             v = request.query_params.get(p)
@@ -320,6 +391,10 @@ class TransferenciaViewSet(viewsets.ViewSet):
         try:
             t = _resolve_trf(pk)
         except Transferencia.DoesNotExist:
+            return Response({"detail": "Transferencia no existe"}, status=404)
+        # Ola 1 · 1.4a — scoping por cliente: fuera de scope → 404 (no revelar
+        # existencia de transferencias de otros clientes).
+        if not _transferencia_visible(request, t):
             return Response({"detail": "Transferencia no existe"}, status=404)
         data = TransferenciaSerializer(t).data
         lineas_data = LineaSerializer(

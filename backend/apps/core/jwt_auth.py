@@ -41,6 +41,42 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------
+# Ola 1 · 1.1 — clientes ACTIVOS para el scope del JWT MCP.
+# ---------------------------------------------------------------------
+def _active_client_ids(ids) -> list[str]:
+    """Filtra una lista de UUIDs de cliente a los que están ACTIVOS.
+
+    Regla de negocio (multi-tenancy): un JWT del MCP cuyo cliente fue
+    desactivado (is_active=False o estado != 'ACTIVO') NO debe poder leer
+    nada. Esta validación corre en `get_user` (capa auth) y de nuevo en el
+    mint (auth_views.McpTokenView).
+
+    Fail-safe: si la query falla, se devuelven los ids sin filtrar y se
+    loguea un warning (la capa de scoping por legal_entity_ids sigue
+    limitando; no romper operación por un error de DB transitorio).
+    """
+    ids = [str(x) for x in (ids or []) if x]
+    if not ids:
+        return []
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text
+                  FROM clientes.cliente
+                 WHERE id::text = ANY(%s)
+                   AND is_active = TRUE
+                   AND estado = 'ACTIVO'
+                """,
+                [ids],
+            )
+            return [row[0] for row in cur.fetchall()]
+    except Exception as e:  # noqa: BLE001
+        log.warning("jwt_auth._active_client_ids falló (fail-open con log): %s", e)
+        return ids
+
+
+# ---------------------------------------------------------------------
 # Proxy de usuario — cumple el contrato mínimo que espera DRF.
 # ---------------------------------------------------------------------
 class MwtUser:
@@ -73,6 +109,8 @@ class MwtUser:
         permissions: dict | None = None,
         is_active: bool = True,
         legal_entity_ids: list | None = None,
+        mcp_scoped: bool = False,
+        tenant_id: str | None = None,
     ):
         self.id          = str(user_id)
         self.pk          = str(user_id)
@@ -88,6 +126,12 @@ class MwtUser:
         # MwtJWTAuthentication.get_user con join por email a users.mwtuser.
         # `[]` si es staff interno sin restricción de empresa.
         self.legal_entity_ids = list(legal_entity_ids or [])
+        # Ola 1 · 1.1/1.2 — scope forzado por el token MCP.
+        #   · mcp_scoped=True → el JWT vino del MCP con legal_entity_ids del
+        #     claim; el guard anti-bypass desactiva BYPASS_ROLES.
+        #   · tenant_id → cliente quemado de la app MCP (si viene).
+        self.mcp_scoped = bool(mcp_scoped)
+        self.tenant_id = str(tenant_id) if tenant_id else None
         # Compat: `role_default` se usa en algunos endpoints
         # (apps.expedientes._viewer_role_upper) — espejo de `role`.
         self.role_default = self.role
@@ -240,11 +284,60 @@ class MwtJWTAuthentication(JWTAuthentication):
         if not isinstance(permissions, dict):
             permissions = {}
 
-        # Sprint 2026-05-21 · Portal multi-empresa.
-        # `core.users` (login) y `users.mwtuser` (donde vive legal_entity_ids)
-        # son tablas independientes con UUIDs distintos. Joineamos por EMAIL
-        # (canónico) con fallback por id. Sin este lookup, todos los
-        # filtros por scope de cliente colapsan a `.none()`.
+        # ── Ola 1 · 1.1 — Modo MCP: scope desde el CLAIM del token ─────────
+        # Los JWT emitidos por McpTokenView (mcp=True) llevan `legal_entity_ids`
+        # (= intersección usuario ∩ ServiceToken, ya acotada) y opcionalmente
+        # `tenant_id` (= cliente quemado de la app). Para estos tokens el scope
+        # del JWT es la FUENTE CANÓNICA — NO se rehidrata por email (P1-1):
+        #   · Un drift de email entre core.users y users.mwtuser ya no amplía
+        #     el scope: el claim es lo que el mint decidió.
+        #   · El claim NUNCA amplía tenants; solo restringe (auth_views
+        #     ya intersecta con el ServiceToken antes de emitir).
+        # Se valida además que los clientes del claim estén ACTIVOS (P0-7).
+        is_mcp_token = bool(validated_token.get("mcp"))
+        token_legal_ids = validated_token.get("legal_entity_ids")
+        token_tenant_id = validated_token.get("tenant_id")
+
+        legal_entity_ids: list[str] = []
+        if is_mcp_token and token_legal_ids is not None:
+            claim_scope = [token_tenant_id] if token_tenant_id else list(token_legal_ids)
+            legal_entity_ids = _active_client_ids(claim_scope)
+            if claim_scope and not legal_entity_ids:
+                # Todos los clientes del claim están inactivos/borrados → el
+                # acceso MCP se corta (fail-closed) aunque el usuario exista.
+                raise AuthenticationFailed(
+                    "Cliente(s) desactivados para este acceso MCP",
+                    code="client_inactive",
+                )
+        else:
+            legal_entity_ids = self._rehydrate_legal_ids(email, uid, role)
+
+        # Normalizar a lowercase — `client_id::text` de PG es lowercase
+        # y comparaciones case-sensitive en TEXT generan mismatch.
+        legal_entity_ids = [s.lower() for s in legal_entity_ids if s]
+
+        return MwtUser(
+            user_id=uid,
+            email=email,
+            full_name=full_name,
+            role=role,
+            permissions=permissions,
+            is_active=bool(is_active),
+            legal_entity_ids=legal_entity_ids,
+            # Ola 1 · 1.1/1.2 — el guard anti-bypass necesita saber si el
+            # token es del MCP y si trae un tenant quemado.
+            mcp_scoped=bool(is_mcp_token and legal_entity_ids),
+            tenant_id=token_tenant_id,
+        )
+
+    def _rehydrate_legal_ids(self, email: str | None, uid: str, role: str = "") -> list[str]:
+        """Sprint 2026-05-21 · Portal multi-empresa (login normal de consola).
+
+        `core.users` (login) y `users.mwtuser` (donde vive legal_entity_ids)
+        son tablas independientes con UUIDs distintos. Joineamos por EMAIL
+        (canónico) con fallback por id. Sin este lookup, todos los filtros por
+        scope de cliente colapsan a `.none()`.
+        """
         legal_entity_ids: list[str] = []
         try:
             email_low = (email or "").strip().lower()
@@ -299,23 +392,8 @@ class MwtJWTAuthentication(JWTAuthentication):
             if is_client_role(role) and not legal_entity_ids:
                 log.warning(
                     "MwtJWTAuthentication: CLIENT sin legal_entity_ids — "
-                    "probable drift core.users (uid=%s, email=%s) vs "
-                    "users.mwtuser. Verificar con SQL del runbook portal_drift.",
-                    uid, email,
+                    "probable drift core.users vs users.mwtuser.",
                 )
         except Exception:
             pass
-
-        # Normalizar a lowercase — `client_id::text` de PG es lowercase
-        # y comparaciones case-sensitive en TEXT generan mismatch.
-        legal_entity_ids = [s.lower() for s in legal_entity_ids if s]
-
-        return MwtUser(
-            user_id=uid,
-            email=email,
-            full_name=full_name,
-            role=role,
-            permissions=permissions,
-            is_active=bool(is_active),
-            legal_entity_ids=legal_entity_ids,
-        )
+        return legal_entity_ids

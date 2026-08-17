@@ -606,6 +606,34 @@ class MeView(APIView):
         return Response(_serialize_user(user), status=200)
 
 
+def _active_client_ids_scope(ids) -> list[str]:
+    """Ola 1 · 1.3 — filtra UUIDs de cliente a los ACTIVOS.
+
+    Un cliente desactivado (is_active=False o estado != 'ACTIVO') NO puede
+    formar parte del scope de un JWT del MCP. Fail-safe: si la query falla,
+    devuelve los ids sin filtrar (el scoping downstream sigue aplicando).
+    """
+    ids = [str(x) for x in (ids or []) if x]
+    if not ids:
+        return []
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text
+                  FROM clientes.cliente
+                 WHERE id::text = ANY(%s)
+                   AND is_active = TRUE
+                   AND estado = 'ACTIVO'
+                """,
+                [ids],
+            )
+            return [row[0] for row in cur.fetchall()]
+    except Exception as e:  # noqa: BLE001
+        log.warning("auth_views._active_client_ids_scope falló (fail-open): %s", e)
+        return ids
+
+
 class McpTokenView(APIView):
     """
     POST /api/auth/mcp-token/
@@ -828,6 +856,23 @@ class McpTokenView(APIView):
         if service_legal_ids:
             user_legal_ids = user_legal_ids & service_legal_ids
 
+        # ── Ola 1 · 1.3 — kill-switch: verificar que los clientes del scope
+        # estén ACTIVOS (is_active=True AND estado='ACTIVO'). Un cliente
+        # desactivado/eliminado NO puede seguir emitiendo JWTs que den acceso
+        # a sus datos (P0-7). Si TODOS los clientes del scope están inactivos
+        # → 403 CLIENTE_INACTIVO; si solo algunos, se eliminan del scope.
+        scope_ids = _active_client_ids_scope(sorted(user_legal_ids))
+        if user_legal_ids and not scope_ids:
+            return Response(
+                {
+                    "detail": "El/los cliente(s) de este acceso están "
+                              "desactivados (is_active=False o estado != ACTIVO).",
+                    "code": "CLIENTE_INACTIVO",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        user_legal_ids = set(scope_ids)
+
         access = AccessToken()
         access["user_uuid"] = str(uid)
         access["email"] = email_plain
@@ -835,6 +880,11 @@ class McpTokenView(APIView):
         access["mcp"] = True
         access["modules"] = perms.get("modules") or []
         access["legal_entity_ids"] = sorted(user_legal_ids)
+        # Ola 1 · 1.1 — cliente quemado: si el scope quedó en UN solo cliente
+        # (caso app por cliente), se emite el claim tenant_id para que el
+        # guard anti-bypass y el scoping lo fijen (aislamiento por app).
+        if len(user_legal_ids) == 1:
+            access["tenant_id"] = sorted(user_legal_ids)[0]
         access.set_exp(lifetime=timedelta(hours=1))
 
         user = {

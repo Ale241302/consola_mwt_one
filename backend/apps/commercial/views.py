@@ -75,6 +75,51 @@ def _is_ceo(request) -> bool:
     return role in CEO_ROLES
 
 
+# ─────────────────────────────────────────────────────────────
+# Ola 1 · 1.4b — validación de ?client_id= contra el scope (P0-4)
+# ─────────────────────────────────────────────────────────────
+def _scope_client_ids(request):
+    """Lista de client_ids permitidos al usuario, o None si bypass (ve todos).
+
+    Reutiliza la lógica canónica de scoped_querysets (incluido el guard
+    anti-bypass para tokens MCP con tenant quemado).
+    """
+    from apps.core.scoped_querysets import is_bypass, _scope_ids
+
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return None
+    if is_bypass(user):
+        return None
+    return _scope_ids(user)
+
+
+def _validated_client_ids(request, requested: str | None) -> list | None:
+    """Valida un `client_id` del query string contra el scope del usuario.
+
+    Returns:
+      - lista  → client_ids permitidos (si `requested`, la intersección o []).
+      - None   → bypass (no restringir por cliente).
+    """
+    allowed = _scope_client_ids(request)
+    if allowed is None:
+        return None
+    if not requested:
+        return allowed
+    rq = str(requested).lower()
+    return [rq] if rq in allowed else []
+
+
+def _scope_filter_qs(qs, request, field: str, requested: str | None):
+    """Aplica el scope por cliente a un queryset (fail-closed a vacío)."""
+    ids = _validated_client_ids(request, requested)
+    if ids is None:
+        return qs
+    if not ids:
+        return qs.none()
+    return qs.filter(**{f"{field}__in": ids})
+
+
 def _ensure_uuid(data: dict) -> dict:
     if not data.get("id"):
         data["id"] = str(uuid.uuid4())
@@ -353,8 +398,8 @@ class ClientAssignmentViewSet(viewsets.ModelViewSet):
         client_id = self.request.query_params.get("client_id")
         brand_id  = self.request.query_params.get("brand_id")
         sku       = self.request.query_params.get("brand_sku")
-        if client_id:
-            qs = qs.filter(client_id=client_id)
+        # Ola 1 · 1.4b — el ?client_id= se valida contra el scope del usuario.
+        qs = _scope_filter_qs(qs, self.request, "client_id", client_id)
         if brand_id:
             qs = qs.filter(brand_id=brand_id)
         if sku:
@@ -385,8 +430,8 @@ class EarlyPaymentPolicyViewSet(viewsets.ModelViewSet):
         qs = EarlyPaymentPolicy.objects.filter(is_active=True)
         client_id = self.request.query_params.get("client_id")
         brand_id  = self.request.query_params.get("brand_id")
-        if client_id:
-            qs = qs.filter(client_id=client_id)
+        # Ola 1 · 1.4b — el ?client_id= se valida contra el scope del usuario.
+        qs = _scope_filter_qs(qs, self.request, "client_id", client_id)
         if brand_id:
             qs = qs.filter(brand_id=brand_id)
         return qs.order_by("-valid_from", "codigo")
@@ -468,6 +513,15 @@ class EarlyPaymentTierViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = EarlyPaymentTier.objects.filter(is_active=True)
         policy_id = self.request.query_params.get("policy_id")
+        # Ola 1 · 1.4b — los tiers se scopean vía la policy a la que
+        # pertenecen (policy.client_id ∈ scope del usuario).
+        allowed_clients = _scope_client_ids(self.request)
+        if allowed_clients is not None:
+            qs = qs.filter(policy_id__in=(
+                EarlyPaymentPolicy.objects.filter(is_active=True)
+                .filter(client_id__in=allowed_clients)
+                .values_list("id", flat=True)
+            ))
         if policy_id:
             qs = qs.filter(policy_id=policy_id)
         return qs.order_by("payment_days")

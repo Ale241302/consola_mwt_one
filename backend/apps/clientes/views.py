@@ -36,22 +36,49 @@ def _client_scope_ids(request):
     · Usuario normal / cliente B2B → su legal_entity_ids (puede ser []).
     · Override Tweaks Panel (X-Viewport-Role: CLIENT) con empresas → scope.
     Sprint 2026-06-08.
+
+    Ola 1 · 1.4d — Unificado con el guard anti-bypass canónico: un token MCP
+    con scope forzado (`user.mcp_scoped`/`user.tenant_id`) NUNCA bypasea,
+    aunque el rol sea admin. Usa `apps.core.scoped_querysets` como fuente
+    única (P2-1).
     """
+    from apps.core.scoped_querysets import is_bypass, _scope_ids
+
     user = getattr(request, "user", None)
     if user is None:
         return None
-    leis = [str(x) for x in (getattr(user, "legal_entity_ids", None) or []) if x]
+    # Guard anti-bypass (incluye tokens MCP con tenant quemado).
+    if is_bypass(user):
+        # Sin scope MCP → staff ve todos. Con mcp_scoped, is_bypass es False
+        # y caemos al scope.
+        if not getattr(user, "mcp_scoped", False):
+            return None
+    leis = _scope_ids(user)
     hdr_viewport = (request.headers.get("X-Viewport-Role") or "").upper()
     if hdr_viewport == "CLIENT" and leis:
         return leis
-    if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False):
-        return None
+    # Usuarios internos no-staff: si tienen empresas asignadas, scope; si no, todos.
     role = (getattr(user, "role", "") or "").lower()
     is_client_like = role.startswith("client_") or role in {"client", "cliente", "client_b2b"}
     if is_client_like:
         return leis
-    # Otros roles internos no-staff: si tienen empresas asignadas, scope; si no, todos.
     return leis if leis else None
+
+
+def _cliente_in_scope(request, cliente_id: str) -> bool:
+    """Ola 1 · 1.4c — ¿el usuario puede ver/editar el cliente `cliente_id`?
+
+    Bypass → True. No-bypass → el id debe estar en su scope.
+    """
+    from apps.core.scoped_querysets import is_bypass
+
+    user = getattr(request, "user", None)
+    if user is None or not getattr(user, "is_authenticated", False):
+        return False
+    if is_bypass(user):
+        return True
+    scope = _client_scope_ids(request)
+    return scope is not None and str(cliente_id).lower() in {str(s).lower() for s in scope}
 
 
 def _build_cliente_list_batches(rows):
@@ -234,6 +261,9 @@ class ClienteViewSet(viewsets.ViewSet):
             c = Cliente.objects.get(pk=pk, is_active=True)
         except Cliente.DoesNotExist:
             return Response({"detail": "Cliente no existe"}, status=404)
+        # Ola 1 · 1.4c — scope-check: un usuario no-bypass solo ve sus clientes.
+        if not _cliente_in_scope(request, str(c.id)):
+            return Response({"detail": "Cliente no existe"}, status=404)
         return Response(ClienteSerializer(c, context=self._ctx(request)).data)
 
     def create(self, request):
@@ -253,6 +283,9 @@ class ClienteViewSet(viewsets.ViewSet):
             c = Cliente.objects.get(pk=pk)
         except Cliente.DoesNotExist:
             return Response({"detail": "Cliente no existe"}, status=404)
+        # Ola 1 · 1.4c — scope-check en edición.
+        if not _cliente_in_scope(request, str(c.id)):
+            return Response({"detail": "Cliente no existe"}, status=404)
         s = ClienteSerializer(c, data=request.data, partial=True,
                               context=self._ctx(request))
         s.is_valid(raise_exception=True)
@@ -261,6 +294,9 @@ class ClienteViewSet(viewsets.ViewSet):
     partial_update = update
 
     def destroy(self, request, pk=None):
+        # Ola 1 · 1.4c — scope-check en soft-delete.
+        if not _cliente_in_scope(request, str(pk)):
+            return Response({"detail": "Cliente no existe"}, status=404)
         # Soft delete + cascada lógica a subsidiarias activas (Parent-Child).
         # Si el padre se desactiva, sus subsidiarias también — mantienen el
         # historial pero salen del dashboard. Reversible vía PATCH is_active.
@@ -282,6 +318,10 @@ class ClienteViewSet(viewsets.ViewSet):
         try:
             parent = Cliente.objects.get(pk=pk, is_active=True)
         except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente padre no existe."}, status=404)
+
+        # Ola 1 · 1.4c — scope-check en subsidiarias.
+        if not _cliente_in_scope(request, str(parent.id)):
             return Response({"detail": "Cliente padre no existe."}, status=404)
 
         if parent.is_subsidiary:
