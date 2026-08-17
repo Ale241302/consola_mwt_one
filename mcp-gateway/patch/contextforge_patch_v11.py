@@ -24,9 +24,20 @@ import os
 
 FILE = "/app/mcpgateway/transports/streamablehttp_transport.py"
 
-# vsid de la app MWT global (admin) + vsid de Sondel (piloto Ola 5).
+# vsid de la app MWT global (admin) + vsid de todos los clientes activos.
 # El vsid de cada cliente nuevo se añade aquí al registrar su server virtual.
-_DEFAULT_IDS = "1290625df81d4121a18a66bb164f87f1,c090bf4d-af94-4aff-b682-8e9d1ebdcd6d"
+_DEFAULT_IDS = (
+    "1290625df81d4121a18a66bb164f87f1,"       # app MWT global (admin)
+    "c090bf4d-af94-4aff-b682-8e9d1ebdcd6d,"   # Sondel
+    "299b060e-d78f-4608-9314-f0f5bf2f12c2,"   # Comtek
+    "c062e0bc-2d2b-4018-ad47-7ed364c5c9db,"   # Importaciones y Compras
+    "d8853fca-cfe6-4fc5-adce-1e0183124c6f,"   # Procostumer
+    "1078a317-f34e-428a-8170-050f65bc7154,"   # Sonepar
+    "e658aae0-247d-4bf7-a22f-49b9577b733a,"   # Imporcomp
+    "6e62ee55-876c-4570-b707-58eebcdc0e65,"   # Muito Work Limitada
+    "ab007e48-766e-476b-a9f4-d563a21d845f,"   # prueba
+    "2575d681-1384-4fc3-929a-f5e2a953c189",   # Test RBAC Bloqueo2
+)
 
 
 def _server_ids() -> set:
