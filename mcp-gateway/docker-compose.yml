@@ -161,6 +161,10 @@ services:
       SECURE_COOKIES: "true"
       LOG_LEVEL: INFO
       SSRF_ALLOWED_NETWORKS: '["172.21.0.0/16"]'
+      # Ola 6 · reenvío de headers X-MWT-Client-ID/X-MWT-Gateway-Key al
+      # upstream MCP (para el aislamiento por cliente). Sin esto, el direct_proxy
+      # no reenvía los headers y el MCP rechaza la identidad.
+      ENABLE_HEADER_PASSTHROUGH: "true"
     volumes:
       - ./data/contextforge:/data
       - ./patch:/patch
