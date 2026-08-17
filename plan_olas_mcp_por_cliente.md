@@ -354,6 +354,15 @@ del cliente.
 **Criterio de aceptación:** cada URL de cliente responde 401 + metadata RFC 9728
 con su propio `resource`; token de app A rechazado en vsid de app B.
 
+### 5.6 ESTADO REAL — Ola 5 DESPLEGADA (piloto Sondel)
+- Patch v11 generaliza v8/v9/v10 (`_MWT_SERVER_IDS_V11` con vsid global + Sondel).
+- Virtual server Sondel registrado: `vsid c090bf4d-af94-4aff-b682-8e9d1ebdcd6d`,
+  oauth_config → provider `mcp-provider-sondel-s-a`.
+- Gateway MWT: `passthrough_headers=["X-MWT-Client-ID","X-MWT-Gateway-Key"]`.
+- nginx: `location = /servers/<vsid-sondel>/mcp` inyecta los headers.
+- `mcp_url` de Sondel: `https://mcp.mwt.one/servers/c090bf4d-…/mcp`.
+- Verificado: URL 401 (OAuth), config montada, patch aplicado, MCP con key.
+
 ---
 
 ## Ola 6 — Pruebas de aislamiento en producción
