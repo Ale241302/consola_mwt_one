@@ -142,6 +142,18 @@ def _ensure_provider(c: httpx.Client, name: str) -> dict | None:
     existing = _find(c, "/providers/oauth2/", name)
     if existing:
         return existing
+    # Ola 6 · scope mappings OIDC (openid/email/profile/offline_access) que el
+    # provider global claude-mcp usa; sin email, ContextForge no puede
+    # identificar al usuario y rechaza el token. Mismos UUIDs de fábrica.
+    oidc_mappings = [
+        "a3cfd000-8710-470a-b196-3e906b6d07d9",   # openid
+        "0797576a-bd5d-4aa3-bf24-00435778076e",   # email
+        "cd0e7b14-d20d-4d3d-9368-a8e43c1f7b74",   # profile
+        "3928027b-6b6b-4ca5-ba6b-19b0423bdb81",   # offline_access
+    ]
+    # Ola 6 · signing_key del provider global (para que el JWKS del issuer
+    # global valide la firma) + issuer_mode global (todos emiten el mismo iss).
+    signing_key = "b552085d-92d7-4091-aa34-b79f4393ee9a"
     r = c.post("/providers/oauth2/", json={
         "name": name,
         "authorization_flow": _AUTHZ_FLOW_UID,
@@ -150,6 +162,9 @@ def _ensure_provider(c: httpx.Client, name: str) -> dict | None:
         "access_token_validity": "minutes=10",
         "refresh_token_validity": "days=30",
         "client_type": "confidential",
+        "property_mappings": oidc_mappings,
+        "signing_key": signing_key,
+        "issuer_mode": "global",
     })
     if r.status_code not in (200, 201):
         log.warning("authentik create provider(%s): HTTP %s %s", name, r.status_code, r.text[:300])
