@@ -19,4 +19,16 @@ echo "Applying ContextForge MCP identity fallback patch v7..."
 echo "Applying ContextForge MWT live tools/list by identity patch v8..."
 /app/.venv/bin/python3 /patch/contextforge_patch_v8.py
 
+echo "Applying ContextForge MWT call_tool direct_proxy patch v9..."
+/app/.venv/bin/python3 /patch/contextforge_patch_v9.py
+
+echo "Applying ContextForge MWT call_tool user_context patch v9b..."
+/app/.venv/bin/python3 /patch/contextforge_patch_v9b.py
+
+echo "Applying ContextForge MWT RBAC-skip patch v10..."
+/app/.venv/bin/python3 /patch/contextforge_patch_v10.py
+
+echo "Applying ContextForge MWT multi-server direct_proxy patch v11 (Ola 5)..."
+/app/.venv/bin/python3 /patch/contextforge_patch_v11.py
+
 exec /app/docker-entrypoint.sh "$@"

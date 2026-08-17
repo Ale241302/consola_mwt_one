@@ -25,6 +25,16 @@ MCP_GATEWAY_NET="${MCP_GATEWAY_NET:-mcp-gateway-net}"
 SRC_CONF="$APP_DIR/infra/nginx/consola.conf"
 DST_PATH="/etc/nginx/conf.d/consola.conf"
 
+# ── Ola 5 · sustituir $MWT_MCP_GATEWAY_KEY por el valor real del .env ──
+# nginx NO expande variables del host en proxy_set_header. Generamos un
+# conf temporal con el gateway key inyectado (secreto del stack consola).
+GATEWAY_KEY="$(grep '^MWT_MCP_GATEWAY_KEY=' "$APP_DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+if [[ -z "$GATEWAY_KEY" ]]; then
+    echo "[WARN] MWT_MCP_GATEWAY_KEY no está en $APP_DIR/.env — los headers X-MWT-Gateway-Key irán vacíos." >&2
+fi
+TMP_CONF="$(mktemp)"
+sed "s|\$MWT_MCP_GATEWAY_KEY|${GATEWAY_KEY}|g" "$SRC_CONF" > "$TMP_CONF"
+
 # ── Preflight ─────────────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
     echo "[ERR] docker no encontrado en PATH" >&2
@@ -64,13 +74,13 @@ connect_network "$MCP_GATEWAY_NET"
 needs_reload=0
 
 current_md5="$(docker exec "$NGINX_CTR" sh -c "md5sum $DST_PATH 2>/dev/null | awk '{print \$1}'" || true)"
-new_md5="$(md5sum "$SRC_CONF" | awk '{print $1}')"
+new_md5="$(md5sum "$TMP_CONF" | awk '{print $1}')"
 
 if [[ "$current_md5" != "$new_md5" ]]; then
     echo "==> copiando consola.conf → $NGINX_CTR:$DST_PATH"
     # Usamos cat en lugar de docker cp para no romper bind mounts.
     # -i es obligatorio para que stdin llegue al contenedor en scripts no-interactivos.
-    docker exec -i "$NGINX_CTR" sh -c "cat > $DST_PATH" < "$SRC_CONF"
+    docker exec -i "$NGINX_CTR" sh -c "cat > $DST_PATH" < "$TMP_CONF"
     # Sanity check: nunca dejar el archivo vacío.
     size_after="$(docker exec "$NGINX_CTR" sh -c "stat -c %s $DST_PATH 2>/dev/null || echo 0")"
     if [[ "${size_after:-0}" -lt 100 ]]; then
@@ -102,3 +112,4 @@ fi
 echo "==> done"
 echo "    host público: https://consola.mwt.one"
 echo "    upstreams   : consola-mwt-one-django:8000 · consola-mwt-one-frontend:80"
+rm -f "$TMP_CONF"
