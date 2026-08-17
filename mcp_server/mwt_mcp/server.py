@@ -16,10 +16,23 @@ from typing import Any
 from . import client as api
 from .client import MwtApiError
 from .config import settings
-from .enrich import client_name, enrich_ids, enrich_producto, present_expediente_codigos
+from .enrich import (
+    client_name,
+    enrich_ids,
+    enrich_lineas,
+    enrich_producto,
+    present_expediente_codigos,
+    search_productos,
+    user_client_ids,
+)
 from .helpers import _persist_mcp_audit
 from .jwt_minter import get_identity_user
-from .redact import redact_for_user
+from .redact import (
+    filter_artefactos_for_role,
+    filter_documentos_for_role,
+    is_client,
+    redact_for_user,
+)
 from .schemas import (
     _DOCUMENTO_KEYS,
     _EXPEDIENTE_KEYS,
@@ -268,9 +281,17 @@ def _is_write_tool(func) -> bool:
     return bool(getattr(func, "_mwt_write", False))
 
 
+def _current_role() -> str:
+    """Rol del usuario conectado ("" si no hay identidad)."""
+    try:
+        user = get_identity_user() or {}
+        return user.get("role") or user.get("role_slug") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _present_codigos(data: Any) -> Any:
     """Ola 3.7 · Calidad — añade `codigos_presentacion` a expedientes según el rol.
-
     CEO/Admin -> "PF 2393-2025 · PO 504302 · 257021" (proforma + oc + sap).
     client_b2b -> "PO 504302 · 257021" (oc + sap, sin proforma interna).
     Se aplica sobre listas (respuesta paginada) o un dict (detalle). Fail-safe."""
@@ -281,7 +302,19 @@ def _present_codigos(data: Any) -> Any:
         role = ""
 
     def _one(row: dict) -> dict:
-        return present_expediente_codigos(row, role)
+        out = present_expediente_codigos(row, role)
+        # Ola 3.8 · Para client_b2b: reemplaza los totales internos por el total
+        # que el cliente SÍ debe ver (Σ qty × unit_price_client), y quita los
+        # campos financieros que redact.py ya oscurece como '***'.
+        if is_client(role):
+            _row_id = row.get("id") if isinstance(row, dict) else None
+            monto = _monto_cliente_usd(_row_id) if _row_id else None
+            if monto is not None:
+                out["monto_cliente_usd"] = monto
+            for _k in ("balance", "total_cost", "total_invoiced", "total_paid",
+                       "projected_margin", "real_margin", "margin_drift"):
+                out.pop(_k, None)
+        return out
 
     if isinstance(data, dict) and isinstance(data.get("results"), list):
         data = dict(data)
@@ -292,6 +325,38 @@ def _present_codigos(data: Any) -> Any:
     if isinstance(data, dict):
         return _one(data)
     return data
+
+
+def _monto_cliente_usd(expediente_id: str) -> float | None:
+    """Ola 3.8 · Total visible para client_b2b: Σ(qty × unit_price_client) de
+    las líneas activas del expediente.
+
+    Cuando el expediente lo opera Muito Work Limitada
+    (`operating_company_id != client_id`), el cliente SOLO ve su precio
+    (unit_price_client); nunca el costo interno ni el precio MWT. Este total
+    se calcula aquí para no exponer `balance`/`total_cost`/márgenes del backend.
+    Fail-safe: devuelve None si no se puede calcular (el caller lo omite).
+    """
+    try:
+        data = api.get(f"expedientes/{expediente_id}/lineas/")
+    except Exception:  # noqa: BLE001
+        return None
+    rows = data.get("results") if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        return None
+    total = 0.0
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        if r.get("is_active") is False:
+            continue
+        try:
+            qty = float(r.get("qty") or 0)
+            precio = float(r.get("unit_price_client") or r.get("unit_price") or 0)
+        except (TypeError, ValueError):
+            qty, precio = 0.0, 0.0
+        total += qty * precio
+    return round(total, 2)
 
 
 # Listado nominal de tools que, aunque siguen siendo "preview"/"dry-run",
@@ -510,12 +575,23 @@ def mwt_whoami() -> Any:
             permitidas = sorted(allowed & all_tools)
             ocultas = sorted(all_tools - allowed)
         data = dict(data)
-        data["mwt_rbac"] = {
-            "tools_permitidas": permitidas,
-            "tools_ocultas": ocultas,
-            "total_permitidas": len(permitidas),
-            "total_ocultas": len(ocultas),
-        }
+        # Ola 3.8 · Privacidad por rol: un client_b2b recibe un resumen 100%
+        # neutro de lo que SÍ puede hacer. Nada de "ocultas", "permitidas",
+        # "solo lectura" ni comparaciones con roles superiores — todo eso invita
+        # al agente a especular sobre admin/CEO.
+        rol = (user.get("role") or user.get("role_slug") or "").strip().lower()
+        if is_client(rol):
+            data["mwt_rbac"] = {
+                "tools_disponibles": permitidas,
+                "total_tools": len(permitidas),
+            }
+        else:
+            data["mwt_rbac"] = {
+                "tools_permitidas": permitidas,
+                "tools_ocultas": ocultas,
+                "total_permitidas": len(permitidas),
+                "total_ocultas": len(ocultas),
+            }
         # Ola 3.7 · Calidad — adjunta los NOMBRES de las entidades legales
         # (en vez de solo UUIDs) para que whoami sea legible.
         le_ids = data.get("legal_entity_ids") or []
@@ -717,6 +793,52 @@ def producto_obtener(producto_id: str, campos: str | None = None) -> Any:
     y precios (precio_lista, precio_distribuidor, costo_estandar).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     return _project(campos, _safe_role_producto(lambda: api.get(f"productos/{producto_id}/")))
+
+
+@mcp.tool()
+def producto_buscar(q: str, limit: int | None = None) -> Any:
+    """Busca productos por SKU, nombre, alias o característica (parcial,
+    insensible a mayúsculas). Ejemplos: "60b29", "700728", "bota alta",
+    "suela caucho", "composite", "60B29-CPAP-SRV".
+
+    Úsala cuando el usuario pregunte por un producto o un tipo de producto
+    (por código, nombre, marca o atributo técnico). Busca en el catálogo del
+    rol (B2B o completo), indexando también las especificaciones
+    (tipo_calzado, suela, color, riesgo, segmento, cierre, puntera...).
+    Devuelve `{productos:[{id, sku, nombre, marca, precio_venta, categoria}]}`
+    (para admin/CEO incluye especificaciones). `limit`: máx de resultados
+    (default 10)."""
+    role = _current_role()
+    lim = max(1, min(int(limit) if limit else 10, 50))
+    qq = (q or "").strip()
+    if not qq:
+        return {"error": True, "detail": "Falta el término de búsqueda (q)."}
+
+    if is_client(role):
+        # Búsqueda amplia en el catálogo B2B (SKU/nombre/características).
+        hits = search_productos(qq, limit=lim, with_specs=True, allow_aliases=False)
+        out = []
+        for r in hits:
+            out.append({
+                "id": r.get("id"),
+                "sku": r.get("sku"),
+                "nombre": r.get("nombre"),
+                "marca": r.get("marca_label") or r.get("marca_nombre"),
+                "precio_venta": r.get("precio_venta"),
+                "categoria": r.get("categoria"),
+            })
+        return {"productos": out, "total": len(out)}
+
+    # Admin/CEO/staff: búsqueda amplia sobre el catálogo completo (con specs + aliases).
+    hits = search_productos(qq, limit=lim, with_specs=False, allow_aliases=True)
+    if hits:
+        return {"productos": hits, "total": len(hits)}
+    data = _safe_role_producto(lambda: api.get("productos/", {"q": qq, "limit": lim}))
+    if isinstance(data, dict) and data.get("error"):
+        return data
+    rows = data.get("results") if isinstance(data, dict) else data
+    rows = rows if isinstance(rows, list) else []
+    return {"productos": rows, "total": len(rows)}
 
 
 @mcp.tool()
@@ -932,10 +1054,23 @@ def expediente_listar(
 
 @mcp.tool()
 def expediente_obtener(expediente_id: str, campos: str | None = None) -> Any:
-    """Detalle de un expediente (acepta UUID o código, p.ej. EXP-1027).
-    `campos`: lista separada por comas (ej. "id,codigo,estado,client_id") para devolver
-    solo esos atributos y ahorrar contexto (Ola 2 · 2.17)."""
-    return _present_codigos(_project(campos, _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/"), "expediente_obtener")))
+    """Detalle completo de un expediente (acepta UUID o código, p.ej. EXP-1027):
+    estado, forma_pago, tiempos por fase (phase_durations_json), y la
+    información de ENVÍO (transport_mode, carrier, tracking, freight_mode,
+    dispatch_mode, consolidation) cuando existe. Úsala también cuando el
+    usuario pregunte '¿cómo se envía?', '¿cuál es el tracking?', '¿quién es
+    el transportista?' de un expediente.
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/"), "expediente_obtener")
+    # Ola 3.8 · adjunta el resumen de envío (ART-05 AWB/BL) cuando existe.
+    if isinstance(data, dict) and not data.get("error"):
+        try:
+            shipping = api.get(f"inventario/expedientes/{expediente_id}/shipping-summary/")
+            if isinstance(shipping, dict) and not shipping.get("error"):
+                data["shipping_summary"] = shipping
+        except Exception:  # noqa: BLE001 - fail-safe
+            pass
+    return _present_codigos(_project(campos, data))
 
 
 @mcp.tool()
@@ -971,18 +1106,96 @@ def expediente_buscar(
         sap_cs = [_norm_num(x) for x in (e.get("sap_codigos") or [])]
         if (tn_oc and tn_oc in oc_cs) or (tn_pf and tn_pf in pf_cs) or (tn_sap and tn_sap in sap_cs):
             matches.append({
-                "expediente_id": e.get("id"), "codigo": e.get("codigo"), "oc_id": e.get("oc_id"),
+                "id": e.get("id"), "expediente_id": e.get("id"), "codigo": e.get("codigo"),
+                "oc_id": e.get("oc_id"),
                 "oc_codigos": e.get("oc_codigos"), "proforma_codigos": e.get("proforma_codigos"),
-                "sap_codigos": e.get("sap_codigos"), "estado": e.get("estado"), "client_id": e.get("client_id"),
+                "sap_codigos": e.get("sap_codigos"), "estado": e.get("estado"),
+                "client_id": e.get("client_id"), "fusion_id": e.get("fusion_id"),
+                "fusion_label": e.get("fusion_label"), "sap": e.get("sap"),
             })
+    # Ola 3.8 · el mismo saneo de presentación que el listado: para un
+    # client_b2b oculta `codigo` EXP-, UUIDs internos y expone referencia_cliente.
+    matches = _present_codigos(matches) if matches else []
     return {"existe": len(matches) > 0, "total": len(matches), "matches": matches}
 
 
 @mcp.tool()
 def expediente_lineas(expediente_id: str, campos: str | None = None) -> Any:
-    """Líneas (SKU/talla/cantidad/precios) de un expediente.
+    """Líneas (SKU/nombre/talla/cantidad/precios) de un expediente.
     `campos`: lista separada por comas para proyectar solo esos atributos."""
-    return _project(campos, _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas"))
+    data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas")
+    # Ola 3.8 · adjunta producto_nombre/marca_nombre legibles por línea.
+    data = enrich_lineas(data)
+    return _project(campos, data)
+
+
+@mcp.tool()
+def expediente_buscar_por_producto(
+    q: str,
+    limit: int | None = None,
+) -> Any:
+    """Busca los expedientes que contienen un producto dado (por SKU, nombre,
+    alias o característica). Ej.: "60b29", "700728", "bota alta", "caucho".
+
+    Resuelve el producto y consulta `/api/lineas/?producto=...` (que ya aplica
+    el scope del usuario), devolviendo por cada expediente el producto con el
+    PRECIO DEL EXPEDIENTE (snapshot de la línea, no el del catálogo):
+      · client_b2b  -> unit_price_client
+      · admin/CEO   -> unit_price_client y unit_price_mwt
+    Devuelve `{expedientes:[{expediente_id, referencia, estado, sku, nombre,
+    talla, qty, unit_price_client, unit_price_mwt?}]}`."""
+    role = _current_role()
+    lim = max(1, min(int(limit) if limit else 10, 50))
+    qq = (q or "").strip()
+    if not qq:
+        return {"error": True, "detail": "Falta el término de búsqueda (q)."}
+
+    # 1) Resolver el término a producto(s) del catálogo.
+    prods = search_productos(qq, limit=5, with_specs=True,
+                             allow_aliases=not is_client(role))
+    if not prods:
+        return {"expedientes": [], "total": 0,
+                "detail": f"No se encontró ningún producto para '{qq}'."}
+
+    # 2) Consultar las líneas de expediente que contienen esos productos.
+    #    El backend /api/lineas/?producto=<id> ya filtra por scope del usuario.
+    out_map: dict[str, dict] = {}
+    for prod in prods:
+        pid = prod.get("id")
+        if not pid:
+            continue
+        try:
+            data = api.get("lineas/", {"producto": pid, "limit": 200})
+        except Exception:  # noqa: BLE001
+            continue
+        rows = data.get("results") if isinstance(data, dict) else data
+        rows = rows if isinstance(rows, list) else []
+        for ln in rows:
+            if not isinstance(ln, dict):
+                continue
+            if ln.get("is_active") is False:
+                continue
+            exp_id = ln.get("expediente_id")
+            if not exp_id:
+                continue
+            entry = out_map.setdefault(str(exp_id), {
+                "expediente_id": exp_id,
+                "referencia": ln.get("expediente_codigo"),
+                "estado": ln.get("expediente_estado"),
+                "productos": [],
+            })
+            entry["productos"].append({
+                "sku": ln.get("sku"),
+                "nombre": (prod.get("nombre") or ln.get("sku")),
+                "talla": ln.get("size"),
+                "qty": ln.get("qty"),
+                "total_price": ln.get("total_price"),
+                "unit_price_client": ln.get("unit_price_client"),
+                "unit_price_mwt": ln.get("unit_price_mwt") if not is_client(role) else None,
+            })
+
+    exps = list(out_map.values())[:lim]
+    return {"expedientes": exps, "total": len(exps)}
 
 
 @mcp.tool()
@@ -1228,7 +1441,9 @@ def documento_listar(
     `limit`/`offset`: paginación (default limit=50, máx 200).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    return _project(campos, _safe_role(lambda: api.get("documentos/", _params(expediente=expediente, oc=oc, kind=kind, limit=lim, offset=off))))
+    data = _safe_role(lambda: api.get("documentos/", _params(expediente=expediente, oc=oc, kind=kind, limit=lim, offset=off)))
+    # Ola 3.8 · un client_b2b SOLO ve audience=CLIENT y kind OC/PROFORMA.
+    return _project(campos, filter_documentos_for_role(data, _current_role()))
 
 
 @mcp.tool()
@@ -1492,6 +1707,60 @@ def expediente_avanzar_estado(expediente_id: str, fase_to: str, note: str | None
 
 
 @mcp.tool()
+def expediente_tiempos(expediente_id: str | None = None, freight_mode: str | None = None) -> Any:
+    """Tiempos/duraciones de los expedientes.
+
+    Dos modos:
+      · Sin `expediente_id`: promedios globales de días por fase (phase-stats),
+        opcionalmente por método de envío (`freight_mode`: AIR|SEA). Para un
+        client_b2b se filtra a sus empresas (scope); admin/CEO ve todo.
+      · Con `expediente_id`: duraciones y fechas por fase de ESE expediente
+        (timeline), incluyendo eventos y líneas con sus precios.
+
+    Úsala cuando el usuario pregunte "¿cuánto tarda la producción?", "tiempos
+    por fase", "duración del tránsito" o "cronograma de un expediente"."""
+    role = _current_role()
+
+    # Modo 1 · duraciones de un expediente puntual (timeline).
+    if expediente_id:
+        try:
+            bundle = api.get("expedientes/timeline-bundle/", {"expedientes": expediente_id})
+            items = bundle.get("expedientes") if isinstance(bundle, dict) else bundle
+            items = items if isinstance(items, list) else []
+            for it in items:
+                row = it.get("row") if isinstance(it, dict) else None
+                if row and isinstance(row, dict) and str(row.get("id")) == str(expediente_id):
+                    payload = it.get("payload") or {}
+                    return {
+                        "expediente_id": expediente_id,
+                        "phase_durations": it.get("phase_durations"),
+                        "eventos": it.get("events"),
+                        "lineas": payload.get("lineas"),
+                        "operating_company": payload.get("operating_company"),
+                    }
+        except Exception:  # noqa: BLE001
+            pass
+        # Fallback: phase-durations + eventos + lineas por separado.
+        return {
+            "expediente_id": expediente_id,
+            "phase_durations": _safe_role(lambda: api.get(f"expedientes/{expediente_id}/phase-durations/")),
+            "eventos": _safe_role(lambda: api.get(f"expedientes/{expediente_id}/events/", _params(limit=200))),
+            "lineas": _safe_role(lambda: api.get(f"expedientes/{expediente_id}/lineas/")),
+        }
+
+    # Modo 2 · promedios globales (phase-stats), con scope para client_b2b.
+    params = {}
+    if is_client(role):
+        cids = user_client_ids()
+        if cids:
+            params["client"] = cids[0]
+    if freight_mode:
+        params["freight_mode"] = freight_mode
+    data = _safe_role(lambda: api.get("expedientes/phase-stats/", params))
+    return data
+
+
+@mcp.tool()
 def expediente_phase_durations_get(expediente_id: str) -> Any:
     """Lee las fechas/duraciones por fase del expediente."""
     return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/phase-durations/"))
@@ -1565,7 +1834,9 @@ def nodo_artefactos_listar(nodo_id: str, template_id: int | None = None, limit: 
     `limit`/`offset`: paginación (default limit=50, máx 200).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    return _project(campos, _safe_role(lambda: api.get(f"nodos/{nodo_id}/builder-artifacts/", _params(template_id=template_id, limit=lim, offset=off))))
+    data = _safe_role(lambda: api.get(f"nodos/{nodo_id}/builder-artifacts/", _params(template_id=template_id, limit=lim, offset=off)))
+    # Ola 3.8 · el client_b2b solo ve artefactos publicados; admin/CEO ve todos.
+    return _project(campos, filter_artefactos_for_role(data, _current_role()))
 
 
 @mcp.tool()
@@ -1698,8 +1969,77 @@ def inventario_transferir_asignaciones(origin_nodo_id: str, destination_nodo_id:
 
 @mcp.tool()
 def inventario_artefactos_expediente(expediente_id: str) -> Any:
-    """Lista los artefactos (Builder) ligados a un expediente vía inventario."""
-    return _safe_role_read(lambda: api.get(f"inventario/expedientes/{expediente_id}/artifacts/"), "inventario_artefactos_expediente")
+    """Lista los documentos de envío de un expediente: BL/AWB (conocimiento de
+    embarque), Packing List, Factura Comercial, Certificado de Origen y demás
+    artefactos del Builder. Úsala cuando el usuario pida 'el BL', 'packing',
+    'factura', 'certificado' o documentos de embarque/exportación de un
+    expediente (no confundir con `documento_listar`, que es otra capa).
+    Para un client_b2b solo devuelve los que tienen `publicado=True`."""
+    data = _safe_role_read(lambda: api.get(f"inventario/expedientes/{expediente_id}/artifacts/"), "inventario_artefactos_expediente")
+    # Ola 3.8 · el client_b2b solo ve artefactos publicados; admin/CEO ve todos.
+    return filter_artefactos_for_role(data, _current_role())
+
+
+@mcp.tool()
+def expediente_documentos_completos(
+    expediente_id: str,
+    oc: str | None = None,
+    q: str | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+    campos: str | None = None,
+) -> Any:
+    """Busca TODOS los documentos de un expediente en una sola llamada, tanto la
+    capa de `documentos` (OC, proformas, SAP, facturas) como la capa de
+    `artefactos` del Builder (BL/AWB, Packing List, Factura Comercial,
+    Certificado de Origen).
+
+    Úsala cuando el usuario pida 'documentos', 'el BL', 'conocimiento de
+    embarque', 'packing list', 'factura comercial', 'certificado de origen',
+    'proforma', 'OC' o cualquier documento/artefacto de un expediente — así
+    encuentra el documento esté en la capa que esté.
+
+    Devuelve `{documentos: [...], artefactos: [...]}`. `q` filtra por texto
+    (código/título). Para un client_b2b los documentos se limitan a audience=CLIENT
+    (OC/PROFORMA del cliente) y los artefactos a los `publicado=True`."""
+    lim, off = _paging(limit, offset)
+
+    # Capa 1 · documentos (/api/documentos/). El backend ya aplica scoping por
+    # audiencia y expediente; aquí reforzamos con el filtro de rol.
+    docs_data = _safe_role(lambda: api.get("documentos/", _params(expediente=expediente_id, oc=oc, limit=lim, offset=off)))
+    docs_rows = docs_data.get("results") if isinstance(docs_data, dict) else docs_data
+    docs = docs_rows if isinstance(docs_rows, list) else []
+    docs = filter_documentos_for_role(docs, _current_role())
+
+    # Capa 2 · artefactos del Builder (/api/inventario/expedientes/{id}/artifacts/).
+    arts = []
+    try:
+        arts_data = _safe_role_read(
+            lambda: api.get(f"inventario/expedientes/{expediente_id}/artifacts/"),
+            "inventario_artefactos_expediente",
+        )
+        arts_rows = arts_data.get("results") if isinstance(arts_data, dict) else arts_data
+        arts = arts_rows if isinstance(arts_rows, list) else []
+        arts = filter_artefactos_for_role(arts, _current_role())
+    except Exception:  # noqa: BLE001 - fallback: solo documentos
+        arts = []
+
+    # Filtro de texto opcional sobre ambas capas (código, título, kind, doc_type).
+    if q:
+        qq = (q or "").strip().lower()
+        docs = [d for d in docs if qq in str(d.get("codigo") or "").lower()
+                or qq in str(d.get("kind") or "").lower()]
+        arts = [a for a in arts if qq in str(a.get("template_title") or "").lower()
+                or qq in str(a.get("doc_type") or "").lower()
+                or qq in str(a.get("codigo") or "").lower()]
+
+    return {
+        "expediente_id": expediente_id,
+        "documentos": _project(campos, docs) if campos else docs,
+        "artefactos": _project(campos, arts) if campos else arts,
+        "total_documentos": len(docs),
+        "total_artefactos": len(arts),
+    }
 
 
 # =========================================================================== #

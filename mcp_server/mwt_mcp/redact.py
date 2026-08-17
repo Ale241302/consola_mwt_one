@@ -58,6 +58,9 @@ CEO_ONLY_KEYS: frozenset[str] = frozenset({
 #   · proveedores / fábrica (relación interna)
 #   · PII del cliente (otra entidad) y de la operación
 #   · decisión operativa interna (ruteo, bandas, bloqueos, semáforos)
+#   · totales financieros internos: un client_b2b NO ve balance/total_cost/
+#     total_invoiced/total_paid/márgenes — solo ve `monto_cliente_usd` que el
+#     MCP server calcula como Σ(qty × unit_price_client) de sus líneas activas.
 B2B_FORBIDDEN_KEYS: frozenset[str] = CEO_ONLY_KEYS | frozenset({
     "supplier_id", "proveedor_id", "supplier_name", "proveedor_nombre",
     "proveedor", "supplier", "fabricante",
@@ -68,6 +71,12 @@ B2B_FORBIDDEN_KEYS: frozenset[str] = CEO_ONLY_KEYS | frozenset({
     "block_cause", "phase_signal", "phase_ratio", "available_transitions",
     "submitted_by", "submitted_by_user", "submitted_by_name",
     "pipeline_internal_filters", "view_pipeline_money",
+    # ── Totales financieros internos (B2B ve solo monto_cliente_usd) ─────────
+    "balance", "total_invoiced", "total_paid", "total_paid_usd",
+    "projected_margin", "real_margin", "margin_drift",
+    "total_value", "unit_price", "unit_price_legacy",
+    # ── Proforma interna MWT (el B2B no la ve; usa OC/SAP) ───────────────────
+    "proforma", "proforma_codigo", "proforma_codigos",
 })
 
 _CEO_ADMIN_ROLES = {"superadmin", "admin", "ceo"}
@@ -84,6 +93,50 @@ def is_client(role: str) -> bool:
     return r.startswith("client_") or r in ("cliente", "client")
 
 
+# ─────────────────────────────────────────────────────────────────────── #
+# Ola 3.8 · Filtro sistémico de identificadores internos para client_b2b.
+#
+# El backend devuelve en TODOS los endpoints UUIDs de usuarios internos
+# (created_by, approved_by, uploaded_by...), operating_company_id,
+# proveedor_id, storage_url, object_key, sha256, scope_json, etc. Eso filtra
+# la estructura interna de MWT al cliente. Aquí definimos:
+#   · B2B_CHAINING_KEYS  -> UUIDs que el agente SÍ necesita para encadenar
+#                           tools (expediente_obtener(expediente_id), ...).
+#   · B2B_INTERNAL_ID_KEYS -> UUIDs internos puros que NUNCA debe ver el B2B.
+#
+# Regla sistémica en _strip: para client_b2b, cualquier clave que termine en
+# "_id" y NO esté en la allowlist de encadenamiento se oscurece. Así un campo
+# futuro (ej. "audit_actor_id") queda tapado automáticamente sin parche.
+# ─────────────────────────────────────────────────────────────────────── #
+B2B_CHAINING_KEYS: frozenset[str] = frozenset({
+    # Identificadores que el agente necesita para llamar la siguiente tool.
+    "id", "expediente_id", "oc_id", "client_id", "producto_id", "nodo_id",
+    "marca_id", "brand_id", "legal_entity_id", "legal_entity_ids", "origen_id",
+    "destino_id", "transferencia_id", "payment_id", "pago_id",
+    "documento_id", "talla_id", "size_id", "stock_id", "applicable_code",
+    "sap_id", "linea_id", "event_id", "template_id", "artifact_id",
+})
+
+# Claves que terminan en _id pero que NO son UUID de encadenamiento:
+# UUIDs de usuario/auditoría, operador, proveedor, infraestructura.
+B2B_INTERNAL_ID_SUFFIXES: tuple[str, ...] = (
+    "_by", "_by_id", "_actor", "_operator", "_owner", "_assignee",
+)
+B2B_INTERNAL_ID_KEYS: frozenset[str] = frozenset({
+    "created_by", "created_by_id", "updated_by_id", "approved_by_id",
+    "received_by_id", "reconciled_by_id", "liquidated_by_id",
+    "confirmed_by", "reverted_by", "actor_id", "uploaded_by",
+    "uploaded_by_id", "responsable_id", "submitted_by", "submitted_by_user",
+    "submitted_by_name", "operating_company_id", "proveedor_id",
+    "proveedor_principal_id", "supplier_id", "nodo_asignado_id",
+    "legal_entity_owner_id", "operator_id", "parent_id", "event_id",
+    "linea_id_expediente", "document_id", "transferencia_id_nested",
+    "bucket", "object_key", "file_key", "sha256", "storage_url",
+    "archivo_url", "scope_json", "context_data", "ocr_payload_json",
+    "idempotence_token", "visibility_tier", "codigo_marluvas", "hs_code",
+})
+
+
 def forbidden_keys_for_role(role: str) -> frozenset[str] | None:
     """Devuelve el set de claves a redactar para el rol, o None si acceso total."""
     if is_ceo_or_admin(role):
@@ -93,28 +146,77 @@ def forbidden_keys_for_role(role: str) -> frozenset[str] | None:
     return CEO_ONLY_KEYS
 
 
-def _strip(value, forbidden: frozenset[str]):
-    """Recursivo: oscurece con '***' las claves prohibidas en dicts y listas."""
-    if isinstance(value, dict):
-        return {
-            k: "***" if (k or "").lower() in forbidden else _strip(v, forbidden)
-            for k, v in value.items()
-        }
+def _is_internal_id_key(key: str) -> bool:
+    """True si una clave de identificación interna (no encadenable) debe ocultarse.
+
+    Se aplica a TODOS los roles (Ola 3.8): ni el client_b2b ni el admin/CEO
+    deben recibir UUIDs internos de auditoría/operador/proveedor/infraestructura.
+    Solo se conservan los IDs de encadenamiento (B2B_CHAINING_KEYS) que el
+    agente necesita para llamar la siguiente tool.
+    """
+    k = (key or "").strip().lower()
+    if k in B2B_CHAINING_KEYS:
+        return False
+    if k in B2B_INTERNAL_ID_KEYS:
+        return True
+    # Cualquier "*_id" futuro que no esté en la allowlist -> interno.
+    if k.endswith("_id"):
+        return True
+    return False
+
+
+def _is_exp_codigo(key: str, value) -> bool:
+    """True si la clave es un código interno EXP- (número que solo usa el
+    sistema). Cubre `codigo`, `codigo_interno`, `expediente_codigo` y cualquier
+    clave que termine en `codigo`. Se elimina para TODOS los roles; el
+    identificador presentable es `codigos_presentacion`."""
+    kl = (key or "").lower()
+    if not (kl == "codigo" or kl == "codigo_interno" or kl.endswith("_codigo")):
+        return False
     if isinstance(value, list):
-        return [_strip(v, forbidden) for v in value]
+        return any(str(v).startswith("EXP-") for v in value)
+    return isinstance(value, str) and value.startswith("EXP-")
+
+
+def _strip(value, forbidden: frozenset[str], filter_internal_ids: bool = True):
+    """Recursivo: oscurece con '***' las claves prohibidas en dicts y listas.
+
+    `forbidden`: catálogo financiero del rol (vacío para admin/CEO, que sí ven
+    costos/márgenes, pero NO UUIDs internos).
+    `filter_internal_ids=True`: además se ocultan los identificadores internos
+    (cualquier `*_id` fuera de la allowlist de encadenamiento). Es el filtro
+    sistémico Ola 3.8 y aplica a TODOS los roles.
+    """
+    if isinstance(value, dict):
+        out: dict = {}
+        for k, v in value.items():
+            kl = (k or "").lower()
+            if kl in forbidden:
+                out[k] = "***"
+            elif _is_exp_codigo(k, v):
+                continue  # EXP- interno: se elimina para todos los roles
+            elif filter_internal_ids and _is_internal_id_key(kl):
+                out[k] = "***"
+            else:
+                out[k] = _strip(v, forbidden, filter_internal_ids)
+        return out
+    if isinstance(value, list):
+        return [_strip(v, forbidden, filter_internal_ids) for v in value]
     return value
 
 
 def redact_for_role(payload, role: str):
     """Devuelve el payload redactado según el rol.
 
-    CEO/Admin -> devuelve el MISMO objeto (sin copiar: cero costo).
-    Cualquier otro rol -> deep-copy + oscurecimiento de claves sensibles.
+    Admin/CEO -> copia con TODOS los datos financieros visibles, pero SIN los
+    UUIDs internos (auditoría/operador/proveedor/infraestructura). Se conservan
+    solo los IDs de encadenamiento.
+    Cualquier otro rol -> deep-copy + oscurecimiento financiero + sin UUIDs internos.
     """
     forbidden = forbidden_keys_for_role(role)
     if forbidden is None:
-        return payload
-    return _strip(copy.deepcopy(payload), forbidden)
+        forbidden = frozenset()  # admin/CEO: sin redacción financiera
+    return _strip(copy.deepcopy(payload), forbidden, filter_internal_ids=True)
 
 
 def redact_for_user(payload, user: dict | None):
@@ -128,3 +230,77 @@ def redact_for_user(payload, user: dict | None):
         return payload
     role = user.get("role") or user.get("role_slug") or ""
     return redact_for_role(payload, role)
+
+
+# ─────────────────────────────────────────────────────────────────────── #
+# Ola 3.8 · Visibilidad de DOCUMENTOS y ARTEFACTOS para client_b2b.
+#
+# Reglas del negocio (verificado con el CEO):
+#   · Documentos: un client_b2b SOLO ve audience="CLIENT" y kind OC/PROFORMA
+#     de su cliente. NO ve FABRICA / MWT_INTERNAL / ADMIN_ONLY ni los
+#     kind SAP (ART-04 / Confirmación SAP). Admin/CEO ven todo.
+#   · Artefactos Builder (BL, packing list, factura, certificado...): un
+#     client_b2b SOLO ve los que tienen `publicado=True`. Admin/CEO ven todos.
+# ─────────────────────────────────────────────────────────────────────── #
+# Audience del documento que un client_b2b SÍ puede ver.
+B2B_VISIBLE_AUDIENCES: frozenset[str] = frozenset({"CLIENT", "CLIENTE"})
+# Kind de documento que un client_b2b SÍ puede ver.
+B2B_VISIBLE_KINDS: frozenset[str] = frozenset({"OC", "PROFORMA"})
+# Kinds internos (SAP/confirmación y artefactos de proceso) ocultos al B2B.
+B2B_HIDDEN_KIND_PREFIXES: tuple[str, ...] = ("ART-", "SAP", "PF_FABRICA", "FABRICA")
+
+
+def _client_can_see_documento(doc: dict) -> bool:
+    """Un client_b2b ve el documento solo si audience=CLIENT y kind visible."""
+    audience = (doc.get("audience") or "").strip().upper()
+    kind = (doc.get("kind") or "").strip().upper()
+    if audience not in B2B_VISIBLE_AUDIENCES:
+        return False
+    if kind and kind not in B2B_VISIBLE_KINDS:
+        return False
+    return True
+
+
+def _client_can_see_artefacto(art: dict) -> bool:
+    """Un client_b2b ve el artefacto Builder solo si publicado=True."""
+    return bool(art.get("publicado"))
+
+
+def filter_documentos_for_role(payload, role: str):
+    """Filtra la lista de documentos según el rol.
+
+    Admin/CEO: sin cambios. client_b2b: solo audience=CLIENT y kind OC/PROFORMA.
+    Aplica sobre listas o {results:[...]}. Fail-safe: devuelve el payload tal cual."""
+    if is_ceo_or_admin(role) or not is_client(role):
+        return payload
+
+    def _keep(row):
+        return _client_can_see_documento(row) if isinstance(row, dict) else True
+
+    if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+        out = dict(payload)
+        out["results"] = [r for r in out["results"] if _keep(r)]
+        return out
+    if isinstance(payload, list):
+        return [r for r in payload if _keep(r)]
+    return payload
+
+
+def filter_artefactos_for_role(payload, role: str):
+    """Filtra la lista de artefactos Builder según el rol.
+
+    Admin/CEO: sin cambios. client_b2b: solo publicado=True.
+    Aplica sobre listas o {results:[...]}. Fail-safe: devuelve el payload tal cual."""
+    if is_ceo_or_admin(role) or not is_client(role):
+        return payload
+
+    def _keep(row):
+        return _client_can_see_artefacto(row) if isinstance(row, dict) else True
+
+    if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+        out = dict(payload)
+        out["results"] = [r for r in out["results"] if _keep(r)]
+        return out
+    if isinstance(payload, list):
+        return [r for r in payload if _keep(r)]
+    return payload

@@ -24,15 +24,30 @@ from typing import Any
 
 from . import client as api
 
-# Caché simple de id -> nombre_comercial (TTL 30 min).
+# ── Ola 2 · 2.7 — caché de nombres por (email | cliente) ───────────────
+# Antes había UNA caché global: el primer usuario que disparaba _resolver
+# cargaba los nombres de SU scope y un usuario posterior recibía `*_name`
+# enriquecidos con clientes fuera de su tenant (fuga de nombres P1-4).
+# Ahora la key incluye el email del usuario + el cliente resuelto de la app.
 _CACHE_TTL = 30 * 60
-_client_cache: dict[str, str] = {}
-_client_cache_exp: float = 0.0
+_client_cache: dict[str, dict[str, str]] = {}
+_client_cache_exp: dict[str, float] = {}
 _cache_lock = threading.Lock()
 
 
+def _cache_key() -> str:
+    """Key de caché = (email de identidad | cliente resuelto de la app)."""
+    from .identity import current_identity, current_tenant
+
+    identity = current_identity()
+    who = (identity.email or identity.user_id or "anon").lower()
+    tenant = current_tenant()
+    scope = tenant.client_id or "global"
+    return f"{who}|{scope}"
+
+
 def _resolver(identity_email: str | None = None) -> None:
-    """Carga el mapa id -> nombre_comercial de las empresas del usuario.
+    """Carga el mapa id -> nombre_comercial de las empresas del scope.
 
     Usa `portal/me/` como fuente PRIMARIA porque es accesible para TODOS los
     roles (incluido client_b2b, que recibe 403 en `/clientes/`). El `me`
@@ -41,6 +56,7 @@ def _resolver(identity_email: str | None = None) -> None:
     vacío para no repetir la llamada por cada tool.
     """
     global _client_cache, _client_cache_exp
+    key = _cache_key()
     try:
         names: dict[str, str] = {}
         try:
@@ -57,15 +73,16 @@ def _resolver(identity_email: str | None = None) -> None:
             for r in rows:
                 if r.get("id"):
                     names[str(r["id"])] = (r.get("nombre_comercial") or r.get("razon_social") or "")
-        _client_cache = names
-        _client_cache_exp = time.time() + _CACHE_TTL
+        _client_cache[key] = names
+        _client_cache_exp[key] = time.time() + _CACHE_TTL
     except Exception:  # noqa: BLE001 - fail-safe
-        _client_cache_exp = time.time() + 60  # reintenta pronto
+        _client_cache_exp[key] = time.time() + 60  # reintenta pronto
 
 
 def _ensure_loaded() -> None:
+    key = _cache_key()
     with _cache_lock:
-        if time.time() >= _client_cache_exp:
+        if time.time() >= _client_cache_exp.get(key, 0.0):
             _resolver()
 
 
@@ -74,8 +91,19 @@ def client_name(client_id: str | None) -> str | None:
     if not client_id:
         return None
     _ensure_loaded()
-    name = _client_cache.get(str(client_id))
+    name = _client_cache.get(_cache_key(), {}).get(str(client_id))
     return name or None
+
+
+def user_client_ids() -> list[str]:
+    """Ids de las empresas (legal entities) del usuario conectado.
+
+    Fuente: `portal/me/` (empresas[].id), que el resolver ya cachea. Útil para
+    filtrar endpoints que NO aplican scope automático (ej. phase-stats).
+    Fail-safe: lista vacía si no se puede resolver.
+    """
+    _ensure_loaded()
+    return list(_client_cache.get(_cache_key(), {}).keys())
 
 
 # Campos *_id que queremos enriquecer con un *_nombre adjunto.
@@ -148,6 +176,27 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
     out = dict(row)
     if partes:
         out["codigos_presentacion"] = " · ".join(partes)
+    # Ola 3.8 · El código interno EXP- es un número que SOLO usa el sistema;
+    # no se entrega a ningún rol (ni admin/CEO). El identificador presentable
+    # es `codigos_presentacion` (PF · PO · SAP).
+    out.pop("codigo", None)
+    out.pop("codigo_interno", None)
+    # Ola 3.8 · Privacidad: para un client_b2b además se quitan los UUIDs de
+    # referencia (id, oc_id, operating_company_id, brand_id, fusion_id) y se
+    # expone `referencia_cliente` con el PO. CEO/Admin conservan esos UUIDs
+    # (los necesitan para encadenar tools).
+    if is_client(role):
+        ref = (ocs[0] if ocs else (saps[0] if saps else None))
+        if ref:
+            out["referencia_cliente"] = ref
+        for key in (
+            "id",
+            "fusion_id",
+            "oc_id",
+            "operating_company_id",
+            "brand_id",
+        ):
+            out.pop(key, None)
     return out
 
 
@@ -263,3 +312,258 @@ def enrich_producto(payload: Any, user: dict | None = None) -> Any:
     if isinstance(payload, dict):
         return _one(payload)
     return payload
+
+
+# --------------------------------------------------------------------------- #
+# Enriquecimiento de LÍNEAS de expediente (Ola 3.8 · Calidad)
+# --------------------------------------------------------------------------- #
+_product_cache: dict[str, dict] = {}
+_product_cache_exp: float = 0.0
+
+
+def _ensure_products_loaded() -> None:
+    global _product_cache, _product_cache_exp
+    if time.time() < _product_cache_exp:
+        return
+    try:
+        # Ola 3.8 · el catálogo B2B usa portal/products/ (scoped y read-only),
+        # accesible para client_b2b. /api/productos/ devuelve 403 al cliente.
+        data = api.get("portal/products/", {"limit": 500})
+        rows = data if isinstance(data, list) else (data or {}).get("results") or []
+        _product_cache = {
+            str(r.get("id")): r for r in rows if r.get("id")
+        }
+        if not _product_cache:
+            # Fallback backoffice (staff/admin): solo si el primero no dio nada.
+            data = api.get("productos/", {"limit": 500})
+            rows = data if isinstance(data, list) else (data or {}).get("results") or []
+            _product_cache = {
+                str(r.get("id")): r for r in rows if r.get("id")
+            }
+        # Ola 3.8 · si el catálogo es manejable, recargamos el detalle (con
+        # especificaciones) para que la búsqueda por características funcione.
+        # El list del portal no incluye especificaciones; el detail sí.
+        if _product_cache:
+            pids = list(_product_cache.keys())
+            if len(pids) <= 500:
+                for pid in pids:
+                    detail = _fetch_product_detail(pid)
+                    if detail:
+                        merged = dict(_product_cache[pid])
+                        # Mantener el nombre/marca del list (el detail puede
+                        # no traerlos igual) y añadir especificaciones/tallas.
+                        for k, v in detail.items():
+                            if v is not None:
+                                merged.setdefault(k, v)
+                        _product_cache[pid] = merged
+        _product_cache_exp = time.time() + _CACHE_TTL
+    except Exception:  # noqa: BLE001
+        _product_cache_exp = time.time() + 60
+
+
+def _fetch_product_detail(pid: str) -> dict | None:
+    """Detalle de un producto del portal B2B (con especificaciones). Fail-safe."""
+    try:
+        detail = api.get(f"portal/products/{pid}/")
+        if isinstance(detail, dict) and detail.get("id"):
+            return detail
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def enrich_lineas(payload: Any) -> Any:
+    """Añade a cada línea de expediente el `producto_nombre` y `marca_nombre`
+    del producto (resuelto por producto_id vía el catálogo). Fail-safe: si no
+    resuelve, deja la línea tal cual (el agente conserva el SKU)."""
+    try:
+        _ensure_products_loaded()
+    except Exception:  # noqa: BLE001
+        pass
+
+    def _one(row: dict) -> dict:
+        if not isinstance(row, dict):
+            return row
+        pid = row.get("producto_id")
+        prod = _product_cache.get(str(pid)) if pid else None
+        if not prod:
+            return row
+        out = dict(row)
+        out.setdefault("producto_nombre", prod.get("nombre") or prod.get("sku"))
+        marca = prod.get("marca_nombre") or prod.get("marca_label") or ""
+        if marca:
+            out.setdefault("marca_nombre", marca)
+        return out
+
+    if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+        payload = dict(payload)
+        payload["results"] = [_one(r) for r in payload["results"]]
+        return payload
+    if isinstance(payload, list):
+        return [_one(r) for r in payload]
+    if isinstance(payload, dict):
+        return _one(payload)
+    return payload
+
+
+# --------------------------------------------------------------------------- #
+# Búsqueda de productos por texto amplio (Ola 3.8 · Calidad)
+# --------------------------------------------------------------------------- #
+# Índice invertido simple: término normalizado -> lista de producto_id.
+# Se construye desde el cache de productos y cubre: sku, nombre, marca,
+# categoría y TODAS las especificaciones (tipo_calzado, suela, color, riesgo,
+# segmento, cierre, puntera, normativa...). Así "bota alta" o "suela caucho"
+# resuelven sin tocar el backend.
+_search_index: dict[str, list[str]] = {}
+_search_index_built: float = 0.0
+
+
+def _norm_tokens(text: str) -> list[str]:
+    """Normaliza un texto a tokens simples (minúsculas, sin acentos, sin puntuación)."""
+    import unicodedata
+
+    nfkd = unicodedata.normalize("NFKD", (text or ""))
+    ascii_txt = "".join(c for c in nfkd if not unicodedata.combining(c))
+    out = []
+    for tok in ascii_txt.lower().split():
+        tok = "".join(ch for ch in tok if ch.isalnum())
+        if tok:
+            out.append(tok)
+    return out
+
+
+def _product_search_text(row: dict) -> str:
+    """Concatena todos los textos buscables de un producto (sku, nombre, marca,
+    categoría, especificaciones planas y aliases si ya se cargaron)."""
+    parts = [
+        str(row.get("sku") or ""),
+        str(row.get("nombre") or ""),
+        str(row.get("marca_label") or row.get("marca_nombre") or ""),
+        str(row.get("categoria") or ""),
+        str(row.get("descripcion") or ""),
+    ]
+    aliases = row.get("_aliases")
+    if isinstance(aliases, (list, tuple)):
+        parts.extend(str(a) for a in aliases if a)
+    spec = row.get("especificaciones")
+    if isinstance(spec, dict):
+        for k, v in spec.items():
+            if k in ("visibility", "client_prices", "nodes", "sizes", "fichas", "gallery"):
+                continue
+            if isinstance(v, (list, tuple)):
+                parts.extend(str(x) for x in v if x is not None)
+            elif v is not None:
+                parts.append(str(v))
+    return " ".join(p for p in parts if p)
+
+
+# Aliases comerciales por cliente (staff-only; client_b2b recibe 403).
+_alias_loaded: bool = False
+
+
+def _load_aliases_for_staff() -> None:
+    """Carga los aliases comerciales de cada producto en el cache (solo para
+    roles staff; el endpoint devuelve 403 a client_b2b). Fail-safe: silencioso."""
+    global _alias_loaded
+    if _alias_loaded or not _product_cache:
+        return
+    _alias_loaded = True
+    pids = list(_product_cache.keys())
+    for pid in pids:
+        try:
+            data = api.get(f"productos/{pid}/aliases/")
+            rows = data if isinstance(data, list) else (data or {}).get("results") or []
+            aliases = sorted({str(r.get("alias")) for r in rows if r.get("alias")})
+            if aliases and pid in _product_cache:
+                _product_cache[pid] = dict(_product_cache[pid], _aliases=aliases)
+        except Exception:  # noqa: BLE001 - 403 u otro: no bloquea
+            continue
+
+
+def _ensure_aliases(allow_staff: bool) -> None:
+    if allow_staff and not _alias_loaded:
+        try:
+            _load_aliases_for_staff()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _build_search_index(rows: list) -> None:
+    global _search_index, _search_index_built
+    idx: dict[str, list[str]] = {}
+    for r in rows:
+        pid = str(r.get("id")) if r.get("id") else None
+        if not pid:
+            continue
+        for tok in _norm_tokens(_product_search_text(r)):
+            idx.setdefault(tok, []).append(pid)
+    _search_index = idx
+    _search_index_built = time.time()
+
+
+def search_productos(query: str, limit: int = 10, with_specs: bool = False,
+                     allow_aliases: bool = False) -> list[dict]:
+    """Busca productos por SKU/nombre/alias/característica.
+
+    Empareja por SUBSTRING (insensible): todos los tokens de la query deben
+    aparecer en el texto buscable del producto (sku, nombre, marca, categoría,
+    especificaciones y aliases). Así "60b29" matchea el sku/nombre "60B29-...",
+    "bota alta" matchea tipo_calzado="Bota Alta", y "suela caucho" matchea
+    suela="Caucho". `with_specs=True` recarga especificaciones de candidatos
+    (portal/products/{id}/). `allow_aliases=True` indexa aliases (staff-only).
+    Fail-safe: lista vacía.
+    """
+    try:
+        _ensure_products_loaded()
+        _ensure_aliases(allow_aliases)
+        rows = list(_product_cache.values())
+        tokens = _norm_tokens(query)
+        if not tokens:
+            return []
+        # Scan lineal por substring sobre el texto normalizado de cada producto.
+        def _matches(row: dict) -> bool:
+            haystack = _norm_tokens(_product_search_text(row))
+            # Unir tokens normalizados sin separadores para permitir substring.
+            hay_text = " ".join(haystack)
+            return all(tok in hay_text for tok in tokens)
+
+        hits = [r for r in rows if _matches(r)]
+        # Re-rank: los que matchean exactamente el sku/nombre van primero.
+        qq = (query or "").strip().lower()
+        hits.sort(key=lambda r: (
+            0 if qq == str(r.get("sku") or "").lower() else
+            1 if qq in str(r.get("sku") or "").lower() else
+            2 if qq in str(r.get("nombre") or "").lower() else 3,
+            str(r.get("sku") or ""),
+        ))
+        out = hits[:limit]
+        if with_specs:
+            out = [_with_specs(r) for r in out]
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _with_specs(row: dict) -> dict:
+    """Si la fila no trae especificaciones, las recarga del detalle (cacheado)."""
+    if row.get("especificaciones"):
+        return row
+    pid = row.get("id")
+    if not pid:
+        return row
+    key = str(pid)
+    if key in _specs_cache:
+        return _specs_cache[key]
+    detail = _fetch_product_detail(key)
+    if detail:
+        merged = dict(row)
+        for k, v in detail.items():
+            if v is not None:
+                merged.setdefault(k, v)
+        _specs_cache[key] = merged
+        return merged
+    return row
+
+
+_specs_cache: dict[str, dict] = {}
+_specs_cache_exp: float = 0.0

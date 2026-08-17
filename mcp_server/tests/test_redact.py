@@ -37,6 +37,9 @@ def _expediente_payload() -> dict:
         "client_id": "cli-1",
         "moneda": "USD",
         "total_cost": 1234.50,               # CEO_ONLY
+        "balance": 500.00,                   # B2B-only (Ola 3.8)
+        "total_invoiced": 1700.00,           # B2B-only (Ola 3.8)
+        "total_paid": 1200.00,               # B2B-only (Ola 3.8)
         "projected_margin": 0.18,            # CEO_ONLY
         "real_margin": None,                 # CEO_ONLY
         "credit_band": "GREEN",              # CEO_ONLY
@@ -61,13 +64,20 @@ def _expediente_payload() -> dict:
 
 
 def test_ceo_ve_todo_mismo_objeto():
-    """superadmin/admin/ceo reciben el payload SIN copiar (cero costo)."""
+    """superadmin/admin/ceo ven TODOS los datos financieros, PERO reciben copia
+    filtrada sin UUIDs internos (Ola 3.8: el filtro de IDs aplica a todos los roles)."""
     payload = _expediente_payload()
     for role in ("superadmin", "admin", "ceo", "CEO", " Admin "):
         result = redact_for_role(payload, role)
-        assert result is payload, f"rol {role!r} debe devolver el MISMO objeto"
-    assert "unit_cost" in payload["lines"][0]
-    assert "projected_margin" in payload
+        # Financiero intacto.
+        assert result["total_cost"] == 1234.50, role
+        assert result["projected_margin"] == 0.18, role
+        assert result["lines"][0]["unit_cost"] == 25.10, role
+        assert result["lines"][0]["unit_price_mwt"] == 36.46, role
+        # UUID interno de proveedor oculto también para CEO/Admin.
+        assert result["proveedor"]["supplier_id"] == "***", role
+    # El original no se mutó.
+    assert payload["proveedor"]["supplier_id"] == "sup-9"
 
 
 def test_is_ceo_or_admin():
@@ -110,8 +120,9 @@ def test_staff_no_ve_ceo_only_pero_si_ve_campos_operativos():
         assert payload["projected_margin"] == "***", role
         assert payload["lines"][0]["unit_cost"] == "***", role
         assert payload["lines"][0]["unit_price_mwt"] == "***", role
-        # Staff interno SÍ ve proveedor y PII (no es B2B).
-        assert payload["proveedor"]["supplier_id"] == "sup-9", role
+        # Staff interno ve proveedor y PII (no es B2B), pero NO el UUID supplier_id.
+        assert payload["proveedor"]["supplier_name"] == "Fabrica X", role
+        assert payload["proveedor"]["supplier_id"] == "***", role
         assert payload["contact_email"] == "cliente@mwt.example", role
 
 
@@ -151,10 +162,26 @@ def test_redact_for_user_usa_role_del_perfil():
     out = redact_for_user(payload, {"role": "client_b2b"})
     assert out["total_cost"] == "***"
     out2 = redact_for_user(payload, {"role": "ceo", "role_slug": "ceo"})
-    assert out2 is payload
+    # CEO ve financiero intacto pero sin UUIDs internos (copia filtrada).
+    assert out2["total_cost"] == 1234.50
+    assert out2["proveedor"]["supplier_id"] == "***"
     # Si solo está role_slug, se respeta igual.
     out3 = redact_for_user(payload, {"role_slug": "manager"})
     assert out3["projected_margin"] == "***"
+
+
+def test_client_b2b_no_ve_balance_ni_totales_internos():
+    """Ola 3.8 · el client_b2b NO ve balance/total_invoiced/total_paid."""
+    payload = _expediente_payload()
+    out = redact_for_role(payload, "client_b2b")
+    assert out["balance"] == "***"
+    assert out["total_invoiced"] == "***"
+    assert out["total_paid"] == "***"
+    assert out["projected_margin"] == "***"
+    assert out["total_cost"] == "***"
+    # CEO/Admin sí los ven.
+    out_ceo = redact_for_role(payload, "ceo")
+    assert out_ceo["balance"] == 500.00
 
 
 def test_valores_anidados_no_dict_ni_lista_intactos():
@@ -184,3 +211,104 @@ def test_no_muta_el_original():
     snapshot = copy.deepcopy(payload)
     redact_for_role(payload, "manager")
     assert payload == snapshot
+
+
+def test_exp_codigo_se_elimina_para_todos_los_roles():
+    """El código interno EXP- se elimina en TODOS los roles (no solo client_b2b),
+    esté donde esté el campo (raíz, anidado en listas, expediente_codigo)."""
+    payload = {
+        "id": "exp-1",
+        "codigo": "EXP-505201-2",
+        "codigo_interno": "EXP-505201-2",
+        "expediente_codigo": "EXP-505201-2",
+        "oc_codigos": ["PO 505201"],
+        "lines": [{"codigo": "EXP-505201-2", "sku": "700728"}],
+    }
+    for role in ("admin", "ceo", "manager", "client_b2b"):
+        out = redact_for_role(payload, role)
+        assert "codigo" not in out, role
+        assert "codigo_interno" not in out, role
+        assert "expediente_codigo" not in out, role
+        assert out["lines"][0].get("codigo") is None or "codigo" not in out["lines"][0], role
+        assert out["oc_codigos"] == ["PO 505201"], role
+        assert out["id"] == "exp-1", role  # UUID de encadenamiento se conserva
+
+
+def test_exp_codigo_no_elimina_codigo_negocio():
+    """Un `codigo` que NO sea EXP- (ej. PO, SKU) se conserva."""
+    payload = {"codigo": "PO 505201", "sku": "700728"}
+    out = redact_for_role(payload, "admin")
+    assert out["codigo"] == "PO 505201"
+    assert out["sku"] == "700728"
+
+
+def test_client_b2b_oculta_ids_internos_puros():
+    """Ola 3.8 · filtro sistémico: UUIDs de usuarios/operador/proveedor y
+    claves de infraestructura se oscurecen para client_b2b."""
+    payload = {
+        "id": "exp-1",                     # raíz: encadenable -> se mantiene
+        "expediente_id": "exp-1",          # encadenable -> se mantiene
+        "client_id": "cli-1",              # encadenable -> se mantiene
+        "created_by_id": "u-1",            # interno -> ***
+        "approved_by_id": "u-2",           # interno -> ***
+        "uploaded_by": "u-3",              # interno -> ***
+        "operating_company_id": "mwt-1",   # interno -> ***
+        "proveedor_id": "sup-1",           # interno -> ***
+        "storage_url": "s3://bucket/key",  # infra -> ***
+        "object_key": "buckets/2026/a.pdf",
+        "sha256": "abc123",
+        "scope_json": {"expediente_ids": ["e1"]},
+        "codigo": "PO 504302",             # código de negocio visible
+        "oc_codigos": ["PO 504302"],
+        "estado": "EN_DESTINO",
+        "lines": [
+            {"id": "l1", "producto_id": "p1", "sku": "700728",
+             "unit_price_client": 48.74, "created_by_id": "u-9"},
+        ],
+    }
+    out = redact_for_role(payload, "client_b2b")
+    # Encadenables se conservan.
+    assert out["id"] == "exp-1"
+    assert out["expediente_id"] == "exp-1"
+    assert out["client_id"] == "cli-1"
+    assert out["lines"][0]["id"] == "l1"
+    assert out["lines"][0]["producto_id"] == "p1"
+    assert out["lines"][0]["unit_price_client"] == 48.74
+    # Internos se oscurecen.
+    assert out["created_by_id"] == "***"
+    assert out["approved_by_id"] == "***"
+    assert out["uploaded_by"] == "***"
+    assert out["operating_company_id"] == "***"
+    assert out["proveedor_id"] == "***"
+    assert out["storage_url"] == "***"
+    assert out["object_key"] == "***"
+    assert out["sha256"] == "***"
+    assert out["scope_json"] == "***"
+    assert out["lines"][0]["created_by_id"] == "***"
+    # Código de negocio y estado visibles.
+    assert out["codigo"] == "PO 504302"
+    assert out["estado"] == "EN_DESTINO"
+
+
+def test_client_b2b_oculta_cualquier_id_futuro():
+    """Regla sistémica: una clave *_id desconocida se oscurece automáticamente
+    para client_b2b (no requiere parche tool por tool)."""
+    payload = {"id": "x", "audit_actor_id": "u1", "nuevo_recurso_id": "r1",
+               "expediente_id": "e1", "notas": "ok"}
+    out = redact_for_role(payload, "client_b2b")
+    assert out["audit_actor_id"] == "***"
+    assert out["nuevo_recurso_id"] == "***"
+    assert out["expediente_id"] == "e1"   # encadenable
+    assert out["id"] == "x"               # raíz
+    assert out["notas"] == "ok"
+
+
+def test_staff_tambien_oculta_ids_internos():
+    """El filtro de IDs internos aplica a TODOS los roles (Ola 3.8): también
+    el staff interno y admin/CEO dejan de recibir UUIDs de auditoría/operador."""
+    payload = {"id": "exp-1", "created_by_id": "u-1", "operating_company_id": "mwt-1"}
+    for role in ("manager", "operator", "admin", "ceo"):
+        out = redact_for_role(payload, role)
+        assert out["created_by_id"] == "***", role
+        assert out["operating_company_id"] == "***", role
+        assert out["id"] == "exp-1"  # raíz encadenable se conserva

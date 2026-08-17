@@ -116,6 +116,25 @@ def test_mwt_whoami_error_no_rompe_rbac(monkeypatch):
     assert out.get("error") is True
 
 
+def test_mwt_whoami_client_b2b_no_revela_ocultas(monkeypatch):
+    """Un client_b2b NO debe ver cuántas tools están ocultas ni roles superiores."""
+    payload = {"id": "u1", "email": "logistica2@sondelsa.com", "role": "client_b2b"}
+    monkeypatch.setattr(server.api, "get", lambda *a, **k: payload)
+    monkeypatch.setattr(
+        server,
+        "get_identity_user",
+        lambda: {"role": "client_b2b", "permissions": {"modules": ["expedientes"]}},
+    )
+    out = server.mwt_whoami()
+    rbac = out["mwt_rbac"]
+    assert "tools_disponibles" in rbac
+    assert "total_tools" in rbac
+    assert "total_ocultas" not in rbac
+    assert "tools_ocultas" not in rbac
+    assert "tools_permitidas" not in rbac
+    assert "modo" not in rbac
+
+
 # ─────────────────────────────────────────────────────────────────────── #
 # mwt_diag_scope (D5 · CEO-only)
 # ─────────────────────────────────────────────────────────────────────── #

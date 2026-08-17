@@ -37,7 +37,8 @@ def test_rol_sin_matriz_solo_introspeccion():
     assert allowed is not None
     assert "mwt_whoami" in allowed
     assert "mwt_health" in allowed
-    assert "mwt_diag_scope" in allowed
+    # 9bf5f21: mwt_diag_scope es CEO-only (roles.view) — NO es siempre-visible.
+    assert "mwt_diag_scope" not in allowed
     assert "cliente_crear" not in allowed
     assert "expediente_crear" not in allowed
 

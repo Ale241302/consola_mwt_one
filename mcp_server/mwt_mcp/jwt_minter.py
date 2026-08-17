@@ -34,11 +34,25 @@ from typing import Any
 import httpx
 
 from .config import settings
-from .identity import current_identity
+from .identity import current_identity, current_tenant
 
 
 # Cache simple en memoria por email/usuario. TTL = 45 min (el backend emite 1h).
-_TOKEN_TTL_SECONDS = 45 * 60
+# Ola 2 · 2.8 — en apps de cliente (tenant resuelto) se acota a 10 min para que
+# la revocación de un cliente desactivado sea efectiva en ≤10 min.
+def _token_ttl_seconds() -> int:
+    if current_tenant().is_scoped:
+        return 10 * 60
+    return 45 * 60
+
+
+def _token_ttl_seconds_static() -> int:
+    if settings.client_id:
+        return 10 * 60
+    return 45 * 60
+
+
+_TOKEN_TTL_SECONDS = _token_ttl_seconds_static()
 # El perfil (rol + permissions) se refresca más seguido (5 min) para que los
 # cambios de permisos hechos en la consola se reflejen rápido en el filtrado
 # de tools por rol al re-listar (ContextForge / tools/list).
@@ -102,7 +116,7 @@ def _set_cache(key: str, token: str, user: dict | None = None) -> None:
         _cache[key] = {
             "token": token,
             "user": user,
-            "exp": time.time() + _TOKEN_TTL_SECONDS,
+            "exp": time.time() + _token_ttl_seconds(),
             "user_exp": time.time() + _PROFILE_TTL_SECONDS,
         }
 
@@ -130,6 +144,12 @@ def _mint_from_backend(identity) -> dict | None:
         body["email"] = identity.email
     if identity.user_id:
         body["user_id"] = identity.user_id
+    # Ola 2 · 2.6 — si hay cliente resuelto (X-MWT-Client-ID o env), el mint lo
+    # envía al backend para que la intersección con el ServiceToken y el
+    # tenant_id del JWT sean reales (activa la Ola 1 backend).
+    tenant = current_tenant()
+    if tenant.is_scoped:
+        body["client_id"] = tenant.client_id
 
     url = f"{settings.api_base}/auth/mcp-token/"
     try:
@@ -148,11 +168,36 @@ def _mint_from_backend(identity) -> dict | None:
     return None
 
 
+def verify_tenant(user: dict | None) -> str | None:
+    """Ola 2 · 2.4 — verifica que el usuario pertenezca al cliente resuelto.
+
+    Devuelve None si la identidad cumple el tenant; si no, el código de error
+    (`TENANT_MISMATCH` / `TENANT_SCOPE_VACIO`) para el mensaje fail-closed.
+
+    Se aplica SIEMPRE que haya cliente resuelto, incluso si el rol es
+    admin/superadmin (cierra P0-6): un admin conectado a una app de cliente
+    solo opera como ese cliente (el backend fuerza el scope; aquí se corta la
+    conexión si ni siquiera pertenece al cliente).
+    """
+    tenant = current_tenant()
+    if not tenant.is_scoped:
+        return None  # modo global/admin: sin restricción de cliente
+    if not user:
+        return "TENANT_SCOPE_VACIO"
+    leis = {str(x).lower() for x in (user.get("legal_entity_ids") or []) if x}
+    if not leis:
+        return "TENANT_SCOPE_VACIO"
+    if tenant.client_id not in leis:
+        return "TENANT_MISMATCH"
+    return None
+
+
 def _mint_and_cache(identity) -> dict:
     """Mint + cache el token y el perfil para la identidad propagada.
 
     Fail-closed: si hay identidad pero el backend no emite token, levanta
     IdentityMintingError (NUNCA cae al ServiceToken cuando hay identidad).
+    Ola 2 · 2.4 — además verifica la pertenencia al cliente quemado.
     """
     key = _cache_key(identity)
     data = _mint_from_backend(identity)
@@ -166,6 +211,24 @@ def _mint_and_cache(identity) -> dict:
 
     token = data["access"]
     user = data.get("user") or None
+    tenant = current_tenant()
+    if tenant.is_scoped:
+        err = verify_tenant(user)
+        if err:
+            name = tenant.client_name or tenant.client_id
+            detail = {
+                "TENANT_MISMATCH": (
+                    f"Esta aplicación MCP está restringida a {name} y tu "
+                    "usuario no está asociado a esa empresa. Si crees que es "
+                    "un error, contacta a soporte de MWT con tu correo."
+                ),
+                "TENANT_SCOPE_VACIO": (
+                    "Tu perfil no tiene empresas asociadas para esta "
+                    "aplicación MCP (scope vacío). Contacta a soporte de MWT."
+                ),
+            }.get(err, "Tenant no autorizado")
+            raise IdentityMintingError(f"{err}: {detail}")
+
     if key:
         _set_cache(key, token, user)
     return {"token": token, "user": user}

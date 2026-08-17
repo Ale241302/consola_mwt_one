@@ -25,36 +25,43 @@ def _make_server(identity_user=None):
 
 
 def test_safe_role_ok_ceo_sin_redaccion():
-    payload = {"codigo": "EXP-1", "total_cost": 5.0}
+    # Ola 3.8: el código interno EXP- se elimina para TODOS los roles y la
+    # redacción hace deep-copy (nunca muta el payload original). El CEO ve los
+    # datos financieros intactos pero sin EXP- interno.
+    payload = {"codigo": "PO 505201", "total_cost": 5.0}
     _safe_role, patcher = _make_server({"role": "ceo"})
     try:
         out = _safe_role(lambda: payload)
     finally:
         patcher.stop()
-    assert out is payload
-    assert out["total_cost"] == 5.0
+    assert out == {"codigo": "PO 505201", "total_cost": 5.0}
+    assert payload["total_cost"] == 5.0  # no mutó el original
 
 
 def test_safe_role_ok_manager_redacta():
-    payload = {"codigo": "EXP-1", "total_cost": 5.0}
+    payload = {"codigo": "PO 505201", "total_cost": 5.0}
     _safe_role, patcher = _make_server({"role": "manager"})
     try:
         out = _safe_role(lambda: payload)
     finally:
         patcher.stop()
     assert out["total_cost"] == "***"
-    assert out["codigo"] == "EXP-1"
+    assert out["codigo"] == "PO 505201"  # código de negocio (no EXP-) se conserva
 
 
 def test_safe_role_ok_sin_identidad_no_redacta():
-    """Sin identidad (ServiceToken/stdio) -> get_identity_user() devuelve None."""
+    """Sin identidad (ServiceToken/stdio) -> get_identity_user() devuelve None.
+
+    Ola 3.8: sin identidad no se redacta; el enrich_ids puede copiar el shape
+    (deep-copy) pero el contenido queda idéntico.
+    """
     payload = {"codigo": "EXP-1", "total_cost": 5.0}
     _safe_role, patcher = _make_server(None)
     try:
         out = _safe_role(lambda: payload)
     finally:
         patcher.stop()
-    assert out is payload
+    assert out == payload
 
 
 def test_safe_role_error_mwt_api():

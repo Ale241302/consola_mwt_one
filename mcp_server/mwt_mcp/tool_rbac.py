@@ -35,6 +35,14 @@ _WILDCARD_ROLES = {"superadmin", "admin", "ceo"}
 # utilidades puras no requieren módulo (siempre disponibles).
 _ALWAYS = None  # marcador: tool siempre visible
 
+# Ola 2 · 2.5 — tools de introspección GLOBAL (operador MWT) que se ocultan en
+# una app de cliente (tenant resuelto). Un usuario de mcp-sondel no debe ver
+# diagnóstico de usuarios/permisos ni el registry global de escrituras.
+_GLOBAL_ONLY_TOOLS = frozenset({
+    "mwt_diag_scope",
+    "mwt_audit_write_registry",
+})
+
 TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Introspección / salud / utilidades (siempre visibles) ──────────────
     "mwt_whoami": _ALWAYS,
@@ -55,6 +63,7 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Productos / NCM / tallas / marcas ──────────────────────────────────
     "producto_listar": ("productos", "view"),
     "producto_obtener": ("productos", "view"),
+    "producto_buscar": ("productos", "view"),
     "producto_precio_cliente": ("productos", "view"),
     "producto_ficha_tecnica": ("productos", "view"),
     "producto_crear": ("productos", "create"),
@@ -75,6 +84,8 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "expediente_obtener": ("expedientes", "view"),
     "expediente_buscar": ("expedientes", "view"),
     "expediente_lineas": ("expedientes", "view"),
+    "expediente_documentos_completos": ("expedientes", "view"),
+    "expediente_buscar_por_producto": ("expedientes", "view"),
     "expediente_resolve_oc_preview": ("expedientes", "create"),
     "expediente_crear": ("expedientes", "create"),
     "expedientes_crear_lote": ("expedientes", "create"),
@@ -86,6 +97,7 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "expediente_edit_full_patch": ("expedientes", "update"),
     "expediente_avanzar_estado": ("expedientes", "update"),
     "expediente_phase_durations_get": ("expedientes", "view"),
+    "expediente_tiempos": ("expedientes", "view"),
     "expediente_phase_durations_set": ("expedientes", "update"),
     "expediente_eventos": ("expedientes", "view"),
     "expediente_fusionar": ("expedientes", "update"),
@@ -232,6 +244,16 @@ def allowed_tool_names(user: dict) -> set[str] | None:
         if actions and "*" not in actions and f"{module}.{action}" not in actions:
             continue
         allowed.add(name)
+
+    # Ola 2 · 2.5 — guard anti-bypass: en una app de cliente (tenant resuelto),
+    # las tools globales de introspección interna NO se listan aunque el rol
+    # sea admin/superadmin. Un admin conectado a mcp-sondel opera como Sondel,
+    # no como operador MWT global.
+    from .identity import current_tenant
+
+    if current_tenant().is_scoped:
+        allowed -= _GLOBAL_ONLY_TOOLS
+
     return allowed
 
 

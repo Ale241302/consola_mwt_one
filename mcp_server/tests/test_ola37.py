@@ -166,3 +166,77 @@ def test_mwt_health_ok_false_si_token_invalido(monkeypatch):
     out = server.mwt_health()
     assert out["ok"] is False
     assert out["token_valid"] is False
+
+
+# ─────────────────────────────────────────────────────────────────────── #
+# C6 · Privacidad: el código interno EXP-XXXXXX no se expone al client_b2b
+# ─────────────────────────────────────────────────────────────────────── #
+def test_present_codigos_client_no_expone_codigo_interno(monkeypatch):
+    """Un client_b2b ve codigos_presentacion (OC/SAP) pero NO IDs internos."""
+    row = {
+        "id": "exp-1",
+        "codigo": "EXP-504302",
+        "fusion_id": "0c6e5683-b04b-4d01-93b8-bc12a4aad3e4",
+        "fusion_label": "PO 504983",
+        "oc_id": "a1d24aa9-c7cf-4fc9-a840-39edcc4e8b23",
+        "operating_company_id": "5525986c-3b09-4d13-bf8f-43ccaa2deae3",
+        "brand_id": "51db751c-2e74-4dd3-a592-d4bd2cc38b25",
+        "balance": "47876.40",
+        "total_cost": "33542.00",
+        "oc_codigos": ["504302"],
+        "sap_codigos": ["257021"],
+        "proforma_codigos": ["2393-2025"],
+        "estado": "EN_DESTINO",
+    }
+    monkeypatch.setattr(server, "get_identity_user", lambda: {"role": "client_b2b", "role_slug": "client_b2b"})
+
+    def _fake_get(path, *a, **k):
+        if path == "expedientes/exp-1/lineas/":
+            return {"results": [
+                {"qty": "10", "unit_price_client": "25.50", "is_active": True},
+                {"qty": "5", "unit_price_client": "12.00", "is_active": True},
+            ]}
+        return {}
+
+    monkeypatch.setattr(server.api, "get", _fake_get)
+    out = server._present_codigos({"results": [row]})
+    fila = out["results"][0]
+    assert "codigos_presentacion" in fila
+    assert fila["codigos_presentacion"] == "504302 · 257021"  # sin proforma interna
+    assert fila["referencia_cliente"] == "504302"  # identificador legible (PO)
+    assert "id" not in fila            # UUID oculto
+    assert "codigo" not in fila        # interno oculto
+    assert "codigo_interno" not in fila
+    assert "fusion_id" not in fila     # UUID de fusión oculto
+    assert "oc_id" not in fila
+    assert "operating_company_id" not in fila
+    assert "brand_id" not in fila
+    assert "balance" not in fila       # totales internos ocultos
+    assert "total_cost" not in fila
+    assert fila["fusion_label"] == "PO 504983"  # label legible se conserva
+    assert fila["oc_codigos"] == ["504302"]
+    # Total que el cliente SÍ debe ver: 10×25.50 + 5×12.00 = 255 + 60 = 315.00
+    assert fila["monto_cliente_usd"] == 315.00
+
+
+def test_present_codigos_ceo_conserva_codigo_interno(monkeypatch):
+    """CEO/Admin ven la proforma interna en codigos_presentacion, pero NO el
+    código interno EXP- (número interno que solo usa el sistema)."""
+    row = {
+        "id": "exp-1",
+        "codigo": "EXP-504302",
+        "fusion_id": "0c6e5683-b04b-4d01-93b8-bc12a4aad3e4",
+        "fusion_label": "PO 504983",
+        "oc_codigos": ["504302"],
+        "sap_codigos": ["257021"],
+        "proforma_codigos": ["2393-2025"],
+    }
+    monkeypatch.setattr(server, "get_identity_user", lambda: {"role": "admin", "role_slug": "admin"})
+    out = server._present_codigos({"results": [row]})
+    fila = out["results"][0]
+    assert fila["codigos_presentacion"] == "2393-2025 · 504302 · 257021"
+    assert "codigo" not in fila        # EXP- oculto para todos los roles
+    assert "codigo_interno" not in fila
+    assert fila["id"] == "exp-1"       # UUID visible solo a CEO/Admin
+    assert fila["fusion_id"] == "0c6e5683-b04b-4d01-93b8-bc12a4aad3e4"
+    assert "referencia_cliente" not in fila  # solo para client_b2b
