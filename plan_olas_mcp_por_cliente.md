@@ -393,6 +393,14 @@ Suite adversarial real (de `investigacion_mcp_por_cliente.md` §7):
 **Criterio de aceptación:** todas las pruebas pasan en producción; se entrega
 el runbook `docs/runbook_mcp_clientes.md` (alta/baja/rotación/troubleshooting).
 
+### 6.11 ESTADO REAL — Ola 6 COMPLETADA (suite 8/8 OK en producción)
+- Suite adversarial `scripts/mcp_isolation_suite.sh`: 8/8 OK (mint, 6.4, 6.5,
+  6.6, 6.8, 6.9, 6.10) + 6.7 kill-switch validado manualmente (403 CLIENTE_INACTIVO).
+- Fix de visibilidad: `costo_estandar` ya NO se expone a roles cliente en el
+  backend (`productos/serializers.py` — POL_VISIBILIDAD), además de la
+  redacción del MCP.
+- Runbook de alta/baja/rotación: `docs/runbook_mcp_clientes.md`.
+
 ---
 
 ## Orden de ejecución y deploys

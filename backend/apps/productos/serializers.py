@@ -47,6 +47,21 @@ class ProductoListSerializer(StorageNormalizeMixin, serializers.ModelSerializer)
             "especificaciones",
         )
 
+    # Ola 6 · 6.8 — POL_VISIBILIDAD: `costo_estandar` es dato interno (costo
+    # MWT). Solo se entrega a staff (admin/superadmin/ceo/manager); cualquier
+    # rol cliente (client_b2b, portal, MCP) NO debe recibirlo. El MCP ya lo
+    # redacta en capa MCP (redact.py), pero el backend no debe exponerlo crudo.
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        from apps.core.permissions import is_ceo_or_admin_role
+
+        request = self.context.get("request") if self.context else None
+        user = getattr(request, "user", None) if request else None
+        role = (getattr(user, "role", "") or "").lower()
+        if not (is_ceo_or_admin_role(role) or getattr(user, "is_superuser", False)):
+            data.pop("costo_estandar", None)
+        return data
+
 
 class ProductoSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
     storage_normalize_fields = ("imagen_url", "ficha_url")
@@ -67,6 +82,19 @@ class ProductoSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
         # el ViewSet lo inyecta vía s.save(id=uuid.uuid4()) (mismo patrón
         # que nodos/clientes/marcas). created_at/updated_at son auto.
         read_only_fields = ("id", "created_at", "updated_at", "marca_nombre")
+
+    # Ola 6 · 6.8 — POL_VISIBILIDAD: mismo gate que ProductoListSerializer.
+    # Un rol cliente no debe recibir costo_estandar (costo interno MWT).
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        from apps.core.permissions import is_ceo_or_admin_role
+
+        request = self.context.get("request") if self.context else None
+        user = getattr(request, "user", None) if request else None
+        role = (getattr(user, "role", "") or "").lower()
+        if not (is_ceo_or_admin_role(role) or getattr(user, "is_superuser", False)):
+            data.pop("costo_estandar", None)
+        return data
 
 class ProductClientAliasSerializer(serializers.ModelSerializer):
     """
