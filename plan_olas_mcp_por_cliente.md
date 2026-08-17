@@ -401,6 +401,16 @@ el runbook `docs/runbook_mcp_clientes.md` (alta/baja/rotación/troubleshooting).
   redacción del MCP.
 - Runbook de alta/baja/rotación: `docs/runbook_mcp_clientes.md`.
 
+### 6.12 PROVISIONAMIENTO MASIVO (commit 8a255c8)
+- Apps MCP provisionadas para los 8 clientes activos restantes (Comtek,
+  Importaciones y Compras, Procostumer, Sonepar, Imporcomp, Muito Work,
+  prueba, Test RBAC): grupo + provider OAuth2 + application en Authentik.
+- 8 virtual servers registrados en ContextForge (oauth_config de cada provider).
+- ServiceTokens scopeados emitidos por cliente.
+- nginx: location por vsid inyectando X-MWT-Client-ID.
+- Patch v11: MWT_SERVER_IDS_V11 = 10 vsids (global + 9 clientes).
+- Total: 9 clientes con app MCP PROVISIONED + URLs funcionales (401 OAuth).
+
 ---
 
 ## Orden de ejecución y deploys
