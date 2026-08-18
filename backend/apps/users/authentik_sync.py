@@ -280,13 +280,34 @@ def sync_groups(email: str, legal_entity_ids: list[str],
             return {"ok": False, "groups": [], "detail": f"usuario {email} no existe en Authentik"}
         user_pk = int(user["pk"])
         target_groups: list[str] = []
-        names = client_names or {}
+        # Ola 6 · resolver nombres de clientes si no vienen (para el slug del
+        # grupo). Si no hay nombre, el slug cae al UUID — correcto pero menos
+        # legible; los grupos nuevos usan la razón social.
+        names = dict(client_names or {})
+        cids = [str(x) for x in (legal_entity_ids or []) if x]
+        missing = [x for x in cids if x not in names]
+        if missing:
+            try:
+                from django.db import connection as _conn
+
+                with _conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT id::text, razon_social
+                          FROM clientes.cliente
+                         WHERE id::text = ANY(%s::text[])
+                        """,
+                        [missing],
+                    )
+                    for cid, razon in cur.fetchall():
+                        names[cid] = razon or ""
+            except Exception:  # noqa: BLE001 - fail-safe, slug por UUID
+                pass
         with c:
             # Construir mapa grupo_nombre -> conjunto de pks (incluye al usuario).
             # Un usuario multi-empresa debe pertenecer a TODOS sus grupos de cliente.
             by_group: dict[str, set[int]] = {}
-            for cid in (legal_entity_ids or []):
-                cid_str = str(cid)
+            for cid_str in cids:
                 name = names.get(cid_str) or ""
                 gname = client_group_name(cid_str, name)
                 by_group.setdefault(gname, set()).add(user_pk)

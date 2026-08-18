@@ -71,6 +71,22 @@ from .serializers import (
 log = logging.getLogger(__name__)
 
 
+def _client_names_map(leids: list | None = None) -> dict[str, str]:
+    """Ola 6 · mapa cliente_id → razon_social para los slugs de grupo MCP.
+
+    `authentik_sync.sync_groups` necesita el nombre de cada cliente para
+    derivar el slug del grupo `mcp-cliente-<slug>`. Se resuelve en batch con
+    una query (sin N+1). Fail-safe: dict vacío si la tabla no existe.
+    """
+    from apps.clientes.models import Cliente
+
+    try:
+        qs = Cliente.objects.filter(id__in=[x for x in (leids or []) if x])
+        return {str(c.id): (c.razon_social or "") for c in qs}
+    except Exception:  # noqa: BLE001 - tabla puede no existir en legacy
+        return {}
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Guards
 # ══════════════════════════════════════════════════════════════════════
@@ -181,16 +197,24 @@ class MwtUserViewSet(viewsets.ModelViewSet):
             )
 
         # AUTO-SYNC con Authentik (IdP del MCP) · la consola es la fuente de
-        # verdad: mismo usuario, misma password, is_active. Fail-safe: si no
+        # verdad: mismo usuario, mismo password, is_active. Fail-safe: si no
         # está configurado (AUTHENTIK_API_URL/TOKEN) no rompe el create.
         try:
-            from .authentik_sync import ensure_user  # noqa: PLC0415
+            from .authentik_sync import ensure_user, sync_groups  # noqa: PLC0415
+            email = data.get("email_plain") or ""
             ensure_user(
-                email     = data.get("email_plain") or "",
+                email     = email,
                 full_name = data.get("full_name") or "",
                 is_active = True,
                 password  = raw_pwd,
             )
+            # AUTO-SYNC de grupos por cliente (Ola 6 · app MCP): el usuario se
+            # añade/remueve del grupo mcp-cliente-<slug> de cada empresa en su
+            # legal_entity_ids. Sin esto, el MCP del cliente no reconocería su
+            # pertenencia y el conector fallaría con TENANT_MISMATCH.
+            leids = data.get("legal_entity_ids") or []
+            if leids:
+                sync_groups(email, leids, client_names=_client_names_map())
         except Exception as e:  # noqa: BLE001 - nunca romper el create
             log.exception("authentik sync on create failed: %s", e)
 
@@ -243,7 +267,7 @@ class MwtUserViewSet(viewsets.ModelViewSet):
 
         # AUTO-SYNC con Authentik (IdP del MCP). Fail-safe: nunca rompe el update.
         try:
-            from .authentik_sync import ensure_user, set_active, set_password  # noqa: PLC0415
+            from .authentik_sync import ensure_user, set_active, set_password, sync_groups  # noqa: PLC0415
             new_email = ser.data.get("email_plain") or instance.email_plain
             new_name  = ser.data.get("full_name") or instance.full_name or ""
             if raw_pwd:
@@ -257,6 +281,12 @@ class MwtUserViewSet(viewsets.ModelViewSet):
                     full_name = new_name,
                     is_active = instance.is_active,
                 )
+            # AUTO-SYNC de grupos por cliente (Ola 6): al cambiar legal_entity_ids
+            # el usuario se añade/remueve del grupo mcp-cliente-<slug> de cada
+            # empresa. El MCP del cliente usa ese grupo para validar pertenencia.
+            leids = instance.legal_entity_ids or []
+            if leids:
+                sync_groups(new_email, leids, client_names=_client_names_map())
         except Exception as e:  # noqa: BLE001 - nunca romper el update
             log.exception("authentik sync on update failed: %s", e)
 
