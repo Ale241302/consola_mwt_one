@@ -219,6 +219,12 @@ def allowed_tool_names(user: dict) -> set[str] | None:
     la matriz real de core.roles.permissions que configura el CEO en /roles
     (si deshabilitó clientes.create para admin, la tool cliente_crear no
     aparece).
+
+    Ola 6 · apps por cliente: cuando la request llega a una app de cliente
+    (tenant resuelto vía X-MWT-Client-ID), el catálogo completo de tools se
+    expone igual que en claude-mcp (la app global). El aislamiento de DATOS
+    se garantiza en el backend (scoping por client_id), no ocultando tools.
+    Solo se ocultan las tools de gobernanza interna MWT (_GLOBAL_ONLY_TOOLS).
     """
     if not user:
         return None
@@ -226,6 +232,13 @@ def allowed_tool_names(user: dict) -> set[str] | None:
     perms = _normalize_permissions(user)
     modules = perms.get("modules") or []
     actions = perms.get("actions") or []
+
+    from .identity import current_tenant
+
+    # Ola 6 · app por cliente → catálogo completo (todas las tools).
+    if current_tenant().is_scoped:
+        all_tools = set(TOOL_MODULES.keys())
+        return all_tools - _GLOBAL_ONLY_TOOLS
 
     if "*" in modules:
         return None
@@ -244,15 +257,6 @@ def allowed_tool_names(user: dict) -> set[str] | None:
         if actions and "*" not in actions and f"{module}.{action}" not in actions:
             continue
         allowed.add(name)
-
-    # Ola 2 · 2.5 — guard anti-bypass: en una app de cliente (tenant resuelto),
-    # las tools globales de introspección interna NO se listan aunque el rol
-    # sea admin/superadmin. Un admin conectado a mcp-sondel opera como Sondel,
-    # no como operador MWT global.
-    from .identity import current_tenant
-
-    if current_tenant().is_scoped:
-        allowed -= _GLOBAL_ONLY_TOOLS
 
     return allowed
 

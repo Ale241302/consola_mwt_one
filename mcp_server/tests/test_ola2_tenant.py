@@ -289,9 +289,13 @@ def test_allowed_tool_names_oculta_globales_en_cliente():
     }
     allowed = tool_rbac.allowed_tool_names(user)
     assert allowed is not None
+    # Ola 6 · app por cliente: catálogo completo (todas las tools) salvo las
+    # de gobernanza interna MWT. El aislamiento de datos vive en el backend.
     assert "mwt_diag_scope" not in allowed
     assert "mwt_audit_write_registry" not in allowed
-    assert "expediente_obtener" in allowed  # tools del negocio siguen
+    assert "expediente_obtener" in allowed
+    assert "cliente_crear" in allowed  # catálogo completo, no solo el rol
+    assert len(allowed) == len(tool_rbac.TOOL_MODULES) - len(tool_rbac._GLOBAL_ONLY_TOOLS)
     set_tenant(Tenant())
 
 
