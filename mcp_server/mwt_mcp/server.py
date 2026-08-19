@@ -501,24 +501,42 @@ def _resolve_expediente_id(identificador: str) -> str | None:
     low = v.lower()
     if _looks_like_uuid(low) or low.startswith("exp-"):
         return v
+    # Cache corto (120s): los retries del agente no repiten el GET expedientes.
+    _now = time.time()
+    hit = _RESOLVE_EXP_CACHE.get(low)
+    if hit and hit[0] > _now:
+        return hit[1]
     try:
         data = api.get("expedientes/", {"limit": 200})
     except Exception:  # noqa: BLE001
         return None
     tn = _norm_num(v)
     tn_pf = low
+    _res = None
     for e in _as_rows(data):
         if tn and tn in [_norm_num(x) for x in (e.get("oc_codigos") or [])]:
-            return e.get("id")
+            _res = e.get("id")
+            break
         if tn and tn in [_norm_num(x) for x in (e.get("sap_codigos") or [])]:
-            return e.get("id")
+            _res = e.get("id")
+            break
         # El listado para client_b2b trae sap_codigos vacío pero el SAP real
         # en el campo legacy `sap` (ej. "282507"). Matchear ambos.
         if tn and tn == _norm_num(e.get("sap")):
-            return e.get("id")
+            _res = e.get("id")
+            break
         if tn_pf and tn_pf in [(x or "").strip().lower() for x in (e.get("proforma_codigos") or [])]:
-            return e.get("id")
-    return None
+            _res = e.get("id")
+            break
+    if _res:
+        if len(_RESOLVE_EXP_CACHE) > 64:
+            _RESOLVE_EXP_CACHE.clear()
+        _RESOLVE_EXP_CACHE[low] = (_now + 120, _res)
+    return _res
+
+
+# Cache en memoria de resolución identificador→expediente (limita retries).
+_RESOLVE_EXP_CACHE: dict[str, tuple] = {}
 
 
 def _looks_like_uuid(v: str) -> bool:
