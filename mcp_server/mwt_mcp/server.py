@@ -377,6 +377,35 @@ def _has_identity() -> bool:
         return False
 
 
+def _saneo_documentos_cliente(data: Any, role: str) -> Any:
+    """Fix 2026-08-19 · oculta UUIDs internos de los documentos para client_b2b.
+
+    En la capa de documentos el `id` del documento es el `documento_id` que el
+    agente necesita para `documento_descargar` (se conserva). Los UUIDs internos
+    `expediente_id` y `oc_id` NUNCA se exponen al cliente (regla CEO): se
+    reemplazan por el identificador legible cuando existe (`codigo`).
+    Admin/CEO conservan todo. Fail-safe: devuelve el payload tal cual.
+    """
+    from .redact import is_client
+
+    if not is_client(role):
+        return data
+
+    def _one(row: dict) -> dict:
+        out = dict(row)
+        out.pop("expediente_id", None)
+        out.pop("oc_id", None)
+        return out
+
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        out = dict(data)
+        out["results"] = [_one(r) for r in out["results"]]
+        return out
+    if isinstance(data, list):
+        return [_one(r) for r in data]
+    return data
+
+
 def _resolve_expediente_id(identificador: str) -> str | None:
     """Resuelve un identificador de expediente (UUID, EXP-…, OC, SAP o proforma) al UUID.
 
@@ -1556,8 +1585,11 @@ def documento_listar(
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
     data = _safe_role(lambda: api.get("documentos/", _params(expediente=expediente, oc=oc, kind=kind, limit=lim, offset=off)))
-    # Ola 3.8 · un client_b2b SOLO ve audience=CLIENT y kind OC/PROFORMA.
-    return _project(campos, filter_documentos_for_role(data, _current_role()))
+    # Ola 3.8 · un client_b2b SOLO ve audience=CLIENT y kind OC/PROFORMA/FACTURA.
+    data = filter_documentos_for_role(data, _current_role())
+    # Fix 2026-08-19 · oculta UUIDs internos (expediente_id/oc_id) al client.
+    data = _saneo_documentos_cliente(data, _current_role())
+    return _project(campos, data)
 
 
 @mcp.tool()
@@ -2121,6 +2153,7 @@ def expediente_documentos_completos(
     (código/título). Para un client_b2b los documentos se limitan a audience=CLIENT
     (OC/PROFORMA/FACTURA del cliente) y los artefactos a los `publicado=True`."""
     resolved = _resolve_expediente_id(expediente_id) or expediente_id
+    ocs_ref = expediente_id  # referencia legible con la que el caller encadenó
     expediente_id = resolved
     lim, off = _paging(limit, offset)
 
@@ -2130,6 +2163,8 @@ def expediente_documentos_completos(
     docs_rows = docs_data.get("results") if isinstance(docs_data, dict) else docs_data
     docs = docs_rows if isinstance(docs_rows, list) else []
     docs = filter_documentos_for_role(docs, _current_role())
+    # Fix 2026-08-19 · oculta UUIDs internos (expediente_id/oc_id) al client.
+    docs = _saneo_documentos_cliente(docs, _current_role())
 
     # Capa 2 · artefactos del Builder (/api/inventario/expedientes/{id}/artifacts/).
     arts = []
@@ -2152,6 +2187,30 @@ def expediente_documentos_completos(
         arts = [a for a in arts if qq in str(a.get("template_title") or "").lower()
                 or qq in str(a.get("doc_type") or "").lower()
                 or qq in str(a.get("codigo") or "").lower()]
+
+    # El `expediente_id` de la respuesta: para client_b2b no se expone el UUID;
+    # se reemplaza por la referencia legible (OC/SAP) con la que encadenó.
+    from .redact import is_client as _is_client_role
+
+    _role = _current_role()
+    if _is_client_role(_role):
+        exp_ref = None
+        for d in docs:
+            if d.get("codigo"):
+                exp_ref = d.get("codigo")
+                break
+        if not exp_ref:
+            for d in docs:
+                if d.get("kind") == "OC" and d.get("codigo"):
+                    exp_ref = d.get("codigo")
+                    break
+        return {
+            "expediente_id": exp_ref or (ocs_ref or expediente_id),
+            "documentos": _project(campos, docs) if campos else docs,
+            "artefactos": _project(campos, arts) if campos else arts,
+            "total_documentos": len(docs),
+            "total_artefactos": len(arts),
+        }
 
     return {
         "expediente_id": expediente_id,
