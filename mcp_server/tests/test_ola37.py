@@ -237,8 +237,8 @@ def test_present_codigos_ceo_conserva_codigo_interno(monkeypatch):
     assert fila["codigos_presentacion"] == "2393-2025 · 504302 · 257021"
     assert "codigo" not in fila        # EXP- oculto para todos los roles
     assert "codigo_interno" not in fila
+    assert "expediente_codigo" not in fila  # EXP- oculto para admin también (fix 2026-08-19)
     assert "id" not in fila            # UUID oculto para admin también (fix 2026-08-19)
     assert "fusion_id" not in fila     # UUID de fusión oculto para admin también
-    assert fila["expediente_codigo"] == "EXP-504302"  # encadenamiento por código
     assert fila["fusion_label"] == "PO 504983"
-    assert "referencia_cliente" not in fila  # solo para client_b2b
+    assert fila["referencia_cliente"] == "2393-2025"  # admin prioriza proforma

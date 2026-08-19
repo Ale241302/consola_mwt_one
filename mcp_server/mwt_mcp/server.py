@@ -351,14 +351,9 @@ def _resolve_fusion_members(matches: list) -> list:
                 data = api.get("expedientes/", {"fusion": str(fid), "limit": 50})
                 members = []
                 for e in _as_rows(data):
-                    saps = e.get("sap_codigos") or []
-                    legacy_sap = e.get("sap")
-                    if not saps and legacy_sap:
-                        saps = [str(legacy_sap)]
                     members.append({
-                        "expediente_codigo": e.get("codigo") or e.get("id"),
                         "oc_codigos": e.get("oc_codigos"),
-                        "sap_codigos": saps,
+                        "sap_codigos": e.get("sap_codigos") or [],
                         "proforma_codigos": e.get("proforma_codigos"),
                         "estado": e.get("estado"),
                     })
@@ -383,13 +378,14 @@ def _has_identity() -> bool:
 
 
 def _resolve_expediente_id(identificador: str) -> str | None:
-    """Resuelve un identificador de expediente (UUID, EXP-…, OC o SAP) al UUID.
+    """Resuelve un identificador de expediente (UUID, EXP-…, OC, SAP o proforma) al UUID.
 
-    Fix 2026-08-19 · tras ocultar los UUIDs, un client_b2b recibe `referencia_cliente`
-    (OC/SAP). Para encadenar `expediente_obtener`/`expediente_lineas` este helper
-    busca el expediente por OC/SAP/codigo y devuelve su UUID (uso interno).
+    Fix 2026-08-19 · tras ocultar los UUIDs, los expedientes se encadenan por
+    `referencia_cliente` (proforma para admin/CEO, OC/SAP para todos). Este
+    helper busca el expediente por proforma/OC/SAP/codigo y devuelve su UUID
+    (uso interno, nunca se expone).
     - UUID canónico o EXP-XXXX → se pasa directo (el backend los resuelve).
-    - Cualquier otro (OC/SAP legible) → GET expedientes/ y matchea oc/sap.
+    - Cualquier otro (OC/SAP/proforma legible) → GET expedientes/ y matchea.
       Fail-safe → None.
     """
     v = (identificador or "").strip()
@@ -403,10 +399,13 @@ def _resolve_expediente_id(identificador: str) -> str | None:
     except Exception:  # noqa: BLE001
         return None
     tn = _norm_num(v)
+    tn_pf = low
     for e in _as_rows(data):
         if tn and tn in [_norm_num(x) for x in (e.get("oc_codigos") or [])]:
             return e.get("id")
         if tn and tn in [_norm_num(x) for x in (e.get("sap_codigos") or [])]:
+            return e.get("id")
+        if tn_pf and tn_pf in [(x or "").strip().lower() for x in (e.get("proforma_codigos") or [])]:
             return e.get("id")
     return None
 
@@ -1207,14 +1206,10 @@ def expediente_buscar(
         pf_cs = [(x or "").strip().lower() for x in (e.get("proforma_codigos") or [])]
         sap_cs = [_norm_num(x) for x in (e.get("sap_codigos") or [])]
         if (tn_oc and tn_oc in oc_cs) or (tn_pf and tn_pf in pf_cs) or (tn_sap and tn_sap in sap_cs):
-            saps = e.get("sap_codigos") or []
-            if not saps and e.get("sap"):
-                saps = [str(e.get("sap"))]
             matches.append({
-                "expediente_codigo": e.get("codigo") or e.get("id"),
                 "oc_codigos": e.get("oc_codigos"),
                 "proforma_codigos": e.get("proforma_codigos"),
-                "sap_codigos": saps,
+                "sap_codigos": e.get("sap_codigos") or [],
                 "estado": e.get("estado"),
                 "client_id": e.get("client_id"),
                 "fusion_id": e.get("fusion_id"),

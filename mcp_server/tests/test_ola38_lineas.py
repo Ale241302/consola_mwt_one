@@ -94,12 +94,11 @@ def test_expediente_buscar_client_no_ve_codigo_exp(monkeypatch):
 
 
 def test_expediente_buscar_ceo_no_ve_uuid(monkeypatch):
-    """CEO/Admin no ven UUIDs internos (id/expediente_id); encadenan por
-    `expediente_codigo` (EXP-…) y ven proforma en codigos_presentacion."""
+    """CEO/Admin no ven UUIDs ni codigo EXP-; encadenan por referencia_cliente."""
     rows = {"results": [
         {"id": "exp-1", "codigo": "EXP-504302", "oc_id": "oc-1",
          "oc_codigos": ["PO 504302"], "sap_codigos": ["257021"],
-         "proforma_codigos": [], "estado": "EN_DESTINO",
+         "proforma_codigos": ["2393-2025"], "estado": "EN_DESTINO",
          "client_id": "cli-1", "fusion_id": None, "fusion_label": None, "sap": "257021"},
     ]}
     monkeypatch.setattr(server.api, "get", lambda *a, **k: rows)
@@ -109,12 +108,13 @@ def test_expediente_buscar_ceo_no_ve_uuid(monkeypatch):
     assert "codigo" not in m
     assert "id" not in m                # UUID oculto para admin también
     assert "expediente_id" not in m     # UUID oculto para admin también
-    assert m["expediente_codigo"] == "EXP-504302"
+    assert "expediente_codigo" not in m  # EXP- oculto para admin también (fix 2026-08-19)
+    assert m["referencia_cliente"] == "2393-2025"  # admin prioriza proforma
 
 
 def test_expediente_buscar_fusion_expone_label_y_members(monkeypatch):
     """Una fusión expone fusion_label + fusion_members (códigos role-aware),
-    nunca el fusion_id UUID."""
+    nunca el fusion_id UUID ni codigo EXP-."""
     rows = {"results": [
         {"id": "exp-1", "codigo": "EXP-504302", "oc_id": "oc-1",
          "oc_codigos": ["PO 504983"], "sap_codigos": ["257021"],
@@ -142,9 +142,11 @@ def test_expediente_buscar_fusion_expone_label_y_members(monkeypatch):
         out = server.expediente_buscar(oc_number="504983")
     m = out["matches"][0]
     assert "fusion_id" not in m                 # UUID de fusión oculto
+    assert "expediente_id" not in m             # UUID oculto
     assert m["fusion_label"] == "PO 504983"
     assert "fusion_members" in m
     member = m["fusion_members"][0]
     assert "expediente_id" not in member        # UUID oculto en miembros
+    assert "codigo" not in member               # EXP- oculto en miembros
     assert member["oc_codigos"] == ["PO 504983"]
     assert member["sap_codigos"] == ["257021"]

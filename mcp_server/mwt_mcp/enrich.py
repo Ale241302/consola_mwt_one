@@ -181,15 +181,12 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
     # es `codigos_presentacion` (PF · PO · SAP).
     out.pop("codigo", None)
     out.pop("codigo_interno", None)
+    out.pop("expediente_codigo", None)
     # Fix 2026-08-19 · los UUIDs internos del expediente (id, expediente_id,
     # oc_id, fusion_id, operating_company_id, brand_id) NUNCA se exponen, a
-    # NINGÚN rol. Para encadenar:
-    #   · admin/CEO -> `expediente_codigo` (EXP-…, el backend lo resuelve).
-    #   · client_b2b -> solo `referencia_cliente` (OC/SAP); re-busca por OC.
-    if not is_client(role):
-        out["expediente_codigo"] = (row.get("expediente_codigo")
-                                    or row.get("codigo") or row.get("codigo_interno")
-                                    or row.get("id") or row.get("expediente_id"))
+    # NINGÚN rol. El identificador de encadenamiento es `referencia_cliente`
+    # (para admin/CEO prioriza proforma; para client_b2b OC o SAP). Las tools
+    # (expediente_obtener/editar/lineas) resuelven por esa referencia.
     for key in (
         "id",
         "expediente_id",
@@ -197,14 +194,15 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
         "fusion_id",
         "operating_company_id",
         "brand_id",
+        "client_id",
     ):
         out.pop(key, None)
-    if is_client(role):
-        # client_b2b solo ve OC/SAP; el código interno EXP- no se le entrega.
-        out.pop("expediente_codigo", None)
+    if is_ceo_or_admin(role):
+        ref = (proformas[0] if proformas else (ocs[0] if ocs else (saps[0] if saps else None)))
+    else:
         ref = (ocs[0] if ocs else (saps[0] if saps else None))
-        if ref:
-            out["referencia_cliente"] = ref
+    if ref:
+        out["referencia_cliente"] = ref
     return out
 
 
