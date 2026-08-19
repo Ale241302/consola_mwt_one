@@ -11,6 +11,7 @@ Autenticación: Bearer token de servicio (MWT_MCP_TOKEN). Sin estado local.
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from . import client as api
@@ -1984,6 +1985,28 @@ def proforma_documento(
     else:
         ttl_minutes = 15
 
+    # Cache corto (60s) por (expediente, codigo): si el agente vuelve a llamar
+    # la tool (retry/reconfirmación), responde instantáneo sin re-resolver ni
+    # re-mintear — evita la percepción de "intento 2 / tomando tiempo".
+    _ck = f"{expediente_id}|{codigo or ''}"
+    _now = time.time()
+    hit = _PROFORMA_DOC_CACHE.get(_ck)
+    if hit and hit[0] > _now:
+        return hit[1]
+    _r = _proforma_documento_inner(expediente_id, codigo, ttl_minutes)
+    # Límite simple del cache (evita crecimiento indefinido con retries).
+    if len(_PROFORMA_DOC_CACHE) > 64:
+        _PROFORMA_DOC_CACHE.clear()
+    _PROFORMA_DOC_CACHE[_ck] = (_now + 60, _r)
+    return _r
+
+
+# Cache en memoria de proforma_documento (limita retries a 1 llamada real/60s).
+_PROFORMA_DOC_CACHE: dict[str, tuple] = {}
+
+
+def _proforma_documento_inner(expediente_id: str, codigo: str | None,
+                              ttl_minutes: int) -> Any:
     from .redact import is_client as _is_client_role
 
     role = _current_role()
