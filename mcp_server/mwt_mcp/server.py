@@ -377,6 +377,62 @@ def _has_identity() -> bool:
         return False
 
 
+def _attach_artefacto_files(data: Any, role: str) -> Any:
+    """Fix 2026-08-19 · adjunta `archivo_url` (descarga directa) a cada artefacto
+    del Builder que tenga un campo file en su detalle.
+
+    El listado de artefactos NO trae el `data` (campos del artefacto). Para
+    entregar el documento real (ej. el PDF del Packing List) consultamos el
+    detalle de cada artefacto publicado y, si tiene un campo file, adjuntamos
+    la URL de descarga directa `/api/storage/download/?key=...`.
+
+    Aplica sobre listas o {results:[...]}. Fail-safe: artefactos sin detalle o
+    sin campo file quedan sin `archivo_url`.
+    """
+    from .redact import is_client as _is_client_role
+
+    def _one(art: dict) -> dict:
+        if not isinstance(art, dict):
+            return art
+        out = dict(art)
+        aid = art.get("id")
+        nid = art.get("nodo_id")
+        if not aid or not nid:
+            return out
+        try:
+            detail = api.get(f"nodos/{nid}/builder-artifacts/{aid}/")
+            data = detail.get("data") if isinstance(detail, dict) else None
+            if isinstance(data, dict):
+                for _k, v in data.items():
+                    if isinstance(v, dict) and (v.get("url") or v.get("key")):
+                        fkey = v.get("key") or v.get("url")
+                        if "download/?key=" in str(fkey):
+                            fkey = str(fkey).split("download/?key=")[-1]
+                        from urllib.parse import quote as _quote
+
+                        out["archivo_url"] = (
+                            f"{settings.public_api_base}/storage/download/"
+                            f"?key={_quote(str(fkey), safe='')}"
+                        )
+                        out["archivo_nombre"] = v.get("name")
+                        out["archivo_mime"] = v.get("mime")
+                        out["archivo_size"] = v.get("size")
+                        break
+        except Exception:  # noqa: BLE001 - fail-safe
+            pass
+        return out
+
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        out = dict(data)
+        out["results"] = [_one(r) for r in out["results"]]
+        return out
+    if isinstance(data, list):
+        return [_one(r) for r in data]
+    if isinstance(data, dict):
+        return _one(data)
+    return data
+
+
 def _saneo_documentos_cliente(data: Any, role: str) -> Any:
     """Fix 2026-08-19 · oculta UUIDs internos de los documentos para client_b2b.
 
@@ -1836,17 +1892,43 @@ def proforma_generar(expediente_id: str, audience: str = "CLIENT", codigo: str |
 
 @mcp.tool()
 def proforma_html(expediente_id: str, codigo: str | None = None) -> Any:
-    """Devuelve el HTML de la proforma renderizada al vuelo (no persiste).
+    """Devuelve la proforma del expediente como CONTENIDO HTML + el ARCHIVO.
 
-    ⚠️ PRIMERO busca el documento PROFORMA existente del expediente con
-    `proforma_documento` (o `expediente_documentos_completos` → PROFORMA) —
-    si el expediente ya tiene su proforma renderizada/guardada, entrega esa
-    (como archivo/URL firmada). Usa `proforma_html` SOLO si no existe
-    documento PROFORMA persistido o el usuario pide la proforma "actualizada"
-    con los datos más recientes del expediente."""
+    Combina:
+      1. El HTML renderizado (o el del documento PROFORMA guardado).
+      2. La URL de descarga del documento PROFORMA EXISTENTE (si hay), para
+         que el usuario pueda descargar/guardar el archivo (.html/.pdf) real.
+
+    Si el expediente ya tiene su proforma guardada (ej. "PF 2488-2026"),
+    `archivo_url` apunta al binario del documento (descarga directa). Si no
+    existe documento persistido, solo devuelve el HTML renderizado y el
+    usuario puede pedir `proforma_generar` para persistirlo.
+
+    `expediente_id` acepta UUID, EXP-… o referencia (OC/SAP/proforma)."""
     resolved = _resolve_expediente_id(expediente_id) or expediente_id
     expediente_id = resolved
-    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/proforma-html/", _params(codigo=codigo)))
+
+    # 1) HTML renderizado (con el codigo del documento existente si hay).
+    html = _safe_role(lambda: api.get(
+        f"expedientes/{expediente_id}/proforma-html/", _params(codigo=codigo)))
+
+    # 2) adjuntar la URL del archivo PROFORMA existente (si hay).
+    try:
+        doc = proforma_documento(expediente_id=expediente_id, codigo=codigo)
+        if isinstance(doc, dict) and doc.get("found"):
+            if isinstance(html, dict):
+                html["archivo_url"] = doc.get("url")
+                html["archivo_codigo"] = doc.get("codigo")
+                html["archivo_ext"] = doc.get("file_ext")
+                html["archivo_documento_id"] = doc.get("documento_id")
+                html["descarga"] = (
+                    f"Abre/descarga `archivo_url` para entregar al usuario el "
+                    f"archivo de la proforma ({doc.get('file_ext')})."
+                )
+    except Exception:  # noqa: BLE001 - fail-safe
+        pass
+
+    return html
 
 
 @mcp.tool()
@@ -2234,12 +2316,17 @@ def inventario_artefactos_expediente(expediente_id: str) -> Any:
     expediente (no confundir con `documento_listar`, que es otra capa).
     `expediente_id` acepta el UUID interno, el código EXP-…, o la referencia del
     cliente (OC/SAP/proforma) — el MCP resuelve internamente.
-    Para un client_b2b solo devuelve los que tienen `publicado=True`."""
+    Para un client_b2b solo devuelve los que tienen `publicado=True`.
+    Cada artefacto incluye `archivo_url` (descarga directa del binario adjunto,
+    ej. el PDF del Packing List) cuando el artefacto tiene un campo file en su
+    detalle — así el usuario puede descargar/guardar el documento real."""
     resolved = _resolve_expediente_id(expediente_id) or expediente_id
     expediente_id = resolved
     data = _safe_role_read(lambda: api.get(f"inventario/expedientes/{expediente_id}/artifacts/"), "inventario_artefactos_expediente")
     # Ola 3.8 · el client_b2b solo ve artefactos publicados; admin/CEO ve todos.
-    return filter_artefactos_for_role(data, _current_role())
+    data = filter_artefactos_for_role(data, _current_role())
+    # Fix 2026-08-19 · adjuntar archivo descargable a cada artefacto.
+    return _attach_artefacto_files(data, _current_role())
 
 
 @mcp.tool()
