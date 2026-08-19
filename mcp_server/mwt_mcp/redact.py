@@ -244,8 +244,9 @@ def redact_for_user(payload, user: dict | None):
 # ─────────────────────────────────────────────────────────────────────── #
 # Audience del documento que un client_b2b SÍ puede ver.
 B2B_VISIBLE_AUDIENCES: frozenset[str] = frozenset({"CLIENT", "CLIENTE"})
-# Kind de documento que un client_b2b SÍ puede ver.
-B2B_VISIBLE_KINDS: frozenset[str] = frozenset({"OC", "PROFORMA"})
+# Kind de documento que un client_b2b SÍ puede ver (regla CEO 2026-08-19:
+# PROFORMA, OC y FACTURA — siempre con audience CLIENT).
+B2B_VISIBLE_KINDS: frozenset[str] = frozenset({"OC", "PROFORMA", "FACTURA"})
 # Kinds internos (SAP/confirmación y artefactos de proceso) ocultos al B2B.
 B2B_HIDDEN_KIND_PREFIXES: tuple[str, ...] = ("ART-", "SAP", "PF_FABRICA", "FABRICA")
 

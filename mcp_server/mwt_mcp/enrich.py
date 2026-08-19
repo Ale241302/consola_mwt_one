@@ -166,6 +166,11 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
     )
     ocs = row.get("oc_codigos") or []
     saps = row.get("sap_codigos") or []
+    # Fix 2026-08-19 · el listado para client_b2b trae `sap_codigos` vacío pero
+    # el SAP real vive en el campo legacy `sap` (ej. "282507"). Se expone para
+    # que el cliente vea y encadene por su SAP. Si NO hay SAP, queda vacío.
+    if not saps and row.get("sap"):
+        saps = [str(row.get("sap"))]
 
     partes: list[str] = []
     if is_ceo_or_admin(role):

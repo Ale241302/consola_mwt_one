@@ -19,6 +19,7 @@ import pytest
 from mwt_mcp.redact import (
     B2B_FORBIDDEN_KEYS,
     CEO_ONLY_KEYS,
+    filter_documentos_for_role,
     forbidden_keys_for_role,
     is_client,
     is_ceo_or_admin,
@@ -312,3 +313,23 @@ def test_staff_tambien_oculta_ids_internos():
         assert out["created_by_id"] == "***", role
         assert out["operating_company_id"] == "***", role
         assert out["id"] == "exp-1"  # raíz encadenable se conserva
+
+
+def test_client_b2b_ve_proforma_oc_factura_audience_client():
+    """Regla CEO 2026-08-19 · client_b2b ve SOLO documentos kind PROFORMA/OC/
+    FACTURA con audience CLIENT. FABRICA/MWT_INTERNAL/ADMIN_ONLY se ocultan."""
+    docs = [
+        {"id": "d1", "kind": "PROFORMA", "audience": "CLIENT"},
+        {"id": "d2", "kind": "PROFORMA", "audience": "FABRICA"},
+        {"id": "d3", "kind": "PROFORMA", "audience": "MWT_INTERNAL"},
+        {"id": "d4", "kind": "OC", "audience": "CLIENT"},
+        {"id": "d5", "kind": "FACTURA", "audience": "CLIENT"},
+        {"id": "d6", "kind": "ART-04", "audience": "ADMIN_ONLY"},
+        {"id": "d7", "kind": "FACTURA", "audience": "CLIENTE"},
+    ]
+    out = filter_documentos_for_role({"results": docs}, "client_b2b")
+    ids = [r["id"] for r in out["results"]]
+    assert ids == ["d1", "d4", "d5", "d7"]
+    # Admin/CEO no se filtran.
+    out_admin = filter_documentos_for_role({"results": docs}, "admin")
+    assert len(out_admin["results"]) == 7

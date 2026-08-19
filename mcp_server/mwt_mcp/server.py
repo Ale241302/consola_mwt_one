@@ -405,6 +405,10 @@ def _resolve_expediente_id(identificador: str) -> str | None:
             return e.get("id")
         if tn and tn in [_norm_num(x) for x in (e.get("sap_codigos") or [])]:
             return e.get("id")
+        # El listado para client_b2b trae sap_codigos vacío pero el SAP real
+        # en el campo legacy `sap` (ej. "282507"). Matchear ambos.
+        if tn and tn == _norm_num(e.get("sap")):
+            return e.get("id")
         if tn_pf and tn_pf in [(x or "").strip().lower() for x in (e.get("proforma_codigos") or [])]:
             return e.get("id")
     return None
@@ -2084,7 +2088,11 @@ def inventario_artefactos_expediente(expediente_id: str) -> Any:
     artefactos del Builder. Úsala cuando el usuario pida 'el BL', 'packing',
     'factura', 'certificado' o documentos de embarque/exportación de un
     expediente (no confundir con `documento_listar`, que es otra capa).
+    `expediente_id` acepta el UUID interno, el código EXP-…, o la referencia del
+    cliente (OC/SAP/proforma) — el MCP resuelve internamente.
     Para un client_b2b solo devuelve los que tienen `publicado=True`."""
+    resolved = _resolve_expediente_id(expediente_id) or expediente_id
+    expediente_id = resolved
     data = _safe_role_read(lambda: api.get(f"inventario/expedientes/{expediente_id}/artifacts/"), "inventario_artefactos_expediente")
     # Ola 3.8 · el client_b2b solo ve artefactos publicados; admin/CEO ve todos.
     return filter_artefactos_for_role(data, _current_role())
@@ -2111,7 +2119,9 @@ def expediente_documentos_completos(
 
     Devuelve `{documentos: [...], artefactos: [...]}`. `q` filtra por texto
     (código/título). Para un client_b2b los documentos se limitan a audience=CLIENT
-    (OC/PROFORMA del cliente) y los artefactos a los `publicado=True`."""
+    (OC/PROFORMA/FACTURA del cliente) y los artefactos a los `publicado=True`."""
+    resolved = _resolve_expediente_id(expediente_id) or expediente_id
+    expediente_id = resolved
     lim, off = _paging(limit, offset)
 
     # Capa 1 · documentos (/api/documentos/). El backend ya aplica scoping por
