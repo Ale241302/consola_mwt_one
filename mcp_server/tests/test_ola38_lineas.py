@@ -85,15 +85,17 @@ def test_expediente_buscar_client_no_ve_codigo_exp(monkeypatch):
         out = server.expediente_buscar(oc_number="504302")
     assert out["existe"] is True
     m = out["matches"][0]
-    assert "codigo" not in m            # EXP- oculto
-    assert "id" not in m                # UUID oculto
-    assert m["expediente_id"] == "exp-1"  # encadenamiento conservado
+    assert "codigo" not in m                # EXP- oculto
+    assert "id" not in m                    # UUID oculto
+    assert "expediente_id" not in m         # UUID oculto (fix 2026-08-19)
+    assert "expediente_codigo" not in m     # client_b2b solo OC/SAP (fix 2026-08-19)
     assert m["referencia_cliente"] == "PO 504302"
     assert m["estado"] == "EN_DESTINO"
 
 
-def test_expediente_buscar_ceo_no_ve_codigo_exp(monkeypatch):
-    """CEO/Admin conservan el UUID pero NO el código interno EXP-."""
+def test_expediente_buscar_ceo_no_ve_uuid(monkeypatch):
+    """CEO/Admin no ven UUIDs internos (id/expediente_id); encadenan por
+    `expediente_codigo` (EXP-…) y ven proforma en codigos_presentacion."""
     rows = {"results": [
         {"id": "exp-1", "codigo": "EXP-504302", "oc_id": "oc-1",
          "oc_codigos": ["PO 504302"], "sap_codigos": ["257021"],
@@ -104,5 +106,7 @@ def test_expediente_buscar_ceo_no_ve_codigo_exp(monkeypatch):
     with mock.patch.object(server, "get_identity_user", return_value={"role": "admin"}):
         out = server.expediente_buscar(oc_number="504302")
     m = out["matches"][0]
-    assert "codigo" not in m  # EXP- oculto para todos los roles
-    assert m["id"] == "exp-1"
+    assert "codigo" not in m
+    assert "id" not in m                # UUID oculto para admin también
+    assert "expediente_id" not in m     # UUID oculto para admin también
+    assert m["expediente_codigo"] == "EXP-504302"

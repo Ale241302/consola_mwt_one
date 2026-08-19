@@ -221,7 +221,7 @@ def test_present_codigos_client_no_expone_codigo_interno(monkeypatch):
 
 def test_present_codigos_ceo_conserva_codigo_interno(monkeypatch):
     """CEO/Admin ven la proforma interna en codigos_presentacion, pero NO el
-    código interno EXP- (número interno que solo usa el sistema)."""
+    código interno EXP- ni los UUIDs internos (id/fusion_id)."""
     row = {
         "id": "exp-1",
         "codigo": "EXP-504302",
@@ -237,6 +237,8 @@ def test_present_codigos_ceo_conserva_codigo_interno(monkeypatch):
     assert fila["codigos_presentacion"] == "2393-2025 · 504302 · 257021"
     assert "codigo" not in fila        # EXP- oculto para todos los roles
     assert "codigo_interno" not in fila
-    assert fila["id"] == "exp-1"       # UUID visible solo a CEO/Admin
-    assert fila["fusion_id"] == "0c6e5683-b04b-4d01-93b8-bc12a4aad3e4"
+    assert "id" not in fila            # UUID oculto para admin también (fix 2026-08-19)
+    assert "fusion_id" not in fila     # UUID de fusión oculto para admin también
+    assert fila["expediente_codigo"] == "EXP-504302"  # encadenamiento por código
+    assert fila["fusion_label"] == "PO 504983"
     assert "referencia_cliente" not in fila  # solo para client_b2b

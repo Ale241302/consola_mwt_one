@@ -448,6 +448,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "modo_operacion": "modo_operacion",
             "phase_signal":   "phase_signal",
             "credit_band":    "credit_band",
+            # Sprint 2026-08-19 · filtro por fusión (members de un fusion_id)
+            # para que el MCP resuelva qué expedientes componen una fusión.
+            "fusion":         "fusion_id",
         }
         for param, field in mapping.items():
             v = request.query_params.get(param)

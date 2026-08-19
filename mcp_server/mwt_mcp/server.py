@@ -327,6 +327,95 @@ def _present_codigos(data: Any) -> Any:
     return data
 
 
+def _resolve_fusion_members(matches: list) -> list:
+    """Fix 2026-08-19 · reemplaza el `fusion_id` UUID por los códigos legibles
+    de los expedientes que componen la fusión.
+
+    Cuando un expediente tiene `fusion_id`, consulta el backend
+    `expedientes/?fusion=<fid>` (filtro añadido 2026-08-19) y expone en cada
+    match `fusion_members: [{expediente_codigo, oc_codigos, sap_codigos,
+    proforma_codigos}]` (proforma solo la ve admin/CEO — el backend ya lo
+    vacía para client_b2b). El `fusion_id` UUID nunca se expone. Fail-safe:
+    si no se puede resolver, conserva solo `fusion_label`.
+    """
+    out = []
+    for m in matches:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        fid = m.get("fusion_id")
+        row = dict(m)
+        row.pop("fusion_id", None)
+        if fid:
+            try:
+                data = api.get("expedientes/", {"fusion": str(fid), "limit": 50})
+                members = []
+                for e in _as_rows(data):
+                    members.append({
+                        "expediente_codigo": e.get("codigo") or e.get("id"),
+                        "oc_codigos": e.get("oc_codigos"),
+                        "sap_codigos": e.get("sap_codigos"),
+                        "proforma_codigos": e.get("proforma_codigos"),
+                        "estado": e.get("estado"),
+                    })
+                # Redactar por rol cada miembro (proforma interna solo admin).
+                user = get_identity_user() if _has_identity() else None
+                if members:
+                    members = _present_codigos(members)
+                    row["fusion_members"] = members
+            except Exception:  # noqa: BLE001 - fail-safe
+                pass
+        out.append(row)
+    return out
+
+
+def _has_identity() -> bool:
+    """True si hay identidad propagada (para decidir redacción por rol)."""
+    try:
+        from .jwt_minter import get_identity_user
+        return bool(get_identity_user())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _resolve_expediente_id(identificador: str) -> str | None:
+    """Resuelve un identificador de expediente (UUID, EXP-…, OC o SAP) al UUID.
+
+    Fix 2026-08-19 · tras ocultar los UUIDs, un client_b2b recibe `referencia_cliente`
+    (OC/SAP). Para encadenar `expediente_obtener`/`expediente_lineas` este helper
+    busca el expediente por OC/SAP/codigo y devuelve su UUID (uso interno).
+    - UUID canónico o EXP-XXXX → se pasa directo (el backend los resuelve).
+    - Cualquier otro (OC/SAP legible) → GET expedientes/ y matchea oc/sap.
+      Fail-safe → None.
+    """
+    v = (identificador or "").strip()
+    if not v:
+        return None
+    low = v.lower()
+    if _looks_like_uuid(low) or low.startswith("exp-"):
+        return v
+    try:
+        data = api.get("expedientes/", {"limit": 200})
+    except Exception:  # noqa: BLE001
+        return None
+    tn = _norm_num(v)
+    for e in _as_rows(data):
+        if tn and tn in [_norm_num(x) for x in (e.get("oc_codigos") or [])]:
+            return e.get("id")
+        if tn and tn in [_norm_num(x) for x in (e.get("sap_codigos") or [])]:
+            return e.get("id")
+    return None
+
+
+def _looks_like_uuid(v: str) -> bool:
+    """True si v es un UUID (8-4-4-4-12)."""
+    import re as _re
+    return bool(_re.match(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        v,
+    ))
+
+
 def _monto_cliente_usd(expediente_id: str) -> float | None:
     """Ola 3.8 · Total visible para client_b2b: Σ(qty × unit_price_client) de
     las líneas activas del expediente.
@@ -1061,6 +1150,11 @@ def expediente_obtener(expediente_id: str, campos: str | None = None) -> Any:
     usuario pregunte '¿cómo se envía?', '¿cuál es el tracking?', '¿quién es
     el transportista?' de un expediente.
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    resolved = _resolve_expediente_id(expediente_id) or expediente_id
+    if not resolved:
+        return {"error": True, "detail": "Expediente no encontrado para el identificador dado.",
+                "hint": "Pasa `expediente_codigo` (EXP-…) o la `referencia_cliente` (OC/SAP)."}
+    expediente_id = resolved
     data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/"), "expediente_obtener")
     # Ola 3.8 · adjunta el resumen de envío (ART-05 AWB/BL) cuando existe.
     if isinstance(data, dict) and not data.get("error"):
@@ -1089,13 +1183,17 @@ def expediente_buscar(
     normalizando prefijos 'PO'/'OC' y separadores.
 
     Recomendado pasar `client_id` para acotar la búsqueda. Devuelve
-    `{existe, total, matches:[{expediente_id, codigo, oc_id, oc_codigos, proforma_codigos,
-    sap_codigos, estado, client_id}]}`. Si `existe=true` → **NO crees**, edita el existente."""
+    `{existe, total, matches:[{expediente_codigo, referencia_cliente, oc_codigos,
+    proforma_codigos, sap_codigos, estado, fusion_label, fusion_members}]}`.
+    Los UUIDs internos (id/expediente_id/oc_id/fusion_id) NUNCA se exponen;
+    para encadenar `expediente_obtener` usa `expediente_codigo` (EXP-…) que el
+    backend resuelve. Si `existe=true` → **NO crees**, edita el existente."""
     params = _params(client=client_id, oc_number=oc_number, proforma=proforma)  # oc_number/proforma los usa el backend si está parcheado
-    data = _safe_role(lambda: api.get("expedientes/", params))
+    raw = api.get("expedientes/", params)
+    data = _safe_role(lambda: raw)
     if isinstance(data, dict) and data.get("error"):
         return data
-    rows = _as_rows(data)
+    rows = _as_rows(raw)
     tn_oc = _norm_num(oc_number) if oc_number else None
     tn_pf = (proforma or "").strip().lower() if proforma else None
     tn_sap = _norm_num(sap) if sap else None
@@ -1106,16 +1204,21 @@ def expediente_buscar(
         sap_cs = [_norm_num(x) for x in (e.get("sap_codigos") or [])]
         if (tn_oc and tn_oc in oc_cs) or (tn_pf and tn_pf in pf_cs) or (tn_sap and tn_sap in sap_cs):
             matches.append({
-                "id": e.get("id"), "expediente_id": e.get("id"), "codigo": e.get("codigo"),
-                "oc_id": e.get("oc_id"),
-                "oc_codigos": e.get("oc_codigos"), "proforma_codigos": e.get("proforma_codigos"),
-                "sap_codigos": e.get("sap_codigos"), "estado": e.get("estado"),
-                "client_id": e.get("client_id"), "fusion_id": e.get("fusion_id"),
-                "fusion_label": e.get("fusion_label"), "sap": e.get("sap"),
+                "expediente_codigo": e.get("codigo") or e.get("id"),
+                "oc_codigos": e.get("oc_codigos"),
+                "proforma_codigos": e.get("proforma_codigos"),
+                "sap_codigos": e.get("sap_codigos"),
+                "estado": e.get("estado"),
+                "client_id": e.get("client_id"),
+                "fusion_id": e.get("fusion_id"),
+                "fusion_label": e.get("fusion_label"),
             })
     # Ola 3.8 · el mismo saneo de presentación que el listado: para un
     # client_b2b oculta `codigo` EXP-, UUIDs internos y expone referencia_cliente.
     matches = _present_codigos(matches) if matches else []
+    # Fix 2026-08-19 · fusiones: reemplaza el UUID fusion_id por los códigos de
+    # los expedientes que componen la fusión (oc/sap por rol, proforma solo admin).
+    matches = _resolve_fusion_members(matches)
     return {"existe": len(matches) > 0, "total": len(matches), "matches": matches}
 
 
@@ -1123,6 +1226,11 @@ def expediente_buscar(
 def expediente_lineas(expediente_id: str, campos: str | None = None) -> Any:
     """Líneas (SKU/nombre/talla/cantidad/precios) de un expediente.
     `campos`: lista separada por comas para proyectar solo esos atributos."""
+    resolved = _resolve_expediente_id(expediente_id) or expediente_id
+    if not resolved:
+        return {"error": True, "detail": "Expediente no encontrado para el identificador dado.",
+                "hint": "Pasa `expediente_codigo` (EXP-…) o la `referencia_cliente` (OC/SAP)."}
+    expediente_id = resolved
     data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas")
     # Ola 3.8 · adjunta producto_nombre/marca_nombre legibles por línea.
     data = enrich_lineas(data)

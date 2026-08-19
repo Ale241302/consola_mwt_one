@@ -181,22 +181,30 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
     # es `codigos_presentacion` (PF · PO · SAP).
     out.pop("codigo", None)
     out.pop("codigo_interno", None)
-    # Ola 3.8 · Privacidad: para un client_b2b además se quitan los UUIDs de
-    # referencia (id, oc_id, operating_company_id, brand_id, fusion_id) y se
-    # expone `referencia_cliente` con el PO. CEO/Admin conservan esos UUIDs
-    # (los necesitan para encadenar tools).
+    # Fix 2026-08-19 · los UUIDs internos del expediente (id, expediente_id,
+    # oc_id, fusion_id, operating_company_id, brand_id) NUNCA se exponen, a
+    # NINGÚN rol. Para encadenar:
+    #   · admin/CEO -> `expediente_codigo` (EXP-…, el backend lo resuelve).
+    #   · client_b2b -> solo `referencia_cliente` (OC/SAP); re-busca por OC.
+    if not is_client(role):
+        out["expediente_codigo"] = (row.get("expediente_codigo")
+                                    or row.get("codigo") or row.get("codigo_interno")
+                                    or row.get("id") or row.get("expediente_id"))
+    for key in (
+        "id",
+        "expediente_id",
+        "oc_id",
+        "fusion_id",
+        "operating_company_id",
+        "brand_id",
+    ):
+        out.pop(key, None)
     if is_client(role):
+        # client_b2b solo ve OC/SAP; el código interno EXP- no se le entrega.
+        out.pop("expediente_codigo", None)
         ref = (ocs[0] if ocs else (saps[0] if saps else None))
         if ref:
             out["referencia_cliente"] = ref
-        for key in (
-            "id",
-            "fusion_id",
-            "oc_id",
-            "operating_company_id",
-            "brand_id",
-        ):
-            out.pop(key, None)
     return out
 
 
