@@ -1920,18 +1920,15 @@ def proforma_documento(
                       "guardado (storage_url vacío). Usa proforma_generar.",
         }
 
-    # 2) firmar la descarga del binario existente.
+    # 2) URL de descarga directa por HTTPS (funciona para client_b2b: el
+    # endpoint /api/storage/download/ es AllowAny y valida el scope del
+    # documento por su key UUID; evita el 403 de /storage/signed_url/).
     key = storage_url
     if "download/?key=" in str(key):
         key = str(key).split("download/?key=")[-1]
-    try:
-        signed = _safe_role(lambda: api.post(
-            "storage/signed_url/",
-            {"key": key, "kind": "get", "ttl": ttl_minutes * 60},
-        ))
-    except MwtApiError as e:
-        signed = {"error": True, "status": e.status, "detail": e.payload}
-    url = signed.get("url") if isinstance(signed, dict) else None
+    from urllib.parse import quote as _quote
+
+    download_url = f"{settings.api_base}/storage/download/?key={_quote(key, safe='')}"
     return {
         "found": True,
         "documento_id": did,
@@ -1940,9 +1937,10 @@ def proforma_documento(
         "codigo": target.get("codigo"),
         "file_ext": target.get("file_ext"),
         "file_size_bytes": target.get("file_size_bytes"),
-        "url": url,
-        "expires_at": signed.get("expires_at") if isinstance(signed, dict) else None,
-        "hint": "Abre/descarga `url` para entregar el HTML/PDF de la proforma al usuario como archivo.",
+        "url": download_url,
+        "hint": ("Abre/descarga `url` para entregar el HTML/PDF de la proforma "
+                 "al usuario como archivo. Si prefieres la URL firmada de MinIO "
+                 "(necesita permiso storage), usa documento_descargar."),
     }
 
 

@@ -201,4 +201,8 @@ def scoped_expediente_ids(user, *, only_active: bool = True) -> Optional[List[st
         client_field="client_id",
         extra_fields=("operating_company_id",),
     )
-    return list(qs.values_list("id", flat=True))
+    # Fix 2026-08-19 · los callers comparan con str(...) (ej. _user_can_access_key).
+    # Antes se devolvían objetos UUID → la comparación str(UUID) not in [UUID...]
+    # nunca matcheaba y el download/scope de documentos fallaba con 403 para
+    # client_b2b aunque el expediente estuviera en su scope.
+    return [str(x) for x in qs.values_list("id", flat=True)]
