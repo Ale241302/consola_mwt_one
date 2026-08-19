@@ -1249,6 +1249,12 @@ def expediente_buscar(
                 "client_id": e.get("client_id"),
                 "fusion_id": e.get("fusion_id"),
                 "fusion_label": e.get("fusion_label"),
+                # Fix 2026-08-19 · datos para distinguir expedientes con la misma
+                # PO: SAP (legacy real), #productos, fecha y monto del cliente.
+                "sap": e.get("sap"),
+                "product_count": e.get("product_count"),
+                "created_at": e.get("created_at"),
+                "monto_cliente_usd": e.get("total_cost"),
             })
     # Ola 3.8 · el mismo saneo de presentación que el listado: para un
     # client_b2b oculta `codigo` EXP-, UUIDs internos y expone referencia_cliente.
@@ -1830,8 +1836,114 @@ def proforma_generar(expediente_id: str, audience: str = "CLIENT", codigo: str |
 
 @mcp.tool()
 def proforma_html(expediente_id: str, codigo: str | None = None) -> Any:
-    """Devuelve el HTML de la proforma renderizada al vuelo (no persiste)."""
+    """Devuelve el HTML de la proforma renderizada al vuelo (no persiste).
+
+    ⚠️ PRIMERO busca el documento PROFORMA existente del expediente con
+    `proforma_documento` (o `expediente_documentos_completos` → PROFORMA) —
+    si el expediente ya tiene su proforma renderizada/guardada, entrega esa
+    (como archivo/URL firmada). Usa `proforma_html` SOLO si no existe
+    documento PROFORMA persistido o el usuario pide la proforma "actualizada"
+    con los datos más recientes del expediente."""
+    resolved = _resolve_expediente_id(expediente_id) or expediente_id
+    expediente_id = resolved
     return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/proforma-html/", _params(codigo=codigo)))
+
+
+@mcp.tool()
+def proforma_documento(
+    expediente_id: str,
+    codigo: str | None = None,
+    ttl_minutes: int | None = None,
+) -> Any:
+    """Entrega el documento PROFORMA YA EXISTENTE del expediente como archivo.
+
+    Busca el documento kind=PROFORMA del expediente (para client_b2b solo
+    audience=CLIENT; admin/CEO cualquiera) y devuelve su URL firmada para
+    descargar el binario (HTML/PDF) tal como está guardado. Úsala cuando el
+    usuario pida "la proforma" de un expediente y ya exista una generada.
+
+    `expediente_id` acepta UUID, EXP-…, o referencia (OC/SAP/proforma).
+    Devuelve `{found, documento_id, kind, audience, codigo, file_ext,
+    url, expires_at}`. Si no hay documento PROFORMA → `{found:false}` y usa
+    `proforma_generar`/`proforma_html` para crear la proforma del sistema.
+    `ttl_minutes`: vigencia de la URL (default 15, máx 60)."""
+    resolved = _resolve_expediente_id(expediente_id) or expediente_id
+    expediente_id = resolved
+    if ttl_minutes is not None:
+        try:
+            ttl_minutes = max(1, min(int(ttl_minutes), 60))
+        except (TypeError, ValueError):
+            ttl_minutes = 15
+    else:
+        ttl_minutes = 15
+
+    from .redact import is_client as _is_client_role
+
+    role = _current_role()
+
+    # 1) buscar los documentos PROFORMA del expediente.
+    try:
+        docs = api.get("documentos/", _params(expediente=expediente_id, limit=50))
+        rows = docs.get("results") if isinstance(docs, dict) else docs
+        rows = rows if isinstance(rows, list) else []
+    except Exception:  # noqa: BLE001
+        rows = []
+
+    target = None
+    for d in rows:
+        if str(d.get("kind") or "").upper() != "PROFORMA":
+            continue
+        audience = str(d.get("audience") or "").upper()
+        if _is_client_role(role) and audience not in ("CLIENT", "CLIENTE"):
+            continue
+        # Si pidieron un codigo concreto, priorizar ese.
+        if codigo:
+            if str(d.get("codigo") or "").strip().lower() == str(codigo).strip().lower():
+                target = d
+                break
+            continue
+        target = d  # el primero (ordenado por created_at desc del backend)
+    if target is None:
+        return {
+            "found": False,
+            "detail": "No hay documento PROFORMA guardado para este expediente. "
+                      "Genera la proforma del sistema con proforma_generar o "
+                      "proforma_html.",
+        }
+
+    did = target.get("id")
+    storage_url = target.get("storage_url")
+    if not did or not storage_url:
+        return {
+            "found": False,
+            "detail": "El documento PROFORMA existe pero no tiene archivo "
+                      "guardado (storage_url vacío). Usa proforma_generar.",
+        }
+
+    # 2) firmar la descarga del binario existente.
+    key = storage_url
+    if "download/?key=" in str(key):
+        key = str(key).split("download/?key=")[-1]
+    try:
+        signed = _safe_role(lambda: api.post(
+            "storage/signed_url/",
+            {"key": key, "kind": "get", "ttl": ttl_minutes * 60},
+        ))
+    except MwtApiError as e:
+        signed = {"error": True, "status": e.status, "detail": e.payload}
+    url = signed.get("url") if isinstance(signed, dict) else None
+    return {
+        "found": True,
+        "documento_id": did,
+        "kind": target.get("kind"),
+        "audience": target.get("audience"),
+        "codigo": target.get("codigo"),
+        "file_ext": target.get("file_ext"),
+        "file_size_bytes": target.get("file_size_bytes"),
+        "url": url,
+        "expires_at": signed.get("expires_at") if isinstance(signed, dict) else None,
+        "hint": "Abre/descarga `url` para entregar el HTML/PDF de la proforma al usuario como archivo.",
+    }
 
 
 @mcp.tool()

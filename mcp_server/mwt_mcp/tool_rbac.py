@@ -78,6 +78,7 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "oc_editar": ("expedientes", "update"),
     "proforma_generar": ("expedientes", "create"),
     "proforma_html": ("expedientes", "view"),
+    "proforma_documento": ("expedientes", "view"),
     "factura_payload": ("expedientes", "view"),
     # ── Expedientes ────────────────────────────────────────────────────────
     "expediente_listar": ("expedientes", "view"),
