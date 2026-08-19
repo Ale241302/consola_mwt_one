@@ -110,3 +110,41 @@ def test_expediente_buscar_ceo_no_ve_uuid(monkeypatch):
     assert "id" not in m                # UUID oculto para admin también
     assert "expediente_id" not in m     # UUID oculto para admin también
     assert m["expediente_codigo"] == "EXP-504302"
+
+
+def test_expediente_buscar_fusion_expone_label_y_members(monkeypatch):
+    """Una fusión expone fusion_label + fusion_members (códigos role-aware),
+    nunca el fusion_id UUID."""
+    rows = {"results": [
+        {"id": "exp-1", "codigo": "EXP-504302", "oc_id": "oc-1",
+         "oc_codigos": ["PO 504983"], "sap_codigos": ["257021"],
+         "proforma_codigos": [], "estado": "EN_DESTINO",
+         "client_id": "cli-1", "fusion_id": "0c6e5683-b04b-4d01-93b8-bc12a4aad3e4",
+         "fusion_label": "PO 504983", "sap": "257021"},
+    ]}
+    fusion_members = {"results": [
+        {"id": "exp-1", "codigo": "EXP-504302", "oc_codigos": ["PO 504983"],
+         "sap_codigos": ["257021"], "proforma_codigos": [], "estado": "EN_DESTINO",
+         "sap": "257021"},
+        {"id": "exp-2", "codigo": "EXP-504303", "oc_codigos": ["PO 504983"],
+         "sap_codigos": ["257022"], "proforma_codigos": [], "estado": "EN_DESTINO",
+         "sap": "257022"},
+    ]}
+
+    def _fake_get(path, *a, **k):
+        params = k.get("params") or {}
+        if params.get("fusion"):
+            return fusion_members
+        return rows
+
+    monkeypatch.setattr(server.api, "get", _fake_get)
+    with mock.patch.object(server, "get_identity_user", return_value={"role": "client_b2b"}):
+        out = server.expediente_buscar(oc_number="504983")
+    m = out["matches"][0]
+    assert "fusion_id" not in m                 # UUID de fusión oculto
+    assert m["fusion_label"] == "PO 504983"
+    assert "fusion_members" in m
+    member = m["fusion_members"][0]
+    assert "expediente_id" not in member        # UUID oculto en miembros
+    assert member["oc_codigos"] == ["PO 504983"]
+    assert member["sap_codigos"] == ["257021"]

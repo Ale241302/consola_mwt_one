@@ -351,10 +351,14 @@ def _resolve_fusion_members(matches: list) -> list:
                 data = api.get("expedientes/", {"fusion": str(fid), "limit": 50})
                 members = []
                 for e in _as_rows(data):
+                    saps = e.get("sap_codigos") or []
+                    legacy_sap = e.get("sap")
+                    if not saps and legacy_sap:
+                        saps = [str(legacy_sap)]
                     members.append({
                         "expediente_codigo": e.get("codigo") or e.get("id"),
                         "oc_codigos": e.get("oc_codigos"),
-                        "sap_codigos": e.get("sap_codigos"),
+                        "sap_codigos": saps,
                         "proforma_codigos": e.get("proforma_codigos"),
                         "estado": e.get("estado"),
                     })
@@ -1203,11 +1207,14 @@ def expediente_buscar(
         pf_cs = [(x or "").strip().lower() for x in (e.get("proforma_codigos") or [])]
         sap_cs = [_norm_num(x) for x in (e.get("sap_codigos") or [])]
         if (tn_oc and tn_oc in oc_cs) or (tn_pf and tn_pf in pf_cs) or (tn_sap and tn_sap in sap_cs):
+            saps = e.get("sap_codigos") or []
+            if not saps and e.get("sap"):
+                saps = [str(e.get("sap"))]
             matches.append({
                 "expediente_codigo": e.get("codigo") or e.get("id"),
                 "oc_codigos": e.get("oc_codigos"),
                 "proforma_codigos": e.get("proforma_codigos"),
-                "sap_codigos": e.get("sap_codigos"),
+                "sap_codigos": saps,
                 "estado": e.get("estado"),
                 "client_id": e.get("client_id"),
                 "fusion_id": e.get("fusion_id"),
@@ -1215,10 +1222,10 @@ def expediente_buscar(
             })
     # Ola 3.8 · el mismo saneo de presentación que el listado: para un
     # client_b2b oculta `codigo` EXP-, UUIDs internos y expone referencia_cliente.
+    # Fix 2026-08-19 · las fusiones se resuelven ANTES del saneo (que borra
+    # fusion_id) y luego se exponen como fusion_label + fusion_members.
+    matches = _resolve_fusion_members(matches) if matches else []
     matches = _present_codigos(matches) if matches else []
-    # Fix 2026-08-19 · fusiones: reemplaza el UUID fusion_id por los códigos de
-    # los expedientes que componen la fusión (oc/sap por rol, proforma solo admin).
-    matches = _resolve_fusion_members(matches)
     return {"existe": len(matches) > 0, "total": len(matches), "matches": matches}
 
 
