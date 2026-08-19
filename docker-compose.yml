@@ -245,6 +245,10 @@ services:
       MWT_MCP_HOST: 0.0.0.0
       MWT_MCP_PORT: "8765"
       MWT_API_BASE: http://django:8000/api
+      # URL pública de la API (para URLs entregadas al usuario, ej. descarga
+      # de documentos). El MCP llama al backend por la red interna pero las
+      # URLs compartidas con el cliente usan el dominio público.
+      MWT_PUBLIC_API_BASE: https://consola.mwt.one/api
       # Si quieres firma local de JWT de usuario, añade MWT_JWT_SIGNING_SECRET
       # al .env (mismo valor que DJANGO_SECRET_KEY). Por defecto se usa el
       # endpoint /api/auth/mcp-token/ del backend, que es más seguro.
