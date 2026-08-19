@@ -1916,15 +1916,21 @@ def proforma_html(expediente_id: str, codigo: str | None = None) -> Any:
     try:
         doc = proforma_documento(expediente_id=expediente_id, codigo=codigo)
         if isinstance(doc, dict) and doc.get("found"):
-            if isinstance(html, dict):
-                html["archivo_url"] = doc.get("url")
-                html["archivo_codigo"] = doc.get("codigo")
-                html["archivo_ext"] = doc.get("file_ext")
-                html["archivo_documento_id"] = doc.get("documento_id")
-                html["descarga"] = (
-                    f"Abre/descarga `archivo_url` para entregar al usuario el "
-                    f"archivo de la proforma ({doc.get('file_ext')})."
-                )
+            # `html` puede ser el HTML crudo (string) o un dict (si el backend
+            # devolvió JSON). Normalizamos a dict para adjuntar el archivo.
+            base = dict(html) if isinstance(html, dict) else {
+                "html": html if isinstance(html, (str, bytes)) else None,
+                "proforma": doc.get("codigo"),
+            }
+            base["archivo_url"] = doc.get("url")
+            base["archivo_codigo"] = doc.get("codigo")
+            base["archivo_ext"] = doc.get("file_ext")
+            base["archivo_documento_id"] = doc.get("documento_id")
+            base["descarga"] = (
+                f"Abre/descarga `archivo_url` para entregar al usuario el "
+                f"archivo de la proforma ({doc.get('file_ext')})."
+            )
+            return base
     except Exception:  # noqa: BLE001 - fail-safe
         pass
 
