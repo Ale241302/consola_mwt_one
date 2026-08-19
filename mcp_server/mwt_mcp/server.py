@@ -377,6 +377,30 @@ def _has_identity() -> bool:
         return False
 
 
+def _descarga_url_con_token(key: str) -> str:
+    """Fix 2026-08-19 · URL de descarga directa del backend CON el token del usuario.
+
+    El endpoint /api/storage/download/?key=... exige autenticación para keys no
+    públicas (401 si no hay token). Cuando el MCP entrega una URL al usuario
+    (proforma, artefactos, documentos), le adjunta `&token=<jwt>` del usuario
+    conectado para que el enlace funcione al abrirlo en el navegador (el backend
+    lo autentica vía `_authenticate_token_from_query`). El token minted ya tiene
+    el scope correcto del usuario.
+    """
+    from urllib.parse import quote as _quote
+
+    base = f"{settings.public_api_base}/storage/download/?key={_quote(str(key), safe='')}"
+    try:
+        from .jwt_minter import get_identity_token
+
+        tok = get_identity_token()
+        if tok:
+            return f"{base}&token={tok}"
+    except Exception:  # noqa: BLE001 - sin token, la URL igual se entrega
+        pass
+    return base
+
+
 def _attach_artefacto_files(data: Any, role: str) -> Any:
     """Fix 2026-08-19 · adjunta `archivo_url` (descarga directa) a cada artefacto
     del Builder que tenga un campo file en su detalle.
@@ -408,12 +432,7 @@ def _attach_artefacto_files(data: Any, role: str) -> Any:
                         fkey = v.get("key") or v.get("url")
                         if "download/?key=" in str(fkey):
                             fkey = str(fkey).split("download/?key=")[-1]
-                        from urllib.parse import quote as _quote
-
-                        out["archivo_url"] = (
-                            f"{settings.public_api_base}/storage/download/"
-                            f"?key={_quote(str(fkey), safe='')}"
-                        )
+                        out["archivo_url"] = _descarga_url_con_token(fkey)
                         out["archivo_nombre"] = v.get("name")
                         out["archivo_mime"] = v.get("mime")
                         out["archivo_size"] = v.get("size")
@@ -2014,9 +2033,8 @@ def proforma_documento(
     key = storage_url
     if "download/?key=" in str(key):
         key = str(key).split("download/?key=")[-1]
-    from urllib.parse import quote as _quote
 
-    download_url = f"{settings.public_api_base}/storage/download/?key={_quote(key, safe='')}"
+    download_url = _descarga_url_con_token(key)
     return {
         "found": True,
         "documento_id": did,
