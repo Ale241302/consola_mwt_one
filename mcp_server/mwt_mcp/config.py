@@ -13,6 +13,13 @@ class Settings:
         self.api_base: str = os.environ.get(
             "MWT_API_BASE", "https://consola.mwt.one/api"
         ).rstrip("/")
+        # URL pública de la API para URLs que se entregan AL USUARIO (ej.
+        # descarga de documentos). En producción el MCP usa la URL interna
+        # (django:8000) para llamar al backend, pero las URLs que el agente
+        # comparte con el cliente deben usar el dominio público.
+        self.public_api_base: str = os.environ.get(
+            "MWT_PUBLIC_API_BASE", "https://consola.mwt.one/api"
+        ).rstrip("/")
         self.token: str = os.environ.get("MWT_MCP_TOKEN", "").strip()
         self.transport: str = os.environ.get("MWT_MCP_TRANSPORT", "stdio").strip().lower()
         self.host: str = os.environ.get("MWT_MCP_HOST", "0.0.0.0")

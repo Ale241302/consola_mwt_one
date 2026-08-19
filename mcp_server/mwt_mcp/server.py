@@ -1928,7 +1928,7 @@ def proforma_documento(
         key = str(key).split("download/?key=")[-1]
     from urllib.parse import quote as _quote
 
-    download_url = f"{settings.api_base}/storage/download/?key={_quote(key, safe='')}"
+    download_url = f"{settings.public_api_base}/storage/download/?key={_quote(key, safe='')}"
     return {
         "found": True,
         "documento_id": did,
