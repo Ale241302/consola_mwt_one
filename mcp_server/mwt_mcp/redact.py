@@ -298,10 +298,19 @@ def filter_artefactos_for_role(payload, role: str):
     def _keep(row):
         return _client_can_see_artefacto(row) if isinstance(row, dict) else True
 
+    def _sane(row):
+        if not isinstance(row, dict):
+            return row
+        out = dict(row)
+        # Email interno del autor no se expone al cliente.
+        out.pop("created_by_name", None)
+        out.pop("updated_by_name", None)
+        return out
+
     if isinstance(payload, dict) and isinstance(payload.get("results"), list):
         out = dict(payload)
-        out["results"] = [r for r in out["results"] if _keep(r)]
+        out["results"] = [_sane(r) for r in out["results"] if _keep(r)]
         return out
     if isinstance(payload, list):
-        return [r for r in payload if _keep(r)]
+        return [_sane(r) for r in payload if _keep(r)]
     return payload

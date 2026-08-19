@@ -395,6 +395,8 @@ def _saneo_documentos_cliente(data: Any, role: str) -> Any:
         out = dict(row)
         out.pop("expediente_id", None)
         out.pop("oc_id", None)
+        # Email interno del autor (staff MWT) no se expone al cliente.
+        out.pop("author", None)
         return out
 
     if isinstance(data, dict) and isinstance(data.get("results"), list):
