@@ -320,6 +320,33 @@ def proforma_html_dynamic(request, expediente_id):
 
     codigo_override = request.query_params.get("codigo") or None
 
+    # Fix 2026-08-19 · el render dinámico NO debe inventar un código secuencial
+    # (PF-YYYY-NNNN) cuando el expediente ya tiene su proforma guardada con un
+    # código real (ej. "PF 2488-2026"). Si existe un documento PROFORMA del
+    # expediente (prioridad CLIENT para viewers client), usamos su código como
+    # override; el usuario siempre ve el código de verdad, no uno inventado.
+    if not codigo_override:
+        try:
+            from apps.expedientes.models import Documento
+            from apps.core.permissions import _is_client_viewer
+
+            is_client = _is_client_viewer(request.user)
+            qs = Documento.objects.filter(
+                expediente_id=expediente_id, kind="PROFORMA", is_active=True,
+            ).exclude(codigo__isnull=True).exclude(codigo__exact="")
+            if is_client:
+                qs = qs.filter(audience="CLIENT")
+            else:
+                # staff/CEO: preferimos la vista CLIENT, sino cualquiera.
+                qs = qs.order_by("-created_at")
+                qs_cli = qs.filter(audience="CLIENT")[:1]
+                qs = qs_cli if qs_cli.exists() else qs
+            doc = qs.order_by("-created_at").first()
+            if doc and doc.codigo:
+                codigo_override = doc.codigo
+        except Exception:  # noqa: BLE001 - defensivo, nunca romper el render
+            codigo_override = None
+
     try:
         html_str, _meta = render_proforma_html(
             expediente_id,
