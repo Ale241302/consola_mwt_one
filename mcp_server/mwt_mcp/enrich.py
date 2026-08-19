@@ -326,9 +326,18 @@ def _ensure_products_loaded() -> None:
     if time.time() < _product_cache_exp:
         return
     try:
+        from .marluvas_pricing import _tc_usd_brl
         # Ola 3.8 · el catálogo B2B usa portal/products/ (scoped y read-only),
         # accesible para client_b2b. /api/productos/ devuelve 403 al cliente.
-        data = api.get("portal/products/", {"limit": 500})
+        # Fix 2026-08-18 · se envía `?tc=<usd_brl>` (mismo hook que el frontend)
+        # para que el backend escoja la BANDA VIGENTE Marluvas al resolver el
+        # precio 90d. Sin `tc`, resolve_client_price cae a banda 6 (5,00–5,20)
+        # y el precio_venta del catálogo queda en la banda equivocada.
+        _tc = _tc_usd_brl()
+        params: dict = {"limit": 500}
+        if _tc is not None:
+            params["tc"] = _tc
+        data = api.get("portal/products/", params)
         rows = data if isinstance(data, list) else (data or {}).get("results") or []
         _product_cache = {
             str(r.get("id")): r for r in rows if r.get("id")
