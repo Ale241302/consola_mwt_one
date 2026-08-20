@@ -326,7 +326,15 @@ class MwtJWTAuthentication(JWTAuthentication):
             legal_entity_ids=legal_entity_ids,
             # Ola 1 · 1.1/1.2 — el guard anti-bypass necesita saber si el
             # token es del MCP y si trae un tenant quemado.
-            mcp_scoped=bool(is_mcp_token and legal_entity_ids),
+            # Fix 2026-08-20 · `mcp_scoped` SOLO cuando hay `tenant_id` (cliente
+            # quemado de una app MCP por cliente). El server global (Operador/
+            # app admin 1290625…) NO trae tenant_id y NO debe forzar scope:
+            # un admin MCP global ve todos los clientes (bypass), aunque su
+            # users.mwtuser.legal_entity_ids tenga empresas. Antes `mcp_scoped`
+            # se activaba con cualquier legal_entity_ids → el Operador global
+            # no podía ver clientes fuera de su pool (creaba pero el GET daba
+            # 404 "Cliente no existe").
+            mcp_scoped=bool(is_mcp_token and token_tenant_id),
             tenant_id=token_tenant_id,
         )
 
