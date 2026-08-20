@@ -316,6 +316,14 @@ class ClienteViewSet(viewsets.ViewSet):
     def create(self, request):
         s = ClienteSerializer(data=request.data, context=self._ctx(request))
         s.is_valid(raise_exception=True)
+        # Fix 2026-08-20 · un cliente NUEVO siempre nace ACTIVO (is_active=True).
+        # Si el caller envía is_active=false (agente/script), el registro se
+        # persiste pero cliente_obtener/listar lo filtran (is_active=True) →
+        # "200 mentiroso": parece creado pero no aparece. Forzamos true en el
+        # create para que el alta sea siempre visible; la desactivación se hace
+        # vía PATCH (update/destroy), nunca en el alta.
+        if "is_active" in s.validated_data:
+            s.validated_data["is_active"] = True
         # ── id explícito vía save(**kwargs) ──
         # `id` está en read_only_fields del serializer → DRF lo descarta
         # del validated_data. Si dejamos que `save()` siga sin él, Django

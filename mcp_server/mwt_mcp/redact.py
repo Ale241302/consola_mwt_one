@@ -52,6 +52,11 @@ CEO_ONLY_KEYS: frozenset[str] = frozenset({
     "credito_usado", "credit_band",
     # ── Notas y campos internos ──────────────────────────────────────────────
     "internal_notes", "notas_internas",
+    # ── Credenciales OAuth de la app MCP del cliente (POL_DATA_CLASSIFICATION):
+    #    el Client Secret es secreto; no fluye por el canal del agente. Si el
+    #    Operador necesita rotarlo, lo pide por un flujo dedicado, no en cada
+    #    respuesta de cliente_crear/cliente_obtener.
+    "oauth_client_secret", "client_secret", "client_credentials",
 })
 
 # Claves que además de CEO_ONLY tampoco ve un client_b2b:

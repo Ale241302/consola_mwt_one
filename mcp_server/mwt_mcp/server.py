@@ -946,7 +946,12 @@ def cliente_crear(datos: dict) -> Any:
     segmento, parent_id, pais_iso2, ciudad, direccion_entrega, contacto_nombre,
     contacto_email, canal, incoterm, medio_pago, dias_credito (0-180), moneda,
     credito_limit_usd*, comision_pct* (*CEO-only), estado (ACTIVO/PAUSADO/BLOQUEADO/INACTIVO),
-    nodo_asignado_id, responsable_id."""
+    nodo_asignado_id, responsable_id.
+
+    ⚠️ Un cliente NUEVO SIEMPRE nace ACTIVO (`is_active=true`, lo fuerza el backend);
+    NO envíes `is_active` (el campo no se admite) ni uses `estado="INACTIVO"` para
+    "crear sin exponer". Si quieres desactivar un cliente, créalo ACTIVO y luego
+    usa `cliente_editar(estado=...)`."""
     g = _wguard()
     if g:
         return g
