@@ -71,8 +71,31 @@ function mapClienteFromApi(r) {
     // íbamos por mockData.EXPEDIENTES y siempre mostraba 0 para clientes
     // del backend).
     expedientes_activos: Number(r.expedientes_activos || 0),
+    // 2026-08-20 · subsidiarias visibles en el grid: parent_id + flag para
+    // anidar la card bajo su padre (jerarquía padre → subsidiaria).
+    parent_id:        r.parent_id || null,
+    is_subsidiary:    Boolean(r.is_subsidiary),
+    parent_label:     null,   // se rellena al ordenar la jerarquía
     _raw:             r,
   };
+}
+
+/**
+ * 2026-08-20 · Ordena clientes en jerarquía padre → subsidiarias (anida por
+ * parent_id) y rellena `parent_label` para mostrar bajo qué padre cuelga cada
+ * subsidiaria. Los que no matchean ningún padre se mantienen al final.
+ */
+function orderClientsHierarchy(clients) {
+  const out = []; const seen = new Set();
+  clients.filter((c) => !c.parent_id).forEach((parent) => {
+    out.push(parent); seen.add(parent.id);
+    clients.filter((c) => c.parent_id === parent.id).forEach((sub) => {
+      out.push({ ...sub, parent_label: parent.name || parent.cliente });
+      seen.add(sub.id);
+    });
+  });
+  clients.forEach((c) => { if (!seen.has(c.id)) out.push(c); });
+  return out;
 }
 
 /* Canal → color / label */
@@ -106,11 +129,13 @@ export default function ScreenClientes() {
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     try {
-      // sprint Parent-Child: dashboard top-level NO incluye subsidiarias.
-      // Backend default es is_parent=true, lo dejamos explícito por claridad.
-      const data = await clientesApi.list({ is_parent: "true" });
+      // 2026-08-20 · is_parent="all" para incluir SUBSIDIARIAS en el grid
+      // (antes "true" solo traía raíces). Se ordenan en jerarquía padre →
+      // subsidiaria debajo de su padre. Backend devuelve parent_id +
+      // is_subsidiary por fila.
+      const data = await clientesApi.list({ is_parent: "all" });
       const arr  = Array.isArray(data) ? data : (data?.results || []);
-      setApiClients(arr.map(mapClienteFromApi));
+      setApiClients(orderClientsHierarchy(arr.map(mapClienteFromApi)));
     } catch (e) {
       setErr(e); setApiClients([]);
     } finally {
@@ -268,14 +293,21 @@ export default function ScreenClientes() {
                 whileHover={{ y: -3 }}
                 className="client-card"
                 data-estado={c.estado}
+                data-subsidiary={c.is_subsidiary ? "true" : undefined}
                 onClick={()=>navigate(`/clientes/${c.id}`)}
-                style={{ '--channel-color': channel.color, '--channel-soft': channel.soft }}
+                style={{ '--channel-color': channel.color, '--channel-soft': channel.soft,
+                         ...(c.is_subsidiary ? { marginLeft: 28 } : {}) }}
               >
                 <div className="client-card-accent"/>
 
                 {/* Header (sin círculo de bandera — el país ya aparece debajo del nombre) */}
                 <div className="client-card-head">
                   <div style={{flex:1, minWidth:0}}>
+                    {c.is_subsidiary && c.parent_label && (
+                      <div className="caption" style={{color:'var(--text-tertiary)', marginBottom:2}}>
+                        ↳ {lang==='es' ? 'Subsidiaria de' : 'Subsidiary of'} {c.parent_label}
+                      </div>
+                    )}
                     <div className="client-name" title={c.cliente}>{c.name}</div>
                     <div className="client-loc">
                       <IconMapPin size={11}/>
