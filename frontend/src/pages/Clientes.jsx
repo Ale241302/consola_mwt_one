@@ -49,7 +49,7 @@ function mapClienteFromApi(r) {
     id:               r.id,
     name:             r.nombre_comercial || r.razon_social || "",
     cliente:          r.razon_social || "",
-    codigo_marluvas:  r.codigo_marluvas || (r.tax_id || r.id || "").toString().slice(0, 10),
+    codigo_marluvas:  r.codigo_marluvas || r.tax_id || "",
     country:          COUNTRY_NAME[r.pais_iso2] || r.pais_iso2 || "",
     country_code:     r.pais_iso2 || "",
     flag:             FLAG_ISO[r.pais_iso2] || "🌐",
@@ -291,7 +291,7 @@ export default function ScreenClientes() {
                 <div className="client-card-meta">
                   <div className="sap-code" title="Código SAP (Marluvas)">
                     <span className="sap-label">SAP</span>
-                    <span className="mono-sm">{c.codigo_marluvas}</span>
+                    <span className="mono-sm">{c.codigo_marluvas || "—"}</span>
                   </div>
                   <span className="channel-badge">
                     <span className="channel-dot" style={{background: channel.color}}/>
