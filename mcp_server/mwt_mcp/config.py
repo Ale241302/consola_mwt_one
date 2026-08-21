@@ -49,6 +49,14 @@ class Settings:
         # Secreto compartido gateway→MCP: si se define, el middleware ASGI exige
         # que `X-MWT-Gateway-Key` coincida ANTES de honrar X-Forwarded-User-*.
         self.gateway_key: str = os.environ.get("MWT_MCP_GATEWAY_KEY", "").strip()
+        # ── MWT Builder (builder.muito.work) — backend Django separado ──
+        # Credenciales de la cuenta del builder (login JWT en /api/login/).
+        # Las tools `builder_*` crean/editan plantillas de artefactos ahí.
+        self.builder_base: str = os.environ.get(
+            "MWT_BUILDER_BASE", "https://builder.muito.work"
+        ).rstrip("/")
+        self.builder_username: str = os.environ.get("MWT_BUILDER_USERNAME", "").strip()
+        self.builder_password: str = os.environ.get("MWT_BUILDER_PASSWORD", "").strip()
         # Fail-closed multi-tenant: si está activo, TODO request con identidad
         # debe traer `X-MWT-Client-ID`; sin él → 401 (un contenedor compartido
         # sin cliente no debe operar multi-tenant).

@@ -15,8 +15,10 @@ import time
 from typing import Any
 
 from . import client as api
+from . import builder_client
 from .client import MwtApiError
 from .config import settings
+from .builder_client import _safe as builder_safe
 from .enrich import (
     client_name,
     enrich_ids,
@@ -55,8 +57,9 @@ from .schemas import (
 )
 from .tool_rbac import RbacFastMCP, TOOL_MODULES, allowed_tool_names
 
-# Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con 119 tools
-# (106 @mcp.tool + 13 de presentación vía mcp.add_tool).
+# Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con 132 tools
+# (119 @mcp.tool + 13 de presentación vía mcp.add_tool; incluye las 6 tools
+# del MWT Builder externo builder.muito.work).
 # El filtrado por rol del usuario conectado se hace en list_tools vía
 # RbacFastMCP (tool_rbac.py), NO partiendo el server en 3 dominios.
 mcp = RbacFastMCP("mwt-one")
@@ -2957,6 +2960,172 @@ def builder_templates_listar(only_published: bool = True) -> Any:
 def builder_template_obtener(template_id: int) -> Any:
     """Obtiene la definición/estructura de un template del Builder por su id (entero)."""
     return _safe_role(lambda: api.get(f"builder/templates/{template_id}/"))
+
+
+# =========================================================================== #
+# H.1) MWT BUILDER EXTERNO (builder.muito.work) — plantillas de artefactos.
+#      Backend Django independiente (proyecto mwt_builder). Solo admin/CEO
+#      global (módulo `builder` en RBAC). CRUD + constructor declarativo.
+# =========================================================================== #
+
+# Tipos de campo válidos del Builder (mwt_builder · frontend/Builder.jsx).
+_BUILDER_FIELD_TYPES = frozenset({
+    "text", "number", "textarea", "date", "checkbox",
+    "file", "select", "radio", "code",
+})
+
+
+@mcp.tool()
+def builder_structure_construir(secciones: list) -> Any:
+    """Construye un `structure_json` válido para el MWT Builder (builder.muito.work)
+    a partir de una especificación declarativa de secciones/columnas/campos.
+
+    `secciones` = lista de dicts; cada uno:
+      {"columnas": <int 1-4>, "permisos": {"view","edit"}, "campos": [
+          {"type": "text|number|textarea|date|checkbox|file|select|radio|code",
+           "label": "...", "options": ["a","b"],   # select/radio
+           "value": <valor por defecto>,           # opcional (se ignora en la plantilla)
+           "permisos": {"view","edit"}, "code": "..."}  # code: python
+      ]}
+    `options` puede ser lista de strings o de dicts {id, label}.
+    Devuelve `{"sections": [...]}` listo para `builder_artefacto_crear`. Valida
+    tipos y estructura; falla (error claro) si un tipo no es válido."""
+    return _build_builder_structure(secciones)
+
+
+def _build_builder_structure(secciones: list) -> Any:
+    """Implementación de `builder_structure_construir` (helper puro, sin auth)."""
+    import time as _t
+
+    ts = int(_t.time() * 1000)
+    out_sections = []
+    for i, sec in enumerate(secciones or []):
+        if not isinstance(sec, dict):
+            return {"error": True, "detail": f"Sección {i} no es un dict: {sec!r}"}
+        try:
+            ncols = max(1, min(4, int(sec.get("columnas") or 1)))
+        except (TypeError, ValueError):
+            ncols = 1
+        perms = sec.get("permisos") or {"view": "Todos", "edit": "Todos"}
+        fields = sec.get("campos") or []
+        cols = [{"id": f"col-{ts}-{i}-{c}", "fields": []} for c in range(ncols)]
+        for j, fld in enumerate(fields):
+            if not isinstance(fld, dict):
+                return {"error": True, "detail": f"Campo {j} de sección {i} no es un dict: {fld!r}"}
+            ftype = str(fld.get("type") or "").lower().strip()
+            if ftype not in _BUILDER_FIELD_TYPES:
+                return {"error": True,
+                        "detail": f"Tipo de campo '{ftype}' no válido en sección {i}, campo {j}. "
+                                  f"Válidos: {sorted(_BUILDER_FIELD_TYPES)}"}
+            label = str(fld.get("label") or "").strip()
+            if not label:
+                return {"error": True, "detail": f"Campo {j} de sección {i} sin label."}
+            field = {
+                "id": f"field-{ts}-{j}",
+                "type": ftype,
+                "label": label,
+                "options": _builder_norm_options(fld.get("options"), ts, i, j),
+                "permissions": fld.get("permisos") or {"view": "Todos", "edit": "Todos"},
+            }
+            if ftype == "code":
+                field["language"] = "python"
+                field["code"] = fld.get("code") or "result = []\nreturn result"
+            # Reparte round-robin entre columnas de la sección.
+            cols[j % ncols]["fields"].append(field)
+        out_sections.append({
+            "id": f"section-{ts}-{i}",
+            "columns": cols,
+            "permissions": perms,
+        })
+    return {"sections": out_sections}
+
+
+def _builder_norm_options(options, ts: int, i: int, j: int) -> list:
+    """Normaliza `options` (lista de strings o dicts) al formato del Builder."""
+    out = []
+    for k, o in enumerate(options or []):
+        if isinstance(o, str):
+            out.append({
+                "id": f"opt-{ts}-{i}-{j}-{k}",
+                "label": o,
+                "permissions": {"view": "all", "viewRoles": ""},
+            })
+        elif isinstance(o, dict) and o.get("label"):
+            out.append({
+                "id": o.get("id") or f"opt-{ts}-{i}-{j}-{k}",
+                "label": str(o["label"]),
+                "permissions": o.get("permissions") or {"view": "all", "viewRoles": ""},
+            })
+    return out
+
+
+@mcp.tool()
+def builder_artefacto_listar(limit: int | None = None, offset: int | None = None) -> Any:
+    """Lista las plantillas de artefactos del MWT Builder (builder.muito.work).
+    `limit`/`offset`: paginación. Cada item incluye id, title, status y estructura."""
+    lim, off = _paging(limit, offset, default=50, max_limit=200)
+    return builder_safe(lambda: builder_client.listar_artefactos(limit=lim, offset=off))
+
+
+@mcp.tool()
+def builder_artefacto_obtener(artefacto_id: int) -> Any:
+    """Obtiene una plantilla de artefacto del MWT Builder por su id (entero).
+    Incluye `structure_json` completo (secciones, columnas, campos, opciones)."""
+    return builder_safe(lambda: builder_client.obtener_artefacto(int(artefacto_id)))
+
+
+@mcp.tool()
+@write_tool
+def builder_artefacto_crear(title: str, secciones: list, status: str = "Published") -> Any:
+    """Crea una plantilla de artefacto en el MWT Builder (builder.muito.work).
+
+    `title`: nombre de la plantilla (ej. "ART-05: AWB/BL").
+    `secciones`: especificación declarativa (misma forma que `builder_structure_construir`).
+    `status`: "Published" (default) | "Draft".
+    Construye el `structure_json` internamente y crea el artefacto. Devuelve el
+    artefacto creado con su `id`."""
+    estructura = _build_builder_structure(secciones)
+    if isinstance(estructura, dict) and estructura.get("error"):
+        return estructura
+    return builder_safe(lambda: builder_client.crear_artefacto(title, estructura, status=status))
+
+
+@mcp.tool()
+@write_tool
+def builder_artefacto_editar(artefacto_id: int, title: str | None = None,
+                             secciones: list | None = None,
+                             status: str | None = None) -> Any:
+    """Edita una plantilla de artefacto en el MWT Builder (builder.muito.work).
+    `artefacto_id`: id (entero). Pasa al menos un campo a cambiar:
+    `title`, `secciones` (spec declarativa → se reconstruye el structure_json)
+    o `status` ("Published"|"Draft"). El PUT sobrescribe title y structure_json."""
+    if secciones is not None:
+        estructura = _build_builder_structure(secciones)
+        if isinstance(estructura, dict) and estructura.get("error"):
+            return estructura
+        # Editar requiere el title: si no viene, lee el actual y lo conserva.
+        if not title:
+            actual = builder_safe(lambda: builder_client.obtener_artefacto(int(artefacto_id)))
+            if isinstance(actual, dict) and actual.get("error"):
+                return actual
+            title = actual.get("title") or ""
+        return builder_safe(lambda: builder_client.editar_artefacto(int(artefacto_id), title, estructura, status=status))
+    if title or status:
+        actual = builder_safe(lambda: builder_client.obtener_artefacto(int(artefacto_id)))
+        if isinstance(actual, dict) and actual.get("error"):
+            return actual
+        estructura = actual.get("structure_json") or {"sections": []}
+        title = title or actual.get("title") or ""
+        return builder_safe(lambda: builder_client.editar_artefacto(int(artefacto_id), title, estructura, status=status))
+    return {"error": True, "detail": "Indica al menos un campo a editar: title, secciones o status."}
+
+
+@mcp.tool()
+@write_tool
+def builder_artefacto_eliminar(artefacto_id: int) -> Any:
+    """Elimina una plantilla de artefacto del MWT Builder por su id (entero).
+    Acción irreversible. Devuelve {ok: true} al eliminar."""
+    return builder_safe(lambda: builder_client.eliminar_artefacto(int(artefacto_id)))
 
 
 # =========================================================================== #

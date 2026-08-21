@@ -25,7 +25,7 @@ propagada (acceso directo / stdio).
                                         │                            │
                                         ▼                            ▼
                               ┌──────────────────────────────────────────────┐
-                              │  Servidor MCP (mwt_mcp/server.py, 119 tools)  │
+                              │  Servidor MCP (mwt_mcp/server.py, 132 tools)  │
                               │  · RBAC por rol: tool_rbac.py (list_tools)     │
                               │  · Redacción por rol: redact.py (_safe_role)   │
                               │  · Auditoría durable: core.mcp_audit           │
@@ -34,7 +34,7 @@ propagada (acceso directo / stdio).
 ```
 
 **Capas de defensa (defensa en profundidad):**
-1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 119 tools por
+1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 132 tools por
    `(módulo, acción)` de la matriz `core.roles.permissions`. Fail-closed.
 2. **CAPA 2 — Redacción por rol:** `redact.py` oscurece campos CEO_ONLY
    (costos/margen/comisiones/crédito/precio MWT) en la respuesta, aunque la
@@ -43,7 +43,7 @@ propagada (acceso directo / stdio).
 
 ---
 
-## 1. Qué puede hacer (119 herramientas)
+## 1. Qué puede hacer (132 herramientas)
 
 | Dominio      | Herramientas                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------------------- |
@@ -58,6 +58,7 @@ propagada (acceso directo / stdio).
 | **Proforma / Factura** | `proforma_generar`, `proforma_html`, `factura_payload` |
 | **Estados** | `expediente_avanzar_estado`, `expediente_phase_durations_get/set`, `expediente_eventos` |
 | **Nodos** | `nodo_listar`, `nodo_obtener`, `nodo_crear`, `nodo_editar`, `nodo_artefactos_listar`, `nodo_artefacto_crear` |
+| **MWT Builder externo** (builder.muito.work) | `builder_structure_construir`, `builder_artefacto_listar`, `builder_artefacto_obtener`, `builder_artefacto_crear`, `builder_artefacto_editar`, `builder_artefacto_eliminar` |
 | **Inventario / Recepción** | `stock_listar`, `inventario_saldos_por_expediente`, `inventario_expedientes_con_pendiente`, `inventario_lineas_en_nodo`, `recepcion_crear`, `inventario_transferir_asignaciones`, `inventario_artefactos_expediente` |
 | **Movimientos** | `transferencia_listar/obtener/crear`, `transferencia_avanzar/aprobar/despachar/editar/recibir/conciliar/cerrar/cancelar` |
 | **Costos / impuestos / gastos** | `transfer_costos_listar`, `transfer_costo_agregar`, `transfer_costo_editar`, `transfer_costo_eliminar`, `transfer_artefacto_crear` |
@@ -432,3 +433,55 @@ TTL: 5 min imágenes/tablas, 15 min reportes/exportaciones**.
 - **CEO-only:** `margen_marcas_chart` hereda el 403 del backend.
 - **RBAC:** las tools de datos → `(analytics, view)`; las genéricas →
   `(dashboard, view)` — la CAPA 1 las filtra por rol.
+
+---
+
+## 9. MWT Builder externo (builder.muito.work) — plantillas de artefactos
+
+El MCP también gestiona el **Builder de plantillas** (`mwt_builder`, backend
+Django independiente en `https://builder.muito.work`). Ahí se diseñan los
+formularios/artefactos (OC, Proforma, AWB/BL, Packing List, Certificado, etc.)
+con secciones, columnas y campos tipados, y luego el MCP de la consola crea
+instancias (artefactos) en los nodos/expedientes con `nodo_artefacto_crear`.
+
+### Config (env del MCP)
+
+| Variable | Default | Uso |
+|---|---|---|
+| `MWT_BUILDER_BASE` | `https://builder.muito.work` | Base del Builder |
+| `MWT_BUILDER_USERNAME` | — | Cuenta del builder (login JWT) |
+| `MWT_BUILDER_PASSWORD` | — | Password de la cuenta |
+
+### Tools
+
+| Tool | Uso |
+|---|---|
+| `builder_structure_construir` | Arma un `structure_json` válido desde spec declarativa de secciones/columnas/campos |
+| `builder_artefacto_listar` | Lista plantillas del builder (id, title, status, estructura) |
+| `builder_artefacto_obtener` | Obtiene una plantilla por id |
+| `builder_artefacto_crear` | Crea plantilla (title + `secciones` declarativa) |
+| `builder_artefacto_editar` | Edita title/secciones/status de una plantilla |
+| `builder_artefacto_eliminar` | Elimina una plantilla (irreversible) |
+
+**Tipos de campo** (los acepta `secciones[].campos[].type`): `text`, `number`,
+`textarea`, `date`, `checkbox`, `file`, `select`, `radio`, `code`. Los campos
+`select`/`radio` llevan `options` (lista de strings o `{id, label}`).
+
+**RBAC:** módulo `builder` — solo operadores MWT (admin/superadmin). Un
+`client_b2b` **no** ve estas tools (no crea plantillas). Migración de permisos:
+`backend/sql/H4_builder_modulo_admin_ceo.sql` (idempotente).
+
+### Ejemplo
+
+```
+builder_structure_construir(secciones=[
+  {"columnas": 2, "campos": [
+    {"type": "select", "label": "Tipo de Documento", "options": ["awb", "bl"]},
+    {"type": "number", "label": "Cajas Declaradas"},
+    {"type": "number", "label": "Cajas Reales"},
+    {"type": "date",   "label": "ETA"},
+    {"type": "file",   "label": "Packing List (PDF)"},
+  ]},
+])
+→ {"sections": [...]}   # listo para builder_artefacto_crear
+```

@@ -130,6 +130,16 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "artefacto_publicar": ("nodos", "update"),
     "builder_templates_listar": ("nodos", "view"),
     "builder_template_obtener": ("nodos", "view"),
+    # ── MWT Builder externo (builder.muito.work) — solo operadores MWT ──────
+    # Módulo `builder`: los clientes B2B no tienen este módulo en su matriz
+    # (es de gobernanza de plantillas). admin/CEO global lo ven; el backend
+    # valida de todas formas (fail-closed si el rol no lo tiene).
+    "builder_structure_construir": ("builder", "view"),
+    "builder_artefacto_listar": ("builder", "view"),
+    "builder_artefacto_obtener": ("builder", "view"),
+    "builder_artefacto_crear": ("builder", "create"),
+    "builder_artefacto_editar": ("builder", "update"),
+    "builder_artefacto_eliminar": ("builder", "delete"),
     # ── Inventario / recepción ─────────────────────────────────────────────
     "stock_listar": ("inventario", "view"),
     "inventario_saldos_por_expediente": ("inventario", "view"),
