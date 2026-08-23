@@ -271,6 +271,7 @@ Cada archivo/correlación de la lista §A.3.8 que tenga un template del Builder 
 | Packing List / Romaneiro | `Packing List Dellado` (23) | PDF/imagen del PL | `# Cajas`, `Peso bruto`, `Peso neto`, `Metros cúbicos`, contenedores, precintos |
 | AWB / BL / Booking | `AWB/BL` (9) | PDF del BL/AWB/booking | Tipo (awb/bl), transport mode, freight mode, dispatch mode, carrier, vessel/vuelo |
 | Factura Comercial | `Factura Comercial` (13) | PDF factura | Nº factura, fechas, montos, moneda |
+| DUA / DUE / Liquidación aduanal | `DUA_Aduana` (o template disponible) | PDF del DUA/liquidación | Nº DUA, FOB, flete, seguro, CIF, DAI, IVA, PROCOMER, LEY_6946, agenciamiento, timbres |
 | Certificado de Origen | `Certificado de Origen` (25) | PDF certificado | Nº certificado, emisor, fecha |
 | OC Cliente | `OC Cliente` (ART-01) | PDF OC | Total, nº OC, cliente |
 | Proforma MWT | `Proforma MWT` (ART-02) | PDF proforma | Consecutivo, marca, montos, modo |
@@ -391,7 +392,8 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harn
 5. **Estados del ciclo** (5 estados) con `fecha_inicio`/`fecha_fin`/`fuente` + **inferencia desde documentos**.
 6. **Fechas críticas**: emisión PF/OC, confirmación SAP, `fecha_fabricacion`, cargo ready, emisión BL, pagos (anticipo, saldo, SWIFT).
 7. **DUA y nacionalización**: nro DUA, agencia, valores FOB/flete/seguro/CIF, **DAI (capitalizable)**, **IVA (no capitalizable — excluido de costo landed)**, gastos locales, tipo de cambio.
-8. **Catálogo de artefactos**: clasifica cada archivo (FACTURA_COMERCIAL, PROFORMA, ORDEN_COMPRA, CONFIRMACION_SAP, BL_AWB, BOOKING, PACKING_LIST, VOLUMES_ROMANEIRO, CERTIFICADO_ORIGEN, SEGURO, EVIDENCIA_CARGA, COMPROBANTE_PAGO, DUA_ADUANA, CORREO_ORIGINAL, ARCHIVO_DESCARGA_LINK).
+   - **LEER los DUA/DUE y facturas comerciales de Marluvas** del correo/archivos (adjuntos, enlaces de descarga, OCR de PDF, imágenes del cuerpo): de ahí salen los costos del movimiento inter-nodos (FLETE, SEGURO, DAI, IVA, PROCOMER, LEY_6946, AGENCIAMIENTO, timbres). Anota cada monto con su fuente. Estos se pasan al Operador (C3.9 → `transfer_costo_agregar`) y al Persistidor (C4 → artefacto DUA).
+8. **Catálogo de artefactos**: clasifica cada archivo (FACTURA_COMERCIAL, PROFORMA, ORDEN_COMPRA, CONFIRMACION_SAP, BL_AWB, BOOKING, PACKING_LIST, VOLUMES_ROMANEIRO, CERTIFICADO_ORIGEN, SEGURO, EVIDENCIA_CARGA, COMPROBANTE_PAGO, DUA_ADUANA, CORREO_ORIGINAL, ARCHIVO_DESCARGA_LINK). El **DUA/DUE** es clave para el movimiento entre nodos (C3.9): se persiste como artefacto y de él se leen los costos.
 9. **Bitácora**: factory delays, bloqueos, discrepancias (PF vs Factura, PO asignada).
 
 **A.3.1 Detección y reconciliación de discrepancias (PROTOCOLO §8 — OBLIGATORIO)**
@@ -525,8 +527,46 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 6. **Confirmar la recepción**: `recepcion_crear` devuelve el resultado de la asignación (líneas, productos, unidades, expedientes). Si el backend requiere `recepcion_id` (actualización), pásalo.
 7. **Registrar en `expediente.json`** → `registro_mwt.recepcion` = `{"recepcion_id": ..., "nodo_destino_id": ..., "items_asignados": N, "costos": [kinds], "artefactos": [artifact_ids]}` y en el `.md` (§4 nodos / §8 artefactos).
 
-**C3.9 Relevo a C4 (Persistidor de Evidencia)**
-- Al cerrar C3, entrega el `expediente_id`, los `nodo_id` (origen/destino) resueltos, el `recepcion_id` y la lista §9 al contrato C4. No se pasa a C5 sin persistir la evidencia.
+**PASO C3.9 MOVIMIENTO / TRANSFERENCIA ENTRE NODOS** — ver guía §C.13 (nuevo)
+> 🎯 **Cuando el expediente está en estado EN DESTINO**, se crea el **movimiento inter-nodos** (motor de transferencias, `/transferencias`): mover el stock del nodo de recepción (ej. `PORT_MOIN`) al nodo final del cliente (ej. `CR-SONDEL`), con contexto legal, tracking BL/AWB, costos del DUA/factura (leídos del correo/archivos) y **artefactos vinculados** (DUA, factura comercial Marluvas, BL).
+
+1. **Confirmar el estado del expediente**: debe estar en `EN DESTINO` (o avanzar con `expediente_avanzar_estado(fase_to="EN_DESTINO")` si la evidencia lo respalda). El movimiento inter-nodos ocurre en ese momento.
+2. **Resolver nodos**: `origen_id` = el nodo donde se recibió la mercancía (el destino de C3.8, ej. `PORT_MOIN` con capacidad `dispatch`), `destino_id` = el nodo final del cliente (ej. `CR-SONDEL` con capacidad `receive`). Ambos ya están en `registro_mwt.nodos`.
+3. **LEER los documentos fiscales del correo/archivos** (OBLIGATORIO — están en los correos, adjuntos, enlaces de descarga y OCR): **DUA** (declaración aduanera), **DUE**, **factura comercial de Marluvas**, BL/AWB, liquidaciones. De aquí se extraen los costos del movimiento. Si hay DUA → el `legal_context` es `NATIONALIZATION` (ingreso a país con DUA).
+4. **Crear el movimiento**:
+   ```
+   transferencia_crear(
+     origen_id="<uuid_nodo_origen>",          # ej. PORT_MOIN
+     destino_id="<uuid_nodo_destino>",        # ej. CR-SONDEL
+     legal_context="NATIONALIZATION",         # INTERNAL|NATIONALIZATION|EXPORT|DISTRIBUTION|CONSIGNMENT
+     lineas=[                                  # stock a mover (del expediente)
+       {"producto_id": "<uuid>", "sku": "700282", "size": "39", "qty_transfer": 10,
+        "unit_cost": 15.43, "unit_value": 15.43},
+       ...                                     # todos los productos × tallas
+     ],
+     cost_lines=[...],                        # opcional aquí; se agregan con transfer_costo_agregar
+     ref_tracking="<BL/AWB/TRK>",             # ej. "230-6683-2102"
+     context_data={"bl_awb_number": "<nro>", "dua_number": "<nro DUA>",
+                   "transfer_pricing_amount": <monto>},
+     idempotency_key="<uuid_único>",          # SIEMPRE para evitar duplicados en retry
+   )
+   ```
+5. **Aprobar y despachar**:
+   - `transferencia_aprobar(transferencia_id)` → PLANNED→APPROVED.
+   - `transferencia_despachar(transferencia_id)` → APPROVED→IN_TRANSIT (descuenta stock del origen). Setear `eta`/`dispatched_at` con `transferencia_editar(transferencia_id, {"eta": ..., "dispatched_at": ...})`.
+6. **Agregar los costos del DUA/factura comercial (del correo/archivos/OCR)** con `transfer_costo_agregar` (ver guía §C.13):
+   - `FLETE` (del DUA/AWB), `SEGURO`, `DAI` (aranceles del DUA, ej. 14% según NCM 6403.99.90), `IVA` (13%, se excluye del landed), `PROCOMER`, `LEY_6946` (1% s/CIF), `ALMACENAJE`, `AGENCIAMIENTO` (honorarios agente de aduanas), `MANIPULEO`, `CONSOLIDACION`, timbres, `OTRO`.
+   - Con `scope_json` (aplica a todo el batch o restringido a expedientes/líneas). `transfer_liquidar` honra el scope.
+   - **Fuente**: leer los montos del DUA/factura del correo (OCR del PDF, enlace de descarga, imágenes). NUNCA inventar montos: si el DUA no está, dejar `[PENDIENTE]`.
+7. **Vincular artefactos al movimiento** (la UI lo permite: "Agrega proformas, BL/AWB, facturas u otros documentos del Builder"): `transfer_artefacto_crear(transferencia_id, template_id, template_title, data, structure_snapshot, lines)` — DUA (`DUA_ADUANA`), factura comercial Marluvas (template 13), BL/AWB (template 9), Packing List (template 23), Certificado (25).
+8. **Recibir y conciliar**:
+   - `transferencia_recibir(transferencia_id, lineas=[{id: "<linea_id>", qty_received: N}])` → IN_TRANSIT→RECEIVED (o DISCREPANCY si difieren).
+   - Si hay discrepancia → registrar (protocolo §8) y `transferencia_conciliar(transferencia_id, reconciled_by_id, reconciled_note, exception_document_id | gap_justification)` → RECEIVED→RECONCILED.
+   - `transferencia_cerrar(transferencia_id)` → RECONCILED→CLOSED (opcional al cierre del pedido).
+9. **Registrar en `expediente.json`** → `registro_mwt.transferencia` = `{"transferencia_id": ..., "codigo": "TRF-...", "origen_id": ..., "destino_id": ..., "legal_context": ..., "estado": ..., "ref_tracking": ..., "costos": [...], "artefactos": [...], "dua_document_id": ...}` y en el `.md` (§4 nodos / §7 financiero / §8 artefactos).
+
+**C3.10 Relevo a C4 (Persistidor de Evidencia)**
+- Al cerrar C3, entrega el `expediente_id`, los `nodo_id` (origen/destino) resueltos, el `recepcion_id`, el `transferencia_id` y la lista §9 al contrato C4. No se pasa a C5 sin persistir la evidencia.
 
 ### C4 · FASE C4 — PERSISTIDOR DE EVIDENCIA (artefactos del Builder en la Consola)
 
@@ -578,6 +618,7 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
    - **Expediente**: `expediente_id`, `oc_id`, estados del ciclo (REGISTRO→…→EN DESTINO/CERRADO) con fechas y estado actual.
    - **Nodos (C3.3)**: origen y destino (código/nombre/país), creados o existentes, con sus `id`.
    - **Recepción de inventario (C3.8)**: `recepcion_id`, nodo destino, items asignados, unidades, costos agregados (flete/seguro/aranceles), **artefactos vinculados a la recepción** (Packing List, BL, Factura).
+   - **Movimiento entre nodos (C3.9)**: `transferencia_id`/`codigo`, origen→destino, `legal_context` (Nacionalización si hay DUA), `ref_tracking`, estados (PLANNED→…→RECONCILED/CLOSED), costos del DUA/factura comercial (FLETE/SEGURO/DAI/IVA), **artefactos vinculados al movimiento** (DUA, factura Marluvas, BL/AWB).
    - **Productos / líneas**: SKU, descripción, talla, cantidad por talla, precio de cada SKU (cliente/MWT), NCM.
    - **Finanzas**: comisión, margen, devengo (DEVENGABLE/PROYECTADA/etc.), pagos.
    - **Discrepancias detectadas** (§8): campo, fuentes, valores, clasificación, estado (ABIERTA).
@@ -713,13 +754,13 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 **Cliente**: SONEPAR COLOMBIA SAS / MELEXA SAS (`88888888-0000-4000-8000-000000000011`)
 **Total de Pedidos Procesados**: [N]
 
-## Matriz Consolidada de Expedientes y Nodos (incl. recepción y finanzas)
-| # | PF | OC | SAP | Modo | Nodo Origen | Nodo Destino | Recepción (id) | Transportista | HBL/AWB | ETD | ETA | DUA # | Estado Ciclo | Delta/Margen (USD) | Comisión (USD) | Devengo | Docs Faltantes | Registrado MWT |
-|---|----|----|-----|------|-------------|--------------|----------------|---------------|---------|-----|-----|-------|--------------|--------------------|----------------|---------|----------------|----------------|
-| 1 | ... | ... | ... | ... | [fábrica/POL] | [POD/bodega] | [uuid/—] | ... | ... | ... | ... | ... | ... | ... | ... | [DEVENGABLE/PROYECTADA] | ... | Sí/No |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
+## Matriz Consolidada de Expedientes y Nodos (incl. recepción, movimiento y finanzas)
+| # | PF | OC | SAP | Modo | Nodo Origen | Nodo Destino | Recepción (id) | Movimiento (TRF) | Transportista | HBL/AWB | ETD | ETA | DUA # | Estado Ciclo | Delta/Margen (USD) | Comisión (USD) | Devengo | Docs Faltantes | Registrado MWT |
+|---|----|----|-----|------|-------------|--------------|----------------|------------------|---------------|---------|-----|-----|-------|--------------|--------------------|----------------|---------|----------------|----------------|
+| 1 | ... | ... | ... | ... | [fábrica/POL] | [POD/bodega] | [uuid/—] | [TRF-…/estado] | ... | ... | ... | ... | ... | ... | ... | ... | [DEVENGABLE/PROYECTADA] | ... | Sí/No |
+| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
 
-> Nodos (C3.3): origen/destino del cuerpo del correo e imágenes; `nodo_listar`/`nodo_crear`. Recepción (C3.8): `recepcion_crear` en el nodo destino + costos + artefactos vinculados. Finanzas (C5): `finanzas_overview` / `finanzas_comisiones(client_id=Sonepar)` / `pago_listar(expediente_id)`.
+> Nodos (C3.3): origen/destino del cuerpo del correo e imágenes; `nodo_listar`/`nodo_crear`. Recepción (C3.8): `recepcion_crear` en el nodo destino + costos + artefactos vinculados. Movimiento (C3.9): `transferencia_crear` al estar EN DESTINO, costos del DUA/factura (`transfer_costo_agregar`) + artefactos (`transfer_artefacto_crear`). Finanzas (C5): `finanzas_overview` / `finanzas_comisiones(client_id=Sonepar)` / `pago_listar(expediente_id)`.
 
 ## Matriz de Alertas Críticas de Importación
 - **Riesgo de Demora / Factory Delay**: [lista de pedidos]
@@ -870,6 +911,20 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
       "unidades": 0,
       "costos": [],
       "artefactos": []
+    },
+    "transferencia": {
+      "transferencia_id": null,
+      "codigo": null,
+      "origen_id": null,
+      "destino_id": null,
+      "legal_context": "[PENDIENTE]",
+      "estado": "[PENDIENTE]",
+      "ref_tracking": null,
+      "value_usd": null,
+      "costos": [],
+      "artefactos": [],
+      "dua_document_id": null,
+      "awb_document_id": null
     },
     "productos_creados": [],
     "productos_actualizados": [],
@@ -1360,6 +1415,84 @@ recepcion_crear(items=[...], cost_lines=[
  "costos": [{"kind": "SEGURO", "amount_usd": 10.0}], "artefactos": ["<artifact_id>"]}
 ```
 
+### C.13 TRANSFERENCIA / MOVIMIENTO ENTRE NODOS (contrato C3.9 — EN DESTINO)
+
+> Motor de transferencias de la consola (`/transferencias`). Flujo de la UI: **1. Contexto y nodos → 2. Productos → 3. Costos operativos → 4. Validación y totales**. El agente lo replica vía MCP cuando el expediente está **EN DESTINO**. **Debe LEER los DUA/DUE/facturas comerciales de Marluvas** del correo/archivos para los costos del movimiento.
+
+**Estados del movimiento** (catálogo `select_estados/`): `PLANNED → APPROVED → IN_TRANSIT → RECEIVED → DISCREPANCY → RECONCILED → CLOSED` (y `CANCELLED`).
+
+**Contextos legales** (catálogo `select_legal_contexts/`): `INTERNAL`, `NATIONALIZATION` (ingreso con DUA), `EXPORT`, `DISTRIBUTION` (marketplace), `CONSIGNMENT`.
+
+**1. Crear el movimiento**:
+```
+transferencia_crear(
+  origen_id="<uuid_nodo>",            # nodo con capacidad DISPATCH (ej. PORT_MOIN)
+  destino_id="<uuid_nodo>",           # nodo con capacidad RECEIVE (ej. CR-SONDEL)
+  legal_context="NATIONALIZATION",    # según el motivo del correo (DUA → NATIONALIZATION)
+  lineas=[{"producto_id": "<uuid>", "sku": "700282", "size": "39", "qty_transfer": 10,
+           "unit_cost": 15.43, "unit_value": 15.43}, ...],   # stock a mover
+  cost_lines=[...],                   # opcional (o usar transfer_costo_agregar después)
+  ref_tracking="230-6683-2102",       # BL / AWB / tracking
+  context_data={"bl_awb_number": "230-6683-2102", "dua_number": "<nro>",
+                "transfer_pricing_amount": 4719.15},
+  idempotency_key="<uuid>",           # SIEMPRE (evita duplicados en retry)
+)
+```
+
+**2. Aprobar → despachar → setear ETA**:
+```
+transferencia_aprobar(transferencia_id)                    # PLANNED→APPROVED
+transferencia_despachar(transferencia_id)                  # APPROVED→IN_TRANSIT (descuenta stock origen)
+transferencia_editar(transferencia_id, {"eta": "YYYY-MM-DD", "dispatched_at": "YYYY-MM-DD"})
+```
+
+**3. Costos del DUA/factura comercial (LEER del correo/archivos/OCR)**:
+```
+transfer_costo_agregar(transferencia_id, kind="FLETE", amount=962.92, currency="USD",
+                       fx_to_usd=1.0, source="MANUAL", scope_json={"applies_to_all": true})
+transfer_costo_agregar(transferencia_id, kind="SEGURO", amount=18.75, currency="USD", fx_to_usd=1.0, ...)
+transfer_costo_agregar(transferencia_id, kind="DAI", amount=785.48, currency="USD", ...)   # aranceles del DUA (14% NCM calzado, 10% plantillas)
+transfer_costo_agregar(transferencia_id, kind="IVA", amount=850.63, currency="USD", ...)   # 13% — se excluye del landed
+transfer_costo_agregar(transferencia_id, kind="LEY_6946", amount=57.01, currency="USD", ...)  # 1% s/CIF
+transfer_costo_agregar(transferencia_id, kind="PROCOMER", amount=3.00, currency="USD", ...)
+transfer_costo_agregar(transferencia_id, kind="AGENCIAMIENTO", amount=300.00, currency="USD", ...)  # honorarios agente
+transfer_costo_agregar(transferencia_id, kind="OTRO", label="Transporte terrestre", amount=119.57, currency="USD", ...)
+# timbres: TIMBRE_ARCHIVO (₡20), TIMBRE_AGENTES (Ley 7017), TIMBRE_CONTADORES
+```
+- **Kinds** (catálogo `select_cost_kinds/`): `DAI`, `IVA`, `PROCOMER`, `LEY_6946`, `ALMACENAJE`, `TIMBRE_ARCHIVO`, `TIMBRE_AGENTES`, `TIMBRE_CONTADORES`, `AGENCIAMIENTO`, `MANIPULEO`, `FLETE`, `SEGURO`, `CONSOLIDACION`, `OTRO`.
+- **scope_json**: `{"applies_to_all": true}` (todo el batch) o `{"applies_to_all": false, "expediente_ids": [...], "lines": [{expediente_id, producto_id, talla}]}` (DAI por NCM/expediente).
+- **Motor OCR · Aduanas** (`SKILL_OCR_ADUANAS`, `ocr-aduanas`): sube el DUA/liquidación y el motor IA detecta y agrega/fusiona costos automáticamente. Los montos deben cuadrar con el desglose del DUA.
+- **IVA**: `transfer_liquidar` lo EXCLUYE del landed cost (crédito fiscal acreditable).
+- **NUNCA inventar montos**: si el DUA/factura no está en correo/archivos, costo `[PENDIENTE]` (reportar).
+
+**4. VINCULAR artefactos al movimiento** (la UI: "Agrega proformas, BL/AWB, facturas u otros documentos del Builder"):
+```
+transfer_artefacto_crear(transferencia_id="<uuid>", template_id=9, template_title="AWB/BL",
+                         data={...}, structure_snapshot={...}, lines=[...])
+# DUA → DUA_ADUANA; Factura comercial Marluvas → template 13; BL/AWB → template 9;
+# Packing List → template 23; Certificado de Origen → template 25.
+# Subir binario con storage_subir_archivo → data[field_id]={key,url,name,mime,size}.
+```
+
+**5. Recibir → conciliar → cerrar**:
+```
+transferencia_recibir(transferencia_id, lineas=[{"id": "<linea_id>", "qty_received": <n>}])  # → RECEIVED o DISCREPANCY
+transferencia_conciliar(transferencia_id, reconciled_by_id="<uuid>", reconciled_note="...",
+                        exception_document_id="<uuid>" | gap_justification="...")  # → RECONCILED (si discrepancia exige ambos)
+transferencia_cerrar(transferencia_id)   # → CLOSED (opcional al cierre)
+```
+
+**6. Liquidación / factura interna (CEO)**: `transfer_liquidacion_preview(transferencia_id)` y `transfer_liquidar(transferencia_id)` (Landed Cost: FOB + costos extra capitalizables, IVA excluido). `transfer_factura_payload(transferencia_id)` para la factura/remisión.
+
+**7. Registro en `expediente.json`** (`registro_mwt.transferencia`):
+```
+{"transferencia_id": "<uuid>", "codigo": "TRF-20260601-ETNG", "origen_id": "<uuid>",
+ "destino_id": "<uuid>", "legal_context": "NATIONALIZATION", "estado": "RECONCILED",
+ "ref_tracking": "230-6683-2102", "value_usd": 4719.15,
+ "costos": [{"kind": "FLETE", "amount_usd": 962.92}, {"kind": "SEGURO", "amount_usd": 18.75}],
+ "artefactos": ["<artifact_id>"], "dua_document_id": null, "awb_document_id": null}
+```
+
 ---
 
 ## 📋 RESUMEN DE LA SECUENCIA OPERATIVA DEL OPERADOR (contratos C3+C4+C5 — checklist)
@@ -1387,14 +1520,21 @@ recepcion_crear(items=[...], cost_lines=[
                         → cost_lines (FLETE/SEGURO/DAI/IVA según DUA/factura) opcional pero recomendado
                         → VINCULAR artefactos a la recepción (nodo_artefacto_crear en el nodo destino,
                         lines = los de la recepción) + registrar recepcion_id en expediente.json
-11. DISCREPANCIAS       → registrar en §8.4/expediente.json (modo autónomo §8.5); NO detener — reportar al final
-12. FINANZAS            → por expediente: finanzas_overview / finanzas_comisiones(client_id=Sonepar) /
+11. MOVIMIENTO (C3.9)  → cuando el expediente está EN DESTINO: transferencia_crear(origen, destino,
+                        legal_context según DUA, lineas, ref_tracking, idempotency_key)
+                        → LEER DUA/DUE/factura comercial Marluvas del correo/archivos → transfer_costo_agregar
+                        (FLETE/SEGURO/DAI/IVA/LEY_6946/PROCOMER/AGENCIAMIENTO según select_cost_kinds)
+                        → transfer_artefacto_crear (DUA, factura, BL/AWB) vinculados al movimiento
+                        → aprobar → despachar → recibir → conciliar → (cerrar)
+                        → registrar transferencia_id en expediente.json
+12. DISCREPANCIAS       → registrar en §8.4/expediente.json (modo autónomo §8.5); NO detener — reportar al final
+13. FINANZAS            → por expediente: finanzas_overview / finanzas_comisiones(client_id=Sonepar) /
                          pago_listar(expediente_id) → comisión, margen, devengo, pagos; incluir en el informe
-13. ENTREGAR AL AUDITOR → FASE D (re-validación de lo insertado + recepción + persistencia §9 + discrepancias registradas)
+14. ENTREGAR AL AUDITOR → FASE D (re-validación de lo insertado + recepción + movimiento + persistencia §9 + discrepancias registradas)
 ```
 
 > El Operador debe consultar SIEMPRE que un identificador (expediente/OC/SAP/producto) ya exista antes de crear, para **actualizar** en lugar de duplicar. Si el motor de pricing no resuelve un precio, usa el valor del OCR de la OC/Proforma (regla C3.1) e indícalo en el `expediente.json` (`registro_mwt`). El Persistidor (C4) sube TODA la evidencia como artefactos (§9).
 
 ---
 
-**INICIO (modo AUTÓNOMO)**: **Pregunta a Alvaro la ruta de Windows** de los pedidos de SONEPAR COLOMBIA (única pregunta obligatoria). Luego **corre el loop sin detenerte**: listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **cada pedido completo** (contratos C1→C7: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Finanzas → Auditor Final → Relator) pasando al siguiente al cerrar cada uno. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3) — solo detente si la identidad falla (G1). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Identifica los NODOS de origen y destino de cada pedido** leyendo el cuerpo del correo y las imágenes incrustadas (C3.3): verifica con `nodo_listar` y si no existen, créalos con `nodo_crear`. **Crea la RECEPCIÓN DE INVENTARIO en el nodo destino** (C3.8): `recepcion_crear` con las cantidades de los expedientes en el nodo, agrega los costos operativos (flete/seguro/aranceles del DUA) y **vincula los artefactos** (Packing List, BL, Factura) a la recepción. **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **REGÍSTRALA, marca el pedido `BLOQUEADO (discrepancia)` y CONTINÚA** (gate G2 / modo autónomo §8.5) — se reporta al final en el informe. **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s). **Revisa FINANZAS por expediente** (§C5): comisión, margen, devengo, pagos. **Al terminar TODOS los pedidos**, presenta a Alvaro el informe detallado de cada expediente (búsqueda local, correos, expediente creado, nodos origen/destino, recepción de inventario, estado actual, productos/lineas, finanzas, discrepancias y pendientes). No preguntes durante el proceso salvo la ruta inicial o un fallo de identidad/conexión.
+**INICIO (modo AUTÓNOMO)**: **Pregunta a Alvaro la ruta de Windows** de los pedidos de SONEPAR COLOMBIA (única pregunta obligatoria). Luego **corre el loop sin detenerte**: listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **cada pedido completo** (contratos C1→C7: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Finanzas → Auditor Final → Relator) pasando al siguiente al cerrar cada uno. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3) — solo detente si la identidad falla (G1). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Identifica los NODOS de origen y destino de cada pedido** leyendo el cuerpo del correo y las imágenes incrustadas (C3.3): verifica con `nodo_listar` y si no existen, créalos con `nodo_crear`. **Crea la RECEPCIÓN DE INVENTARIO en el nodo destino** (C3.8): `recepcion_crear` con las cantidades de los expedientes en el nodo, agrega los costos operativos (flete/seguro/aranceles del DUA) y **vincula los artefactos** (Packing List, BL, Factura) a la recepción. **Cuando el expediente esté EN DESTINO, crea el MOVIMIENTO ENTRE NODOS** (C3.9): `transferencia_crear` del nodo de recepción al nodo final del cliente con `legal_context` según el DUA; **LEE los DUA/DUE/facturas comerciales de Marluvas del correo/archivos/OCR** para agregar los costos (`transfer_costo_agregar`: FLETE/SEGURO/DAI/IVA/LEY_6946/PROCOMER/AGENCIAMIENTO) y **vincula los artefactos** al movimiento (`transfer_artefacto_crear`); luego aprobar → despachar → recibir → conciliar → cerrar. **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **REGÍSTRALA, marca el pedido `BLOQUEADO (discrepancia)` y CONTINÚA** (gate G2 / modo autónomo §8.5) — se reporta al final en el informe. **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s). **Revisa FINANZAS por expediente** (§C5): comisión, margen, devengo, pagos. **Al terminar TODOS los pedidos**, presenta a Alvaro el informe detallado de cada expediente (búsqueda local, correos, expediente creado, nodos origen/destino, recepción de inventario, estado actual, productos/lineas, finanzas, discrepancias y pendientes). No preguntes durante el proceso salvo la ruta inicial o un fallo de identidad/conexión.
