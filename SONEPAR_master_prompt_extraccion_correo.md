@@ -14,19 +14,19 @@
 
 > **Objetivo**: Auditar y registrar **solo pedidos de SONEPAR COLOMBIA SAS** (incluidos los de su razón social alterna **MELEXA SAS**) mediante un **harness multi-agente con loop por pedido**, **en orden cronológico de atrás hacia adelante** (primero los pedidos más VIEJOS, avanzando hacia los más NUEVOS de 2026). Cada pedido se procesa de forma **completa y aislada** (no se pasa al siguiente hasta cerrar el actual), combinando **3 fuentes de evidencia**: (1) la **ruta local en Windows** que Álvaro indique (carpetas con archivos de cada pedido), (2) el **MCP de correos** de `alvaro@muitowork.com` (adjuntos, enlaces del cuerpo, imágenes inline, hilos citados), y (3) el **MCP MWT.ONE** para insertar/actualizar productos, expedientes, SAP, estados y artefactos.
 
-El flujo además **detecta, reconcilia y reporta discrepancias con nivel de detalle explícito** (protocolo §8) a partir de TODAS las capas de evidencia (cuerpo del correo, historial citado, adjuntos, enlaces de descarga, OCR de PDFs escaneados e imágenes inline/adjuntas). Ejemplo real recurrente: un **Packing List declara 89 cajas pero se embarcaron/arribaron 150** → las cajas extra llegaron pero el desajuste genera **problemas aduaneros y una multa alta**. Ante cualquier discrepancia (cajas, bultos, peso, volumen, SKU/talla, cantidades, contenedores/precintos, valores, fechas, identificadores) el flujo **SE DETIENE, marca el pedido como BLOQUEADO, notifica a Álvaro y pregunta qué hacer** (STOP & ASK, §8.5) antes de insertar o continuar. Todas las discrepancias, errores y falta de información se incluyen SIEMPRE en los resúmenes por pedido y en el resumen general.
+El flujo además **detecta, reconcilia y reporta discrepancias con nivel de detalle explícito** (protocolo §8) a partir de TODAS las capas de evidencia (cuerpo del correo, historial citado, adjuntos, enlaces de descarga, OCR de PDFs escaneados e imágenes inline/adjuntas). Ejemplo real recurrente: un **Packing List declara 89 cajas pero se embarcaron/arribaron 150** → las cajas extra llegaron pero el desajuste genera **problemas aduaneros y una multa alta**. Ante cualquier discrepancia (cajas, bultos, peso, volumen, SKU/talla, cantidades, contenedores/precintos, valores, fechas, identificadores) el flujo **la REGISTRA, marca el pedido como `BLOQUEADO (discrepancia)`, CONTINÚA procesando el resto del pedido y la reporta en el informe final** (modo autónomo §8.5 — sin detenerse a preguntar). Todas las discrepancias, errores y falta de información se incluyen SIEMPRE en los resúmenes por pedido y en el resumen general.
 
 Además, **toda la evidencia extraída (documentos PDF, imágenes, OCR, valores leídos) se PERSISTE en la Consola MWT como artefactos del Builder** (protocolo §9): si el documento no tiene artefacto, el MCP lo crea asociándolo a su expediente (o expedientes) y producto (o productos) — con los archivos subidos y la información extraída — y si ya existe, lo actualiza. La carpeta local en Windows es respaldo; la Consola es el registro oficial.
 
 ---
 
-## 🧠 ARQUITECTURA MULTI-AGENTE (HARNESS CON 6 CONTRATOS + GATES TRANSVERSALES)
+## 🧠 ARQUITECTURA MULTI-AGENTE (HARNESS CON 7 CONTRATOS + GATES TRANSVERSALES)
 
-El flujo se ejecuta como un **loop secuencial por pedido** con **6 contratos (agentes) bien delimitados** + **memoria persistente** + **3 gates transversales** (discrepancia, identidad, calidad). Los agentes NO actúan en paralelo: cada uno termina su parte, entrega el relevo y el siguiente lo valida. **Ningún agente avanza al siguiente pedido sin que el actual esté 100% cerrado.**
+El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (agentes) bien delimitados** + **memoria persistente** + **3 gates transversales** (identidad, discrepancia, calidad). Los agentes NO actúan en paralelo: cada uno termina su parte, entrega el relevo y el siguiente lo valida. **Ningún agente avanza al siguiente pedido sin que el actual esté 100% cerrado.**
 
 ```
  ┌─────────────────────────────────────────────────────────────────────────────┐
- │ LOOP POR PEDIDO — contratos en orden ESTRICTO (1→6)                         │
+ │ LOOP POR PEDIDO — contratos en orden ESTRICTO (1→7)                         │
  │ cada carpeta de la ruta local = 1 pedido; orden cronológico ascendente (0.1) │
  └─────────────────────────────────────────────────────────────────────────────┘
         │
@@ -46,16 +46,28 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **6 contratos (ag
  │  expediente, SAP,  │  ◀──────────────────│ (artefactos §9:   │
  │  estados, docs)    │  devuelve a corregir│  sube PDF/imágenes│
  └───────────────────┘                      │  y valores a la   │
-                                             │  Consola)         │
-                                             └─────────┬─────────┘
-        ▲                                             │ todo persistido
-        │  (cicla si rechaza)                          ▼
- ┌───────────────────┐                      ┌───────────────────┐
- │ C6 · RELATOR      │◀─────────────────────│ C5 · AUDITOR FINAL│
- │ (informa a Álvaro,│  pedido CERRADO      │ (re-valida lo     │
- │  resumen + siguiente)│                    │  insertado +      │
- └───────────────────┘                      │  persistido + §8) │
-                                            └───────────────────┘
+        ▲                                   │  Consola)         │
+        │                                   └─────────┬─────────┘
+        │                                             ▼
+        │                                   ┌───────────────────┐
+        │                                   │ C5 · FINANZAS     │
+        │                                   │ (comisión, margen,│
+        │                                   │  devengo, pagos)  │
+        │                                   └─────────┬─────────┘
+        │                                             ▼
+        │                                   ┌───────────────────┐
+        │                                   │ C6 · AUDITOR FINAL│
+        │                                   │ (re-valida C3+C4+ │
+        │                                   │  C5, discrepancias│
+        │                                   │  §8, identidad)   │
+        │                                   └─────────┬─────────┘
+        │                                             │ pedido CERRADO
+        ▼                                             ▼
+ ┌───────────────────────────────────────────────────────────────┐
+ │ C7 · RELATOR — informe DETALLADO por expediente a Álvaro       │
+ │ (búsqueda local, correos, expediente, estado, productos/líneas,│
+ │  finanzas, discrepancias, errores, faltantes) + siguiente      │
+ └───────────────────────────────────────────────────────────────┘
 ```
 
 **Contratos (agentes) — cada uno con salida y criterio de aceptación:**
@@ -66,19 +78,22 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **6 contratos (ag
 | C2 | **AUDITOR DE EVIDENCIA** | carpeta del C1 | Valida integridad, coherencia, matriz §8.4 y lista §9; devuelve al C1 si falta algo | carpeta VALIDADA | Todo verificado; BLOQUEANTES con decisión de Álvaro |
 | C3 | **OPERADOR MWT** | carpeta validada | Inserta/actualiza en MCP: productos, OC, expediente, SAP, estados, documentos | registro MWT | Expediente creado/actualizado; productos habilitados; sin contradicciones |
 | C4 | **PERSISTIDOR DE EVIDENCIA** | expediente + `documentos/` + lista §9 | Sube cada documento/imagen/valor como artefacto del Builder (crear/editar, `lines` multi-expediente/producto, publicar) | artefactos en la Consola + registro en `expediente.json` | Todo archivo con template tiene su artefacto; publicado |
-| C5 | **AUDITOR FINAL** | lo insertado (C3) + lo persistido (C4) | Re-valida contra el backend: expediente, productos, SAP, artefactos, discrepancias §8, identidad | pedido CERRADO | Nada contradice una fuente; cobertura §9 completa; discrepancias resueltas |
-| C6 | **RELATOR** | pedido cerrado | Informa a Álvaro (resumen, discrepancias, errores, faltantes), actualiza `RESUMEN_GENERAL_EXPEDIENTES.md`, pasa al siguiente | informe + siguiente pedido | Álvaro informado; siguiente pedido encolado |
+| C5 | **FINANZAS** | expediente creado (C3) | Revisa comisión, margen, devengo y pagos del expediente (`finanzas_overview`, `finanzas_comisiones(client_id)`, `pago_listar(expediente_id)`); registra en `expediente.json` → `finanzas` | datos financieros del expediente | Comisión/margen/devengo y pagos documentados; sin `[PENDIENTE]` evitable |
+| C6 | **AUDITOR FINAL** | lo insertado (C3) + lo persistido (C4) + finanzas (C5) | Re-valida contra el backend: expediente, productos, SAP, artefactos, finanzas, discrepancias §8, identidad | pedido CERRADO | Nada contradice una fuente; cobertura §9 completa; discrepancias registradas |
+| C7 | **RELATOR** | pedido cerrado | Informa a Álvaro (resumen detallado por expediente: local, correos, expediente, estado, productos, finanzas, discrepancias, errores, faltantes), actualiza `RESUMEN_GENERAL_EXPEDIENTES.md`, pasa al siguiente | informe + siguiente pedido | Informe completo por expediente; siguiente pedido encolado |
 
-**Gates transversales (se evalúan en CUALQUIER contrato, detienen el flujo):**
-- **G1 · IDENTIDAD (protocolo 0.3)**: `mwt_whoami` debe ser `alvaro@muitowork.com` rol Admin/CEO. Si no → detener.
-- **G2 · DISCREPANCIA (protocolo §8.5)**: discrepancia BLOQUEANTE sin decisión de Álvaro → **STOP & ASK**: marca `BLOQUEADO`, notifica a Álvaro, espera decisión. No se inserta ni se persiste nada hasta resolver.
-- **G3 · CALIDAD (FASES B/D)**: cualquier contrato puede devolver al anterior si la salida no cumple su criterio de aceptación. Nada sube al sistema dudoso.
+**Gates transversales (se evalúan en CUALQUIER contrato):**
+- **G1 · IDENTIDAD (protocolo 0.3)**: `mwt_whoami` debe ser `alvaro@muitowork.com` rol Admin/CEO. Si no → **detener el proceso completo** (no se puede operar con identidad equivocada) y avisar a Álvaro al volver.
+- **G2 · DISCREPANCIA (protocolo §8)**: discrepancia detectada (ej. Packing List 89 vs 150 cajas) → **NO detiene el flujo**. Se registra en `expediente.json` (`discrepancias[]`, `estado="ABIERTA"`), se marca el pedido con `estado_actual="BLOQUEADO (discrepancia)"` **pero el proceso CONTINÚA** procesando el resto del pedido (líneas, expediente, SAP, estados, artefactos, finanzas). La discrepancia se reporta a Álvaro al final en el informe del pedido (§C6 y resumen §10). **Solo si la discrepancia impide crear el expediente en sí** (no hay forma de determinar PF/OC/cliente) se deja el pedido a medias con su `expediente.json` y `resumen_PF_<codigo>.md` documentando lo encontrado, y se pasa al siguiente.
+- **G3 · CALIDAD (FASES B/D)**: cualquier contrato puede devolver al anterior si la salida no cumple su criterio de aceptación. Máx. 3 ciclos por retorno; si persiste → se documenta el bloqueo y se continúa (reportando el pendiente).
 
-**Ciclos de retorno**: C1↔C2 y C3↔C4↔C5 pueden ciclar cuantas veces haga falta (máx. 3 intentos por ciclo; si persiste el bloqueo → G2/G1). El LOOP avanza al siguiente pedido SOLO tras C6.
+**Modo AUTÓNOMO (decisión de Álvaro — desatendido)**: el proceso corre **sin detenerse a preguntar** durante todo el loop. La ÚNICA pregunta obligatoria es la **ruta local** (protocolo 0). Después, se procesan TODOS los pedidos de la ruta en orden cronológico de forma continua. **No se interrumpe al usuario**: las dudas, discrepancias, faltantes y decisiones se registran en `expediente.json`/`.md` y se consolidan en el informe final del resumen general. El proceso solo se detiene por: (a) fallo G1 (identidad MCP), (b) fallo de conexión del correo/MCP que impida continuar. Al terminar el loop completo, se entrega el `RESUMEN_GENERAL_EXPEDIENTES.md` con el detalle de cada pedido y se le presenta a Álvaro en el chat.
+
+**Ciclos de retorno**: C1↔C2 y C3↔C4↔C5↔C6 pueden ciclar (máx. 3 intentos); si persiste un bloqueo de calidad → se documenta y se continúa al siguiente pedido (G3). El LOOP avanza al siguiente pedido tras C7.
 
 **Memoria persistente (protocolo 6)**: `MEMORIA_EXTRACCION.md` en la raíz — patrones de correos, errores corregidos, decisiones de precios, glosario SKU↔NCM. Se consulta al inicio de cada pedido y se actualiza al cerrarlo.
 
-**REGLA DE ORO**: Si cualquier contrato tiene una duda — no encuentra algo, no está seguro de que un correo/archivo corresponda a ese pedido, **un dato no cuadra entre dos fuentes (discrepancia)** — **SE DETIENE Y PREGUNTA a Álvaro ANTES de continuar o subir datos al sistema**. Está prohibido subir basura o datos dudosos. Una discrepancia (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) es **SIEMPRE** motivo de parada y consulta (protocolo §8).
+**REGLA DE ORO (modo autónomo)**: El proceso **NO se detiene a preguntar a Álvaro** salvo en el arranque (ruta local) o ante fallo de identidad/conexión (G1). Todo hallazgo dudoso, discrepancia o faltante se **registra con su fuente** (archivo/correo/OCR), se marca `[PENDIENTE]`/`BLOQUEADO (discrepancia)` según corresponda, y se **reporta al final** en el resumen del pedido y en el `RESUMEN_GENERAL_EXPEDIENTES.md`. Está prohibido **inventar** datos o subir información dudosa como si fuera real: si un dato no se puede confirmar, se deja pendiente y se reporta, NO se bloquea el resto del pedido.
 
 ---
 
@@ -172,7 +187,7 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **6 contratos (ag
 11. **Si hay duda → PREGUNTA a Álvaro y espera respuesta.**
 12. **Cada documento/imagen/OCR del pedido con template disponible DEBE quedar persistido como artefacto en la Consola** (protocolo §9), asociado a su expediente(s) y producto(s), con el/los archivos subidos y los valores extraídos. Si no existe → crear; si existe → actualizar. **Sin excepciones** (los correos originales se guardan localmente; solo si existe template de correo se persisten como artefacto).
 
-### 8. PROTOCOLO DE DISCREPANCIAS — DETECCIÓN, RECONCILIACIÓN CRUZADA Y PARADA OBLIGATORIA (STOP & ASK)
+### 8. PROTOCOLO DE DISCREPANCIAS — DETECCIÓN, RECONCILIACIÓN CRUZADA Y REGISTRO (MODO AUTÓNOMO)
 
 #### 8.1 QUÉ ES UNA DISCREPANCIA (DEFINICIÓN EXPLÍCITA)
 Una **discrepancia** es TODA diferencia entre **dos o más fuentes de evidencia** sobre el **mismo dato físico, comercial o documental** de un pedido. Las fuentes de evidencia incluyen: cuerpo del correo (texto y tablas), historial citado del hilo, adjuntos, enlaces de descarga del cuerpo, archivos de la ruta local, OCR de PDFs escaneados, y OCR/visión de imágenes adjuntas o **incrustadas/pegadas en el cuerpo del correo**.
@@ -213,18 +228,15 @@ Se llena en la sección «Discrepancias» del `resumen_PF_<codigo>.md` (§10 del
 - **BLOQUEANTE** (parada obligatoria, §8.5): cajas/bultos, contenedores/precintos, peso/volumen, cantidades por SKU/talla, identificadores, valores aduaneros, razón social. **Cualquier diferencia en estos campos DETIENE el flujo del pedido.**
 - **ADVERTENCIA** (no bloquea pero se notifica a Álvaro al informar): diferencias menores de fechas estimadas sin impacto operativo, formatos, o valores que el Consultor pueda justificar con evidencia clara y unidireccional.
 
-#### 8.5 PROTOCOLO DE PARADA OBLIGATORIA (STOP & ASK) — AL DETECTAR UNA DISCREPANCIA
-1. **DETENER el flujo del pedido INMEDIATAMENTE**: no se crea/actualiza NADA en MCP MWT.ONE para ese pedido, y no se avanza al siguiente pedido hasta resolver la consulta.
-2. **Marcar el pedido como BLOQUEADO-DISCREPANCIA**: en `resumen_PF_<codigo>.md` (Estado General = `BLOQUEADO (discrepancia)`) y en `expediente.json` (`discrepancias[].estado="ABIERTA"`, `estado_actual="BLOQUEADO"`).
-3. **Redactar a Álvaro un aviso estructurado** que incluya:
-   - **Qué discrepa** (campo, valores por fuente con archivo/correo + fecha).
-   - **Dónde se encontró** (correo, historial citado, archivo adjunto, OCR de PDF, imagen inline/adjunta).
-   - **Impacto estimado** (multa aduanera, sobrestadía, rechazo de documento, descuadre de inventario, retención de carga).
-   - **Opciones posibles** (ej.: ajustar el PL/romaneiro declarado al dato real, reportar a la naviera/agente, esperar documento corregido, proceder con el dato real documentando la evidencia, abrir reclamo al proveedor, etc.).
-   - **PREGUNTA explícita**: «¿Qué hago? → [opciones]».
-4. **ESPERAR la respuesta de Álvaro**; no continuar hasta recibirla.
-5. Registrar la **decisión de Álvaro** en `expediente.json` (`discrepancias[].decision_alvaro`) y en el `.md`; cerrar la discrepancia como **RESUELTA** (con el dato decidido) o dejarla **ABIERTA** según lo acordado, y **recién entonces** continuar el flujo del pedido.
-6. **Toda discrepancia BLOQUEANTE sin resolver mantiene el pedido congelado** aunque se avance a otros pedidos; el `RESUMEN_GENERAL_EXPEDIENTES.md` lo refleja como alerta hasta que se resuelva.
+#### 8.5 REGISTRO Y CONTINUACIÓN (MODO AUTÓNOMO — NO DETENER PARA PREGUNTAR)
+> **Cambio de regla (decisión de Álvaro, 2026-08-23)**: el proceso corre desatendido. Al detectar una discrepancia **NO se detiene** ni se espera respuesta en el momento. Se **registra**, se continúa el pedido y se reporta al final.
+
+1. **Registrar la discrepancia** en `expediente.json` (`discrepancias[].estado="ABIERTA"`, `decision_alvaro=null`) y en el `.md` (matriz §8.4 / sección §10).
+2. **Marcar el pedido** con `estado_actual="BLOQUEADO (discrepancia)"` para que sea visible en el resumen general (la discrepancia quedó sin resolver).
+3. **CONTINUAR procesando el pedido**: insertar/actualizar líneas, expediente, SAP, estados, artefactos y finanzas con los datos CONFIRMADOS de la fuente que tenga mejor evidencia (anotando `fuente_usada`). La discrepancia NO impide registrar el expediente; solo se reporta como pendiente de decisión.
+4. **Excepción — pedido no registrable**: si la discrepancia impide identificar el expediente (sin PF/OC/cliente definibles), se deja el pedido a medias: `expediente.json` + `resumen_PF_<codigo>.md` documentando lo encontrado, `estado_actual="BLOQUEADO (sin identificar)"`, y se pasa al siguiente pedido.
+5. **Reportar al final (no en el momento)**: el `RESUMEN_GENERAL_EXPEDIENTES.md` y el informe del chat consolidan TODAS las discrepancias abiertas (pedido, campo, fuentes, valores, impacto, decisión pendiente). Álvaro las revisa al volver.
+6. **Si Álvaro responde una decisión** (en una futura ejecución o al volver), se aplica la corrección en el siguiente paso del loop: `discrepancias[].decision_alvaro` + `estado="RESUELTA"` y se actualiza el dato afectado en el expediente/artefacto.
 
 #### 8.6 DETECCIÓN ACTIVA (no esperar a que aparezca)
 - El **Consultor** (FASE A) DEBE buscar activamente discrepancias al leer cada fuente (correo, adjunto, OCR, imagen), comparando contra lo ya extraído del pedido, y llenar la matriz §8.4.
@@ -342,9 +354,9 @@ Cada archivo/correlación de la lista §A.3.8 que tenga un template del Builder 
 
 ---
 
-## 🔄 CICLO DE EJECUCIÓN POR PEDIDO (contratos C1→C6)
+## 🔄 CICLO DE EJECUCIÓN POR PEDIDO (contratos C1→C7)
 
-Para **cada pedido/carpeta**, ejecuta en orden estricto los 6 contratos del harness (FASES detalladas abajo). Los gates transversales (G1 identidad, G2 discrepancia, G3 calidad) aplican en cualquier punto.
+Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harness (FASES detalladas abajo). Los gates transversales (G1 identidad, G2 discrepancia, G3 calidad) aplican en cualquier punto.
 
 ### C1 · FASE A — CONSULTOR (extrae y consolida la evidencia del pedido)
 
@@ -382,9 +394,9 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 6 contratos del harn
 1. **Extrae CADA número por separado** de CADA fuente (adjunto, OCR, imagen, cuerpo del correo, historial citado): cajas, bultos, peso bruto/neto, volumen, contenedores, precintos, SKU×talla×qty, precios, valores DUA, fechas, identificadores. Anota SIEMPRE la fuente (archivo/correo+fecha).
 2. **Llena la Matriz de Reconciliación Cruzada (§8.4)** en el `resumen_PF_<codigo>.md`: para cada campo, lista Valor A (fuente A) vs Valor B (fuente B) y la diferencia. **Nunca promedies ni "corrijas"**: registra los valores literales de cada fuente.
 3. **Clasifica** cada desajuste como **BLOQUEANTE** o **ADVERTENCIA** según §8.3/§8.4.
-4. **Si hay discrepancia BLOQUEANTE → ejecuta el PROTOCOLO DE PARADA (§8.5)**: marca el pedido `BLOQUEADO`, redacta el aviso a Álvaro con qué discrepa/dónde/impacto/opciones, **pregunta qué hacer y ESPERA respuesta**.
-5. Registra la **decisión de Álvaro** en `expediente.json` (`discrepancias`) y en el `.md`; recién entonces continúa el flujo.
-6. **ADVERTENCIAS** (no bloqueantes): se registran en el `.md`/`expediente.json` y se reportan a Álvaro en FASE E.
+4. **Si hay discrepancia BLOQUEANTE → ejecuta el REGISTRO Y CONTINUACIÓN (§8.5, modo autónomo)**: marca el pedido `BLOQUEADO (discrepancia)`, registra en `expediente.json` y el `.md` (matriz §8.4), y **CONTINÚA** procesando el resto del pedido. NO preguntes en el momento.
+5. La **decisión de Álvaro** se aplica cuando responda (ej. en una siguiente ejecución): `discrepancias[].decision_alvaro` + `estado="RESUELTA"` y se corrige el dato. Mientras tanto queda `ABIERTA` y se reporta al final.
+6. **ADVERTENCIAS** (no bloqueantes): se registran en el `.md`/`expediente.json` y se reportan a Álvaro en el informe final (FASE E).
 
 **A.4 Generación de artefactos por pedido**
 - `resumen_PF_<codigo>.md` (formato completo abajo).
@@ -407,7 +419,7 @@ Valida que la carpeta esté completa y correcta **antes** de pasar al Operador:
 4. `expediente.json` tiene **todas** las claves obligatorias (sin omitir; `[PENDIENTE]` permitido).
 5. **Coherencia**: fechas en orden lógico; estados no retroceden; identificadores cuadran (PF↔OC↔SAP↔HBL↔booking).
 6. Los **correos originales** existen como artefactos (`CORREO_ORIGINAL`).
-7. **Matriz de discrepancias (§8.4)**: está completa, con valores por fuente, clasificación (BLOQUEANTE/ADVERTENCIA) y, si hay BLOQUEANTE, **decisión de Álvaro registrada**. Si una discrepancia BLOQUEANTE no tiene decisión → **NO pasa a C3 (Operador)**: devuelve al Consultor para ejecutar el STOP & ASK (§8.5).
+7. **Matriz de discrepancias (§8.4)**: está completa, con valores por fuente y clasificación (BLOQUEANTE/ADVERTENCIA). Las discrepancias BLOQUEANTES quedan **registradas** (modo autónomo §8.5) — no es necesario que tengan decisión de Álvaro para continuar. Si la matriz no está completa → devuelve al Consultor.
 8. **Lista de persistencia de evidencia (§9)**: cada documento/imagen con template tiene su entrada (template, expediente(s), producto(s), archivo, valores) en el `.md` (§8) y en `expediente.json`. Si falta → devuelve al Consultor.
 9. Si algo falta / no coincide / hay duda → **devuelve al Consultor** con la lista de correcciones.
 10. Si todo está bien → **pasa al Operador MWT (C3)**.
@@ -418,7 +430,7 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 
 > 📌 **Las firmas exactas, parámetros y ejemplos de TODAS estas tools están en la sección «🧭 GUÍA DETALLADA DE TOOLS DEL MCP MWT.ONE QUE USA EL OPERADOR»** (más abajo). Esta fase es el flujo de alto nivel; consulta la guía para cada invocación.
 
-> 🚨 **G2 · PARADA POR DISCREPANCIA (protocolo §8.5)**: ANTES de insertar/actualizar CUALQUIER cosa en MCP para un pedido, verifica la matriz de discrepancias (§8.4) del pedido. Si existe una discrepancia **BLOQUEANTE** sin decisión de Álvaro → **NO insertes NADA**: marca el pedido `BLOQUEADO`, informa a Álvaro con el aviso estructurado (§8.5.3) y **espera su decisión**. Si no hay BLOQUEANTE (o ya está resuelta con decisión) → procede normalmente.
+> 🚨 **G2 · DISCREPANCIA (protocolo §8.5, modo autónomo)**: ANTES de insertar, revisa la matriz de discrepancias (§8.4) del pedido. Si existe una discrepancia BLOQUEANTE → **continúa insertando con los datos confirmados** (anotando `fuente_usada`), marca el pedido `BLOQUEADO (discrepancia)` en `expediente.json`, y la discrepancia queda registrada para el informe final. **NO te detengas ni preguntes** — el proceso corre desatendido.
 
 > **G1 · IDENTIDAD**: confirmar `mwt_whoami` = `alvaro@muitowork.com` Admin/CEO antes de insertar (protocolo 0.3).
 
@@ -481,25 +493,45 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 9. **Registra** el `artifact_id` + template + expedientes + productos en `expediente.json` → `registro_mwt.artefactos_subidos` y en el `.md` (tabla §8 del resumen).
 10. **Verifica cobertura**: todo archivo de `./documentos/` con template debe tener artefacto en la Consola (protocolo §9.5); lo que falte = brecha en el resumen.
 
-**C4.1 Relevo a C5 (Auditor Final)**
-- Al terminar C4, pasa a C5 para **re-validar lo insertado (C3) y lo persistido (C4)**.
+**C4.1 Relevo a C5 (Finanzas)**
+- Al terminar C4, pasa a C5 para **revisar las finanzas del expediente** (comisión, margen, devengo, pagos).
 
-### C5 · FASE D — AUDITOR FINAL (2ª pasada sobre lo insertado C3 y lo persistido C4)
+### C5 · FASE C5 — FINANZAS (comisión, margen, devengo y pagos del expediente)
+
+> 🎯 **Dimensión financiera del pedido**: revisar comisión, margen, devengo y pagos del expediente creado, y registrarlo en `expediente.json` → `finanzas` y en el `.md` (§7 Historial Financiero). El MCP expone estas tools de finanzas (CEO/Admin).
+
+1. **KPIs y comisión del expediente**: `finanzas_overview()` (KPIs globales) y `finanzas_comisiones(client_id="88888888-0000-4000-8000-000000000011")` (comisión/margen/devengo por expediente del cliente SONEPAR). Ubica el expediente por `proforma_codigo`/`display_id`/`expediente_id`.
+2. **Por el expediente** (del overview/comisiones) anota: `commission_rate`, `total_client`, `total_mwt`, `delta_total`, `commission_amount`, `margen_pct`, `forma_pago`, `credit_days_mwt`/`cliente`, `shipment_date`, `eta`, `fecha_devengo_esperada`, `devengo_estado` (DEVENGADA/DEVENGABLE/VENCIDA/PROYECTADA), `lines_count`, `total_qty`, `fecha_facturada`, `mes_pago_aproximado`.
+3. **Pagos del expediente**: `pago_listar(expediente_id="<uuid>")` y `pago_obtener(pago_id)` → anticipos, saldos, SWIFT, estado (PENDIENTE/APLICADO/CONCILIADO/RECHAZADO).
+4. **Registra en `expediente.json`** → `finanzas`: `{commission_rate, total_client, total_mwt, delta_total, commission_amount, margen_pct, devengo_estado, fecha_devengo_esperada, fecha_facturada, mes_pago_aproximado, pagos:[...]}`.
+5. **Refleja en el `.md`** (§7 Historial Financiero y §6/§3): comisión, margen, devengo, pagos y faltantes.
+6. **Si faltan datos financieros** (expediente sin tasa, sin líneas, sin pagos) → se marca `[PENDIENTE]` y se reporta; NO bloquea el pedido.
+
+**C5.1 Relevo a C6 (Auditor Final)**
+- Al terminar C5, pasa a C6 para **re-validar lo insertado (C3), lo persistido (C4) y lo financiero (C5)**.
+
+### C6 · FASE D — AUDITOR FINAL (2ª pasada sobre C3 + C4 + C5)
 1. Verifica que el expediente quedó creado/actualizado correctamente (consultando el MCP: `expediente_obtener`, `expediente_lineas`).
 2. Verifica que **todos los productos** existen, están habilitados para Sonepar Colombia y tienen los precios correctos (`producto_buscar`).
 3. Verifica que el **SAP**, los **estados** y los **artefactos/documentos** quedaron registrados (`sap_obtener`, `inventario_artefactos_expediente`, `documento_listar`).
 4. **Verifica la persistencia de evidencia (§9)**: cada archivo de `./documentos/` con template tiene su artefacto en la Consola (`inventario_artefactos_expediente`), con archivos subidos (`storage_url`/`archivo_url` presentes), valores en `data`, `lines` correctas (expediente(s) y producto(s) reales) y `publicado=True` según el flujo. Los artefactos faltantes = brecha → devolver al Operador para crearlos.
-5. Verifica que **ningún dato insertado contradice una fuente** y que las **discrepancias BLOQUEANTES** quedaron resueltas/registradas con decisión de Álvaro (§8.4/§8.5).
-6. Si hay errores/discrepancias → **devuelve al Operador** para corregir.
-7. Si está bien → pasa a la FASE E.
+5. **Verifica finanzas (C5)**: comisión/margen/devengo y pagos documentados en `expediente.json` → `finanzas` y en el `.md` (§7). Si faltan datos evidenciales → `[PENDIENTE]` documentado.
+6. Verifica que **ningún dato insertado contradice una fuente** y que las **discrepancias** quedaron **registradas** (modo autónomo §8.5) — no requieren decisión de Álvaro para cerrar el pedido.
+7. Si hay errores → **devuelve al Operador/Persistidor/Finanzas** para corregir.
+8. Si está bien → pasa a la FASE E (C7).
 
-### C6 · FASE E — RELATOR (informa a Álvaro y avanza al siguiente pedido)
-1. Al cerrar el pedido, **informa a Álvaro** de forma clara:
-   - "✅ Pedido **PF XXXX | OC XXXXX | SAP XXXXX** registrado/actualizado en el sistema."
-   - Resumen breve: estado actual, productos creados/actualizados, artefactos subidos, documentos descargados.
-   - **Discrepancias detectadas** (si las hay): lista con campo, fuentes, valores, clasificación (BLOQUEANTE/ADVERTENCIA) y estado (ABIERTA/RESUELTA) + decisión aplicada (§8.4).
-   - **Errores y falta de información**: datos no hallados, `[PENDIENTE]`, docs no descargados (explicar por qué).
-2. Luego **pasa al siguiente pedido/carpeta** y repite el loop.
+### C7 · FASE E — RELATOR (informe DETALLADO a Álvaro y avanza al siguiente pedido)
+1. Al cerrar el pedido, prepara el **informe detallado** para Álvaro (lo presentará al final del loop o lo guarda en `RESUMEN_GENERAL_EXPEDIENTES.md`):
+   - **PF XXXX | OC XXXXX | SAP XXXXX** registrado/actualizado en el sistema.
+   - **Búsqueda en ruta local**: archivos encontrados, OCR, carpetas internas.
+   - **Búsqueda en correos**: hilos, adjuntos, enlaces, imágenes, discrepancias de evidencia.
+   - **Expediente**: `expediente_id`, `oc_id`, estados del ciclo (REGISTRO→…→EN DESTINO/CERRADO) con fechas y estado actual.
+   - **Productos / líneas**: SKU, descripción, talla, cantidad por talla, precio de cada SKU (cliente/MWT), NCM.
+   - **Finanzas**: comisión, margen, devengo (DEVENGABLE/PROYECTADA/etc.), pagos.
+   - **Discrepancias detectadas** (§8): campo, fuentes, valores, clasificación, estado (ABIERTA).
+   - **Errores y falta de información**: datos `[PENDIENTE]`, docs no descargados (por qué).
+2. **Actualiza `RESUMEN_GENERAL_EXPEDIENTES.md`** con el resumen del pedido (matrices: expedientes, discrepancias, artefactos, finanzas).
+3. Luego **pasa al siguiente pedido/carpeta** y repite el loop.
 
 ---
 
@@ -570,10 +602,19 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
   - **Otros Impuestos / Tasas**: $...
 - **Tipo de Cambio Aplicado**: [CRC / USD / EUR]
 
-## 7. Historial Financiero y Pagos
+## 7. Historial Financiero y Pagos (incl. comisión / margen / devengo — contrato C5)
 - **Anticipos**: [Monto | Fecha | SWIFT / Ref]
 - **Saldo Pendiente**: [Monto | Vencimiento]
 - **Pago de Flete / Gastos Locales**: [Pagado / Pendiente]
+- **Finanzas del expediente (MCP `finanzas_*`, CEO/Admin)**:
+  - **Commission Rate**: [0.1000 = 10% | fuente: cliente.comision_pct]
+  - **Total Cliente / Total MWT / Delta (margen)**: $total_client | $total_mwt | $delta_total
+  - **Commission Amount**: $commission_amount
+  - **Margen %**: [0.4574 = 45.74%]
+  - **Forma de Pago / Crédito**: [CREDITO/CONTADO | días MWT / días cliente]
+  - **Devengo**: [DEVENGADA | DEVENGABLE | VENCIDA | PROYECTADA] · fecha_devengo_esperada: [YYYY-MM-DD]
+  - **Factura / Mes de pago aprox.**: fecha_facturada: [YYYY-MM-DD] | mes_pago_aproximado: [YYYY-MM]
+  - **Pagos del expediente** (`pago_listar`): [anticipos, saldos, estado]
 
 ## 8. Catálogo de Artefactos Digitales (local `./documentos/` + persistencia Consola §9)
 > [!IMPORTANT]
@@ -620,11 +661,13 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 **Cliente**: SONEPAR COLOMBIA SAS / MELEXA SAS (`88888888-0000-4000-8000-000000000011`)
 **Total de Pedidos Procesados**: [N]
 
-## Matriz Consolidada de Expedientes y Nodos
-| # | PF | OC | SAP | Modo | Transportista | HBL/AWB | Contenedor | ETD | ETA | DUA # | Estado Nodo | Estado Ciclo | Fecha Inicio | Docs Faltantes | Registrado MWT |
-|---|----|----|-----|------|---------------|---------|------------|-----|-----|-------|-------------|--------------|--------------|----------------|----------------|
-| 1 | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | Sí/No |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
+## Matriz Consolidada de Expedientes y Nodos (incl. finanzas — contrato C5)
+| # | PF | OC | SAP | Modo | Transportista | HBL/AWB | ETD | ETA | DUA # | Estado Nodo | Estado Ciclo | Fecha Inicio | Delta/Margen (USD) | Comisión (USD) | Devengo | Docs Faltantes | Registrado MWT |
+|---|----|----|-----|------|---------------|---------|-----|-----|-------|-------------|--------------|--------------|--------------------|----------------|---------|----------------|----------------|
+| 1 | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | [DEVENGABLE/PROYECTADA] | ... | Sí/No |
+| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
+
+> Finanzas por expediente (C5): `finanzas_overview` / `finanzas_comisiones(client_id=Sonepar)` / `pago_listar(expediente_id)`.
 
 ## Matriz de Alertas Críticas de Importación
 - **Riesgo de Demora / Factory Delay**: [lista de pedidos]
@@ -632,6 +675,7 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 - **Discrepancia Tributaria / DUA**: [lista]
 - **Brechas de Artefactos**: [pedidos sin BL/AWB, Factura o Certificado **persistidos como artefacto en la Consola**]
 - **Pedidos sin registrar en MWT**: [lista] (para seguimiento)
+- **Alertas financieras**: [expedientes con devengo VENCIDA, comisión sin tasa, pagos vencidos] (C5)
 
 ## Matriz de Persistencia de Artefactos en la Consola (protocolo §9)
 > [!IMPORTANT]
@@ -648,14 +692,14 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 
 ## Matriz de Discrepancias (protocolo §8 — SIEMPRE presente)
 > [!WARNING]
-> Lista consolidada de TODAS las discrepancias (BLOQUEANTES y ADVERTENCIAS) de todos los pedidos. Un pedido con discrepancia BLOQUEANTE abierta queda `BLOQUEADO` y NO se inserta en MWT hasta decisión de Álvaro.
+> Lista consolidada de TODAS las discrepancias (BLOQUEANTES y ADVERTENCIAS) de todos los pedidos, **modo autónomo (§8.5)**: se registran y se continúa el pedido; NO se espera decisión en el momento. El pedido queda marcado `BLOQUEADO (discrepancia)` y su decisión queda pendiente para que Álvaro la resuelva al revisar el informe.
 
 | # | PF/OC/SAP | Campo | Fuente A | Valor A | Fuente B | Valor B | Diferencia | Impacto | Clasificación | Estado | Decisión Álvaro |
 |---|-----------|-------|----------|---------|----------|---------|------------|---------|---------------|--------|-----------------|
 | 1 | PF 2453 / OC 504302 | Cajas | PL | 89 | Romaneiro | 150 | +61 | Multa aduanera | BLOQUEANTE | ABIERTA | [pendiente] |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
+| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
 
-- **Resumen de conteos**: [N] pedidos con discrepancias | [N] BLOQUEANTES abiertas | [N] ADVERTENCIAS | [N] resueltas.
+- **Resumen de conteos**: [N] pedidos con discrepancias | [N] BLOQUEANTES abiertas | [N] ADVERTENCIAS | [N] resueltas (por decisión posterior de Álvaro).
 
 ## Errores y Falta de Información Consolidado
 - **Datos/documentos no encontrados** tras agotar ruta local + correos (asunto, cuerpo, hilo, enlaces, OCR): [lista por pedido].
@@ -738,6 +782,23 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
       "detalle": "Packing List declara 89 cajas; romaneiro/real indica 150 cajas. Las cajas extra llegaron."
     }
   ],
+  "finanzas": {
+    "commission_rate": null,
+    "total_client": null,
+    "total_mwt": null,
+    "delta_total": null,
+    "commission_amount": null,
+    "margen_pct": null,
+    "forma_pago": null,
+    "credit_days_mwt": null,
+    "credit_days_cliente": null,
+    "devengo_estado": "[PENDIENTE]",
+    "fecha_devengo_esperada": null,
+    "fecha_facturada": null,
+    "mes_pago_aproximado": null,
+    "pagos": [],
+    "fuente": "finanzas_overview / finanzas_comisiones / pago_listar"
+  },
   "registro_mwt": {
     "expediente_id": null,
     "oc_id": null,
@@ -1078,9 +1139,70 @@ artefacto_editar(nodo_id="<uuid_nodo>", artifact_id="<uuid_artefacto>", cambios=
  "productos": ["<uuid_prod>"], "publicado": true}
 ```
 
+### C.10 FINANZAS DEL EXPEDIENTE (contrato C5 — comisión, margen, devengo, pagos)
+
+Tools de finanzas del MCP (CEO/Admin, solo lectura) para el contrato C5:
+
+**1. KPIs + top-20 expedientes (incl. SONEPAR)**:
+```
+finanzas_overview()
+# → kpis: comision_total_devengable, comision_devengada, comision_pendiente,
+#         comision_proyectada, margen_total_usd, margen_pct_ponderado,
+#         expedientes_count, expedientes_sin_tasa_count
+# → items[20]: por expediente: commission_rate, total_client, total_mwt, delta_total,
+#              commission_amount, margen_pct, forma_pago, credit_days_mwt/cliente,
+#              shipment_date, eta, fecha_devengo_esperada, devengo_estado,
+#              lines_count, total_qty, fecha_facturada, mes_pago_aproximado
+```
+
+**2. Comisiones filtradas por cliente/estado de devengo**:
+```
+finanzas_comisiones(client_id="88888888-0000-4000-8000-000000000011", estado_devengo="DEVENGABLE")
+# estado_devengo: DEVENGADA | DEVENGABLE | VENCIDA | PROYECTADA
+```
+
+**3. Comisión por mes de pago**:
+```
+finanzas_commission_by_month()
+# → results: [{month, month_label, commission_usd, delta_total_usd, expedientes_count}]
+```
+
+**4. Margen proyectado vs real por expediente**:
+```
+finanzas_margin_scatter()
+# → points: [{id, label ("PF xxxx · Sondel S.A."), projected, real, value}]
+```
+
+**5. Perfil financiero de un cliente**:
+```
+finanzas_cliente(client_id="88888888-0000-4000-8000-000000000011")
+```
+
+**6. Pagos del expediente**:
+```
+pago_listar(expediente_id="<uuid_expediente>")   # anticipos, saldos, estado
+pago_obtener(pago_id="<uuid>")
+```
+
+**Reglas financieras (backend, autoritativas)**:
+- `commission_rate` = expediente.commission_pct si no, cliente.comision_pct (decimal 0..1; 0.10 = 10%).
+- `delta_total` = Σ qty × (unit_price_client − unit_price_mwt) → **margen**.
+- `commission_amount` = base × rate; **regla DUAL**: operado por MWT → base = delta_total (reventa); operado por cliente → base = total_client (operación).
+- `margen_pct` = delta_unit / unit_price_client (protección div/0).
+- **Visibilidad**: el cálculo incluye todos los expedientes activos (la consola ve el negocio completo, no solo lo operado por MWT).
+
+**Registro en `expediente.json`** (`finanzas`):
+```
+{"commission_rate": 0.10, "total_client": 44212.97, "total_mwt": 23991.45,
+ "delta_total": 20221.52, "commission_amount": 2022.15, "margen_pct": 0.4574,
+ "forma_pago": "CREDITO", "credit_days_mwt": 90, "credit_days_cliente": 8,
+ "devengo_estado": "DEVENGABLE", "fecha_devengo_esperada": "2026-10-03",
+ "fecha_facturada": "2026-06-25", "mes_pago_aproximado": "2026-07", "pagos": [...]}
+```
+
 ---
 
-## 📋 RESUMEN DE LA SECUENCIA OPERATIVA DEL OPERADOR (contratos C3+C4 — checklist)
+## 📋 RESUMEN DE LA SECUENCIA OPERATIVA DEL OPERADOR (contratos C3+C4+C5 — checklist)
 
 ```
 -1. CONEXIÓN MCP      → verificar mwt_whoami (alvaro@muitowork.com, Admin/CEO); protocolo 0.3 / gate G1
@@ -1099,12 +1221,14 @@ artefacto_editar(nodo_id="<uuid_nodo>", artifact_id="<uuid_artefacto>", cambios=
                         Certificado, OC/Proforma/SAP, evidencias) con lines (expedientes×productos) + data
                         → si EXISTE: artefacto_editar
                         → artefacto_publicar(publicado=True) + registrar en expediente.json
-9. DISCREPANCIAS        → verificar matriz §8.4 ANTES de insertar; si hay BLOQUEANTE sin decisión → STOP & ASK (§8.5)
-10. ENTREGAR AL AUDITOR → FASE D (re-validación de lo insertado + persistencia de artefactos §9 + discrepancias resueltas)
+9. DISCREPANCIAS        → registrar en §8.4/expediente.json (modo autónomo §8.5); NO detener — reportar al final
+10. FINANZAS            → por expediente: finanzas_overview / finanzas_comisiones(client_id=Sonepar) /
+                         pago_listar(expediente_id) → comisión, margen, devengo, pagos; incluir en el informe
+11. ENTREGAR AL AUDITOR → FASE D (re-validación de lo insertado + persistencia de artefactos §9 + discrepancias registradas)
 ```
 
 > El Operador debe consultar SIEMPRE que un identificador (expediente/OC/SAP/producto) ya exista antes de crear, para **actualizar** en lugar de duplicar. Si el motor de pricing no resuelve un precio, usa el valor del OCR de la OC/Proforma (regla C3.1) e indícalo en el `expediente.json` (`registro_mwt`). El Persistidor (C4) sube TODA la evidencia como artefactos (§9).
 
 ---
 
-**INICIO**: Pregunta a Álvaro la **ruta de Windows** de los pedidos de SONEPAR COLOMBIA. Luego listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **el primer pedido completo** (contratos C1→C6: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Auditor Final → Relator) antes de tocar el siguiente. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia BLOQUEANTE** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **DETENTE, marca el pedido BLOQUEADO, notifica a Álvaro y pregunta qué hacer antes de insertar nada en el sistema** (gate G2). **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s) con archivos PDF/imágenes y los valores extraídos; la carpeta local es respaldo, la Consola es el registro oficial. Con dudas → detente y pregunta.
+**INICIO (modo AUTÓNOMO)**: **Pregunta a Álvaro la ruta de Windows** de los pedidos de SONEPAR COLOMBIA (única pregunta obligatoria). Luego **corre el loop sin detenerte**: listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **cada pedido completo** (contratos C1→C6: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Finanzas → Auditor Final → Relator) pasando al siguiente al cerrar cada uno. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3) — solo detente si la identidad falla (G1). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **REGÍSTRALA, marca el pedido `BLOQUEADO (discrepancia)` y CONTINÚA** (gate G2 / modo autónomo §8.5) — se reporta al final en el informe. **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s). **Revisa FINANZAS por expediente** (§C6): comisión, margen, devengo, pagos. **Al terminar TODOS los pedidos**, presenta a Álvaro el informe detallado de cada expediente (búsqueda local, correos, expediente creado, estado actual, productos/lineas, finanzas, discrepancias y pendientes). No preguntes durante el proceso salvo la ruta inicial o un fallo de identidad/conexión.
