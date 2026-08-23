@@ -38,33 +38,36 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (ag
  │  listas: recepción│  devuelve a corregir  │  artefactos §9,   │
  │  / movimiento / §9)│                      │  matriz §8.4,     │
  └───────────────────┘                      │  y listas contra  │
-        ▲                                   │  el inventario)   │
-        │  (cicla si Auditor rechaza)       └─────────┬─────────┘
-        │                                             │ válido
-        ▼                                             ▼
- ┌───────────────────┐                      ┌───────────────────┐
- │ C3 · OPERADOR MWT │  inserta/actualiza   │ C4 · PERSISTIDOR  │
- │ (productos, OC,    ─────────────────────▶│     DE EVIDENCIA  │
- │  expediente, SAP,  │  ◀──────────────────│ (artefactos §9:   │
- │  estados, docs)    │  devuelve a corregir│  sube PDF/imágenes│
- └───────────────────┘                      │  y valores a la   │
-        ▲                                   │  Consola)         │
-        │                                   └─────────┬─────────┘
-        │                                             ▼
-        │                                   ┌───────────────────┐
-        │                                   │ C5 · FINANZAS     │
-        │                                   │ (comisión, margen,│
-        │                                   │  devengo, pagos)  │
-        │                                   └─────────┬─────────┘
-        │                                             ▼
-        │                                   ┌───────────────────┐
-        │                                   │ C6 · AUDITOR FINAL│
-        │                                   │ (re-valida C3+C4+ │
-        │                                   │  C5, discrepancias│
-        │                                   │  §8, identidad)   │
-        │                                   └─────────┬─────────┘
-        │                                             │ pedido CERRADO
-        ▼                                             ▼
+        ▲          ▲                        │  el inventario)   │
+        │          │  C1 responde dudas     └─────────┬─────────┘
+        │          │  (re-busca carpeta/correos)     │ 3 listas
+        │  (cicla si Auditor rechaza)                 │ VALIDADAS
+        │          ┌───────────────────┐              ▼
+        │          │ C3 · OPERADOR MWT │ ─────────────────────▶┐
+        └──────────│ (inserta/actualiza│                        │
+           consulta│  expediente, SAP, │   si duda → pregunta   │
+                   │  recepción, mov., │   al Consultor (C1)    │
+                   │  finanzas)        │                        │
+                   └───────────────────┘                        ▼
+        │                                  ┌───────────────────┐
+        │                                  │ C4 · PERSISTIDOR  │
+        │                                  │ (artefactos §9)   │
+        │                                  └─────────┬─────────┘
+        │                                            ▼
+        │                                  ┌───────────────────┐
+        │                                  │ C5 · FINANZAS     │
+        │                                  │ (comisión, margen,│
+        │                                  │  devengo, pagos)  │
+        │                                  └─────────┬─────────┘
+        │                                            ▼
+        │                                  ┌───────────────────┐
+        │                                  │ C6 · AUDITOR FINAL│
+        │                                  │ (re-valida C3+C4+ │
+        │                                  │  C5, recepción,   │
+        │                                  │  movimiento, §8)  │
+        │                                  └─────────┬─────────┘
+        │                                            │ pedido CERRADO
+        ▼                                            ▼
  ┌───────────────────────────────────────────────────────────────┐
  │ C7 · RELATOR — informe DETALLADO por expediente a Alvaro       │
  │ (búsqueda local, correos, expediente, estado, productos/líneas,│
@@ -76,9 +79,9 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (ag
 
 | # | Contrato | Entrada | Qué hace | Salida | Aceptación (pasa si…) |
 |---|----------|---------|----------|--------|------------------------|
-| C1 | **CONSULTOR** | ruta local + correo MCP + memoria | Lee archivos, OCR, busca en correos, extrae las 9 dimensiones + **listas operativas**: recepción (A.3.2), movimiento/transferencia (A.3.3), artefactos §9; llena matriz de discrepancias (§8.4) | carpeta completa: `documentos/`, `resumen_PF_<codigo>.md`, `expediente.json`, **lista §9 + lista recepción + lista movimiento** | Todos los archivos descargados; listas operativas completas y coherentes con el expediente; discrepancias clasificadas |
+| C1 | **CONSULTOR** | ruta local + correo MCP + memoria | Lee archivos, OCR, busca en correos, extrae las 9 dimensiones + **listas operativas**: recepción (A.3.2), movimiento/transferencia (A.3.3), artefactos §9; llena matriz de discrepancias (§8.4). **Responde dudas del Operador re-buscando en la carpeta/correos (A.6)** | carpeta completa: `documentos/`, `resumen_PF_<codigo>.md`, `expediente.json`, **lista §9 + lista recepción + lista movimiento** | Todos los archivos descargados; listas operativas completas y coherentes con el expediente; discrepancias clasificadas |
 | C2 | **AUDITOR DE EVIDENCIA** | carpeta + listas del C1 | Valida integridad, coherencia, matriz §8.4, lista §9 y **valida las listas de recepción y movimiento contra el inventario del expediente** (`expediente_lineas`, `inventario_saldos_por_expediente`, `nodo_obtener`); devuelve al C1 si algo no cuadra | carpeta VALIDADA + **3 listas validadas** (artefactos, recepción, movimiento) | Todo verificado; cantidades ≤ pendiente/stock; nodos con capabilities correctas; BLOQUEANTES registrados |
-| C3 | **OPERADOR MWT** | carpeta validada | Inserta/actualiza en MCP: productos, OC, expediente, SAP, estados, documentos | registro MWT | Expediente creado/actualizado; productos habilitados; sin contradicciones |
+| C3 | **OPERADOR MWT** | 3 listas validadas de C2 | Inserta/actualiza en MCP: productos, OC, expediente, SAP, estados, recepción, movimiento, documentos, finanzas. **Si tiene duda → pregunta al CONSULTOR (C1), no a Alvaro** | registro MWT completo | Expediente creado/actualizado; recepción y movimiento registrados; sin contradicciones |
 | C4 | **PERSISTIDOR DE EVIDENCIA** | expediente + `documentos/` + lista §9 | Sube cada documento/imagen/valor como artefacto del Builder (crear/editar, `lines` multi-expediente/producto, publicar) | artefactos en la Consola + registro en `expediente.json` | Todo archivo con template tiene su artefacto; publicado |
 | C5 | **FINANZAS** | expediente creado (C3) | Revisa comisión, margen, devengo y pagos del expediente (`finanzas_overview`, `finanzas_comisiones(client_id)`, `pago_listar(expediente_id)`); registra en `expediente.json` → `finanzas` | datos financieros del expediente | Comisión/margen/devengo y pagos documentados; sin `[PENDIENTE]` evitable |
 | C6 | **AUDITOR FINAL** | lo insertado (C3) + lo persistido (C4) + finanzas (C5) | Re-valida contra el backend: expediente, productos, SAP, artefactos, finanzas, discrepancias §8, identidad | pedido CERRADO | Nada contradice una fuente; cobertura §9 completa; discrepancias registradas |
@@ -89,13 +92,13 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (ag
 - **G2 · DISCREPANCIA (protocolo §8)**: discrepancia detectada (ej. Packing List 89 vs 150 cajas) → **NO detiene el flujo**. Se registra en `expediente.json` (`discrepancias[]`, `estado="ABIERTA"`), se marca el pedido con `estado_actual="BLOQUEADO (discrepancia)"` **pero el proceso CONTINÚA** procesando el resto del pedido (líneas, expediente, SAP, estados, artefactos, finanzas). La discrepancia se reporta a Alvaro al final en el informe del pedido (§C6 y resumen §10). **Solo si la discrepancia impide crear el expediente en sí** (no hay forma de determinar PF/OC/cliente) se deja el pedido a medias con su `expediente.json` y `resumen_PF_<codigo>.md` documentando lo encontrado, y se pasa al siguiente.
 - **G3 · CALIDAD (FASES B/D)**: cualquier contrato puede devolver al anterior si la salida no cumple su criterio de aceptación. Máx. 3 ciclos por retorno; si persiste → se documenta el bloqueo y se continúa (reportando el pendiente).
 
-**Modo AUTÓNOMO (decisión de Alvaro — desatendido)**: el proceso corre **sin detenerse a preguntar** durante todo el loop. La ÚNICA pregunta obligatoria es la **ruta local** (protocolo 0). Después, se procesan TODOS los pedidos de la ruta en orden cronológico de forma continua. **No se interrumpe al usuario**: las dudas, discrepancias, faltantes y decisiones se registran en `expediente.json`/`.md` y se consolidan en el informe final del resumen general. El proceso solo se detiene por: (a) fallo G1 (identidad MCP), (b) fallo de conexión del correo/MCP que impida continuar. Al terminar el loop completo, se entrega el `RESUMEN_GENERAL_EXPEDIENTES.md` con el detalle de cada pedido y se le presenta a Alvaro en el chat.
+**Modo AUTÓNOMO (decisión de Alvaro — desatendido)**: el proceso corre **sin detenerse a preguntar** durante todo el loop. La ÚNICA pregunta obligatoria es la **ruta local** (protocolo 0). Después, se procesan TODOS los pedidos de la ruta en orden cronológico de forma continua. **No se interrumpe al usuario**: las dudas, discrepancias, faltantes y decisiones se registran en `expediente.json`/`.md` y se consolidan en el informe final del resumen general. **Las dudas del Operador se resuelven internamente consultando al Consultor (C1, protocolo A.6)**, quien re-busca en la carpeta de archivos y en los correos; nunca se espera a Alvaro durante el loop. El proceso solo se detiene por: (a) fallo G1 (identidad MCP), (b) fallo de conexión del correo/MCP que impida continuar. Al terminar el loop completo, se entrega el `RESUMEN_GENERAL_EXPEDIENTES.md` con el detalle de cada pedido y se le presenta a Alvaro en el chat.
 
-**Ciclos de retorno**: C1↔C2 y C3↔C4↔C5↔C6 pueden ciclar (máx. 3 intentos); si persiste un bloqueo de calidad → se documenta y se continúa al siguiente pedido (G3). El LOOP avanza al siguiente pedido tras C7.
+**Ciclos de retorno**: C1↔C2 (carpeta/listas) y **C3→C1** (consultas del Operador al Consultor) y C3↔C4↔C5↔C6 pueden ciclar (máx. 3 intentos). Si el Operador tiene una duda sobre el expediente (dato faltante, no cuadra, evidencia ambigua) → **consulta al Consultor (C1)**, quien re-busca en la carpeta de archivos y en los correos y le responde. Si persiste un bloqueo de calidad → se documenta y se continúa al siguiente pedido (G3). El LOOP avanza al siguiente pedido tras C7.
 
 **Memoria persistente (protocolo 6)**: `MEMORIA_EXTRACCION.md` en la raíz — patrones de correos, errores corregidos, decisiones de precios, glosario SKU↔NCM. Se consulta al inicio de cada pedido y se actualiza al cerrarlo.
 
-**REGLA DE ORO (modo autónomo)**: El proceso **NO se detiene a preguntar a Alvaro** salvo en el arranque (ruta local) o ante fallo de identidad/conexión (G1). Todo hallazgo dudoso, discrepancia o faltante se **registra con su fuente** (archivo/correo/OCR), se marca `[PENDIENTE]`/`BLOQUEADO (discrepancia)` según corresponda, y se **reporta al final** en el resumen del pedido y en el `RESUMEN_GENERAL_EXPEDIENTES.md`. Está prohibido **inventar** datos o subir información dudosa como si fuera real: si un dato no se puede confirmar, se deja pendiente y se reporta, NO se bloquea el resto del pedido.
+**REGLA DE ORO (modo autónomo)**: El proceso **NO se detiene a preguntar a Alvaro** salvo en el arranque (ruta local) o ante fallo de identidad/conexión (G1). Todo hallazgo dudoso, discrepancia o faltante se **registra con su fuente** (archivo/correo/OCR), se marca `[PENDIENTE]`/`BLOQUEADO (discrepancia)` según corresponda, y se **reporta al final** en el resumen del pedido y en el `RESUMEN_GENERAL_EXPEDIENTES.md`. **Si el Operador tiene una duda → la consulta al CONSULTOR (C1)**, que re-busca en la carpeta y en los correos y le responde (protocolo A.6); si la respuesta es `[PENDIENTE]`, se registra y continúa. Está prohibido **inventar** datos o subir información dudosa como si fuera real: si un dato no se puede confirmar, se deja pendiente y se reporta, NO se bloquea el resto del pedido.
 
 ---
 
@@ -441,6 +444,16 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harn
 - Entrega la carpeta completa al Auditor (C2). Si el Auditor devuelve correcciones, **aplícalas** y vuelve a entregar.
 - **Al terminar este pedido, pasa al SIGUIENTE en orden cronológico ascendente** (regla 0.1).
 
+**A.6 RESOLVER DUDAS DEL OPERADOR (consulta C3→C1) — OBLIGATORIO cuando el Operador lo pida**
+- El **Operador (C3)** puede tener dudas al ejecutar (un dato de las listas no cuadra, falta un valor, la evidencia es ambigua). **En ese caso le pregunta al Consultor (C1) por ese expediente específico** — NUNCA a Alvaro durante el proceso.
+- **Protocolo de respuesta del Consultor**:
+  1. **Revisar lo ya extraído** en `expediente.json` / `resumen_PF_<codigo>.md` / la lista que preparó (¿el dato está pero el Operador no lo leyó bien? → aclárale dónde está).
+  2. Si el dato **no estaba** → **vuelve a buscar** en la **carpeta de archivos del expediente** (todos los archivos, subcarpetas, OCR de PDFs e imágenes).
+  3. Si no aparece → **vuelve a buscar en los correos** del MCP de `alvaro@muitowork.com` (asunto, cuerpo, historial citado, adjuntos, enlaces de descarga, imágenes inline).
+  4. **Responde al Operador** con el valor encontrado + la **fuente** (archivo/correo/fecha). Si encontró algo nuevo, actualiza `expediente.json`/`.md`/la lista correspondiente.
+  5. Si **no lo encuentra** tras re-buscar → responde `[PENDIENTE]` con la explicación (qué se buscó y dónde), para que el Operador lo registre como pendiente y siga (modo autónomo §8.5).
+- **Cada expediente puede requerir varias consultas**; el Consultor responde todas y actualiza la carpeta si corresponde.
+
 ### C2 · FASE B — AUDITOR DE EVIDENCIA (validación de la carpeta del pedido)
 
 Valida que la carpeta esté completa y correcta **antes** de pasar al Operador:
@@ -471,6 +484,8 @@ Valida que la carpeta esté completa y correcta **antes** de pasar al Operador:
 Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta de Alvaro (verificado en G1/protocolo 0.3). **El único cliente permitido es SONEPAR COLOMBIA SAS** (`88888888-0000-4000-8000-000000000011`), que incluye los pedidos de su razón social alterna **MELEXA SAS** (mismo `cliente_id`). Si el pedido no es de Sonepar Colombia / Melexa → **detente y pregunta**.
 
 > 📌 **Entrada del contrato**: recibe de C2 la carpeta validada + las **3 listas operativas validadas** (artefactos §9, recepción A.3.2, movimiento A.3.3). Úsalas tal cual en los pasos C3.8/C3.9. Si un dato de la lista no cuadra con el backend al momento de insertar → regístralo (G2) y usa el valor confirmado.
+
+> 🔁 **CONSULTA AL CONSULTOR (C3→C1) — si tienes una duda sobre el expediente**: NO le preguntes a Alvaro durante el proceso. **Pregúntale al Consultor (C1)** por ese expediente: el Consultor revisa lo ya extraído, y si falta, **re-busca en la carpeta de archivos y en los correos** (OCR incluido) y te responde con el valor + la fuente (protocolo A.6). Si la respuesta es `[PENDIENTE]`, registra el pendiente y continúa.
 
 > 📌 **Las firmas exactas, parámetros y ejemplos de TODAS estas tools están en la sección «🧭 GUÍA DETALLADA DE TOOLS DEL MCP MWT.ONE QUE USA EL OPERADOR»** (más abajo). Esta fase es el flujo de alto nivel; consulta la guía para cada invocación.
 
