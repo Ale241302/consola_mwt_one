@@ -179,6 +179,12 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "pago_conciliar": ("pagos", "update"),
     "pago_liberar_credito": ("pagos", "update"),
     "pago_rechazar": ("pagos", "update"),
+    # ── Finanzas (KPIs, comisiones, margen, devengo) — solo lectura CEO/Admin ──
+    "finanzas_overview": ("finanzas", "view"),
+    "finanzas_comisiones": ("finanzas", "view"),
+    "finanzas_commission_by_month": ("finanzas", "view"),
+    "finanzas_margin_scatter": ("finanzas", "view"),
+    "finanzas_cliente": ("finanzas", "view"),
     # ── Storage ────────────────────────────────────────────────────────────
     "storage_subir_archivo": ("storage", "create"),
     "artefacto_archivo_descargar": ("storage", "download_doc"),

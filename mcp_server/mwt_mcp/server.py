@@ -2883,6 +2883,61 @@ def pago_rechazar(pago_id: str, rejection_reason: str, rejection_comment: str | 
 
 
 # =========================================================================== #
+# FINANZAS — KPIs, comisiones, margen y devengo (CEO/Admin, solo lectura).
+#    Endpoints backend: /api/finanzas/overview|comisiones|commission-by-month|
+#    margin-scatter|cliente/<uuid>. Calculan "al vuelo": commission_rate,
+#    delta_total, commission_amount, margen_pct, devengo_estado (SPEC_FINANZAS_v1).
+# =========================================================================== #
+@mcp.tool()
+def finanzas_overview() -> Any:
+    """KPIs hero de finanzas + top-20 expedientes con comisión/margen/devengo.
+    Devuelve `kpis` (comision_total_devengable, comision_devengada, comision_pendiente,
+    comision_proyectada, margen_total_usd, margen_pct_ponderado, expedientes_count,
+    expedientes_sin_tasa_count) e `items` (por expediente: commission_rate, total_client,
+    total_mwt, delta_total, commission_amount, margen_pct, forma_pago, credit_days,
+    shipment_date, eta, fecha_devengo_esperada, devengo_estado, lines_count, total_qty,
+    fecha_facturada, mes_pago_aproximado). Solo CEO/Admin (403 si no)."""
+    return _safe_role_read(lambda: api.get("finanzas/overview/"), "finanzas_overview")
+
+
+@mcp.tool()
+def finanzas_comisiones(client_id: str | None = None, estado_devengo: str | None = None) -> Any:
+    """Lista de expedientes con cálculos de comisión/margen/devengo.
+    `client_id`: UUID del cliente para filtrar (ej. SONEPAR).
+    `estado_devengo`: DEVENGADA | DEVENGABLE | VENCIDA | PROYECTADA.
+    Cada item incluye: display_id, codigo, proforma_codigo, commission_rate,
+    total_client, total_mwt, delta_total, commission_amount, margen_pct, forma_pago,
+    credit_days, shipment_date, eta, fecha_devengo_esperada, devengo_estado,
+    lines_count, total_qty, fecha_facturada, mes_pago_aproximado. Solo CEO/Admin."""
+    return _safe_role_read(lambda: api.get("finanzas/comisiones/",
+                                           _params(client_id=client_id, estado_devengo=estado_devengo)),
+                           "finanzas_comisiones")
+
+
+@mcp.tool()
+def finanzas_commission_by_month() -> Any:
+    """Comisión y delta total agrupados por mes de pago aproximado.
+    Devuelve `results`: [{month, month_label, commission_usd, delta_total_usd,
+    expedientes_count}]. Solo CEO/Admin."""
+    return _safe_role_read(lambda: api.get("finanzas/commission-by-month/"), "finanzas_commission_by_month")
+
+
+@mcp.tool()
+def finanzas_margin_scatter() -> Any:
+    """Puntos margen proyectado vs real por expediente (gráfica de dispersión).
+    Devuelve `points`: [{id, label (PF · Cliente), projected, real, value}].
+    Solo CEO/Admin."""
+    return _safe_role_read(lambda: api.get("finanzas/margin-scatter/"), "finanzas_margin_scatter")
+
+
+@mcp.tool()
+def finanzas_cliente(client_id: str) -> Any:
+    """Perfil financiero de un cliente: KPIs de su cartera de expedientes
+    (comisión, margen, devengo) + detalle. Solo CEO/Admin."""
+    return _safe_role_read(lambda: api.get(f"finanzas/cliente/{client_id}/"), "finanzas_cliente")
+
+
+# =========================================================================== #
 # STORAGE — subir el binario de un campo de archivo de artefacto (AWB/BL, factura)
 # =========================================================================== #
 @mcp.tool()

@@ -25,7 +25,7 @@ propagada (acceso directo / stdio).
                                         │                            │
                                         ▼                            ▼
                               ┌──────────────────────────────────────────────┐
-                              │  Servidor MCP (mwt_mcp/server.py, 132 tools)  │
+                              │  Servidor MCP (mwt_mcp/server.py, 137 tools)  │
                               │  · RBAC por rol: tool_rbac.py (list_tools)     │
                               │  · Redacción por rol: redact.py (_safe_role)   │
                               │  · Auditoría durable: core.mcp_audit           │
@@ -34,7 +34,7 @@ propagada (acceso directo / stdio).
 ```
 
 **Capas de defensa (defensa en profundidad):**
-1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 132 tools por
+1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 137 tools por
    `(módulo, acción)` de la matriz `core.roles.permissions`. Fail-closed.
 2. **CAPA 2 — Redacción por rol:** `redact.py` oscurece campos CEO_ONLY
    (costos/margen/comisiones/crédito/precio MWT) en la respuesta, aunque la
@@ -43,7 +43,7 @@ propagada (acceso directo / stdio).
 
 ---
 
-## 1. Qué puede hacer (132 herramientas)
+## 1. Qué puede hacer (137 herramientas)
 
 | Dominio      | Herramientas                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------------------- |
@@ -64,11 +64,12 @@ propagada (acceso directo / stdio).
 | **Costos / impuestos / gastos** | `transfer_costos_listar`, `transfer_costo_agregar`, `transfer_costo_editar`, `transfer_costo_eliminar`, `transfer_artefacto_crear` |
 | **Landed cost / factura** | `transfer_liquidacion_preview`, `transfer_liquidar`, `transfer_factura_payload`, `transfer_notas_listar`, `transfer_nota_crear` |
 | **Pagos** | `pago_applicables`, `pago_listar`, `pago_obtener`, `pago_dry_run`, `pago_registrar`, `pago_conciliar`, `pago_liberar_credito`, `pago_rechazar` |
+| **Finanzas** (CEO/Admin) | `finanzas_overview`, `finanzas_comisiones`, `finanzas_commission_by_month`, `finanzas_margin_scatter`, `finanzas_cliente` |
 | **Salud / diagnóstico** | `mwt_whoami`, `mwt_health`, `mwt_diag_scope` (CEO), `mwt_audit_write_registry`, `tipo_cambio` |
 
 ### 1.1 Filtrado de tools por rol (RBAC) y fail-closed
 
-- **1 solo servidor MCP** (`mwt-one`) con las 119 tools. No se parte en 3
+- **1 solo servidor MCP** (`mwt-one`) con las 137 tools. No se parte en 3
   dominios; la reducción de contexto se logra ocultando al agente las tools que
   su rol no puede usar (`mcp_server/mwt_mcp/tool_rbac.py`).
 - `list_tools` consulta el perfil del usuario (rol + `permissions` de
@@ -91,7 +92,7 @@ consola). Como referencia operativa, los roles típicos:
 
 | Rol | Qué ve | Herramientas típicas | Redacción aplicada |
 |---|---|---|---|
-| **superadmin / admin / ceo** | Todo | Las 119 tools según la matriz configurada | Ninguna (acceso total) |
+| **superadmin / admin / ceo** | Todo | Las 137 tools según la matriz configurada | Ninguna (acceso total) |
 | **manager** | Operación + finanzas del área | expedientes, transferencias, pagos, clientes, productos | Sí: costos/margen/comisiones/precio MWT → `***` |
 | **operator** | Operación día a día (estados, líneas, docs) | expedientes, documentos, SAP, nodos, inventario | Sí: costos/margen/comisiones |
 | **finance** | Pagos/crédito | pagos, cobros, transferencias | Sí: comisiones/margen |
@@ -485,3 +486,30 @@ builder_structure_construir(secciones=[
 ])
 → {"sections": [...]}   # listo para builder_artefacto_crear
 ```
+
+---
+
+## 10. Finanzas (KPIs, comisiones, margen, devengo) — CEO/Admin
+
+Lee los endpoints de finanzas del backend (`/api/finanzas/overview|comisiones|
+commission-by-month|margin-scatter|cliente/<uuid>`). Cálculo "al vuelo":
+`commission_rate` (expediente.commission_pct, si no cliente.comision_pct),
+`delta_total` = Σ qty × (precio_cliente − precio_mwt) → margen,
+`commission_amount` = base × rate (regla DUAL: MWT → base = delta_total;
+cliente → base = total_client), `margen_pct` = delta_unit / precio_cliente.
+
+| Tool | Uso |
+|---|---|
+| `finanzas_overview` | KPIs hero (comisión total/devengada/pendiente/proyectada, margen, %) + top-20 expedientes |
+| `finanzas_comisiones` | Lista de expedientes con cálculos; filtra por `client_id` / `estado_devengo` |
+| `finanzas_commission_by_month` | Comisión y delta agrupados por mes de pago aproximado |
+| `finanzas_margin_scatter` | Puntos margen proyectado vs real por expediente |
+| `finanzas_cliente` | Perfil financiero de un cliente (cartera, comisión, devengo) |
+
+**RBAC:** módulo `finanzas` — solo operadores MWT (admin/superadmin) con
+`can_read`. El backend además exige `IsCeoOrAdmin` (doble capa). Un `client_b2b`
+no ve estas tools. Migración de permisos:
+`backend/sql/H5_finanzas_modulo_admin_ceo.sql` (idempotente).
+
+**Uso con pagos:** combinar con `pago_listar(expediente_id)` /
+`pago_obtener(pago_id)` para el detalle de anticipos/saldos por expediente.
