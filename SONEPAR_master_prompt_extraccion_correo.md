@@ -33,13 +33,15 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (ag
         ▼
  ┌───────────────────┐  evidencia cruda:     ┌───────────────────┐
  │ C1 · CONSULTOR    │  ruta local + correo  │ C2 · AUDITOR DE   │
- │ (extrae y           ─────────────────────▶│     EVIDENCIA     │
- │  consolida, OCR,   │  ◀───────────────────│ (valida carpeta,  │
- │  discrepancias §8, │  devuelve a corregir │  artefactos §9,   │
- │  memoria)          │                      │  matriz §8.4)     │
- └───────────────────┘                      └─────────┬─────────┘
-        ▲                                             │ válido
-        │  (cicla si Auditor rechaza)                  ▼
+ │ (extrae + OCR +    ─────────────────────▶│     EVIDENCIA     │
+ │  nodos + DUA +     │  ◀───────────────────│ (valida carpeta,  │
+ │  listas: recepción│  devuelve a corregir  │  artefactos §9,   │
+ │  / movimiento / §9)│                      │  matriz §8.4,     │
+ └───────────────────┘                      │  y listas contra  │
+        ▲                                   │  el inventario)   │
+        │  (cicla si Auditor rechaza)       └─────────┬─────────┘
+        │                                             │ válido
+        ▼                                             ▼
  ┌───────────────────┐                      ┌───────────────────┐
  │ C3 · OPERADOR MWT │  inserta/actualiza   │ C4 · PERSISTIDOR  │
  │ (productos, OC,    ─────────────────────▶│     DE EVIDENCIA  │
@@ -74,8 +76,8 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (ag
 
 | # | Contrato | Entrada | Qué hace | Salida | Aceptación (pasa si…) |
 |---|----------|---------|----------|--------|------------------------|
-| C1 | **CONSULTOR** | ruta local + correo MCP + memoria | Lee archivos, OCR, busca en correos, extrae las 9 dimensiones, llena matriz de discrepancias (§8.4) y lista de artefactos a persistir (§9) | carpeta completa: `documentos/`, `resumen_PF_<codigo>.md`, `expediente.json`, lista §9 | Todos los archivos descargados; discrepancias clasificadas; no hay `[PENDIENTE]` evitable |
-| C2 | **AUDITOR DE EVIDENCIA** | carpeta del C1 | Valida integridad, coherencia, matriz §8.4 y lista §9; devuelve al C1 si falta algo | carpeta VALIDADA | Todo verificado; BLOQUEANTES con decisión de Alvaro |
+| C1 | **CONSULTOR** | ruta local + correo MCP + memoria | Lee archivos, OCR, busca en correos, extrae las 9 dimensiones + **listas operativas**: recepción (A.3.2), movimiento/transferencia (A.3.3), artefactos §9; llena matriz de discrepancias (§8.4) | carpeta completa: `documentos/`, `resumen_PF_<codigo>.md`, `expediente.json`, **lista §9 + lista recepción + lista movimiento** | Todos los archivos descargados; listas operativas completas y coherentes con el expediente; discrepancias clasificadas |
+| C2 | **AUDITOR DE EVIDENCIA** | carpeta + listas del C1 | Valida integridad, coherencia, matriz §8.4, lista §9 y **valida las listas de recepción y movimiento contra el inventario del expediente** (`expediente_lineas`, `inventario_saldos_por_expediente`, `nodo_obtener`); devuelve al C1 si algo no cuadra | carpeta VALIDADA + **3 listas validadas** (artefactos, recepción, movimiento) | Todo verificado; cantidades ≤ pendiente/stock; nodos con capabilities correctas; BLOQUEANTES registrados |
 | C3 | **OPERADOR MWT** | carpeta validada | Inserta/actualiza en MCP: productos, OC, expediente, SAP, estados, documentos | registro MWT | Expediente creado/actualizado; productos habilitados; sin contradicciones |
 | C4 | **PERSISTIDOR DE EVIDENCIA** | expediente + `documentos/` + lista §9 | Sube cada documento/imagen/valor como artefacto del Builder (crear/editar, `lines` multi-expediente/producto, publicar) | artefactos en la Consola + registro en `expediente.json` | Todo archivo con template tiene su artefacto; publicado |
 | C5 | **FINANZAS** | expediente creado (C3) | Revisa comisión, margen, devengo y pagos del expediente (`finanzas_overview`, `finanzas_comisiones(client_id)`, `pago_listar(expediente_id)`); registra en `expediente.json` → `finanzas` | datos financieros del expediente | Comisión/margen/devengo y pagos documentados; sin `[PENDIENTE]` evitable |
@@ -396,6 +398,27 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harn
 8. **Catálogo de artefactos**: clasifica cada archivo (FACTURA_COMERCIAL, PROFORMA, ORDEN_COMPRA, CONFIRMACION_SAP, BL_AWB, BOOKING, PACKING_LIST, VOLUMES_ROMANEIRO, CERTIFICADO_ORIGEN, SEGURO, EVIDENCIA_CARGA, COMPROBANTE_PAGO, DUA_ADUANA, CORREO_ORIGINAL, ARCHIVO_DESCARGA_LINK). El **DUA/DUE** es clave para el movimiento entre nodos (C3.9): se persiste como artefacto y de él se leen los costos.
 9. **Bitácora**: factory delays, bloqueos, discrepancias (PF vs Factura, PO asignada).
 
+**A.3.2 Extracción de datos de RECEPCIÓN DE INVENTARIO (para C3.8)**
+1. **Cantidades por SKU×talla a recibir**: del Packing List / Romaneiro / factura / correos (OCR), extrae por cada (expediente × producto × talla) la cantidad pendiente por recibir. Anota la fuente (PL/Romaneiro/HBL).
+2. **Nodo destino de la recepción**: el nodo donde llega la mercancía (el `destino_id` de C3.3). Debe tener capacidad `receive`.
+3. **Expedientes a asignar**: los expedientes del pedido (uno o varios) cuyos productos se asignan al nodo en la recepción.
+4. **Costos operativos de la recepción** (si el correo/DUA los muestra): flete, seguro, aranceles, con monto/moneda.
+5. Preparar la **lista de recepción** (se la da al Operador para `recepcion_crear`): `items = [{expediente_id, producto_id, talla, qty_asignada, nodo_id}]` y `cost_lines` (opcional).
+
+**A.3.3 Extracción de datos de MOVIMIENTO / TRANSFERENCIA ENTRE NODOS (para C3.9)**
+1. **Cantidades a transferir por SKU×talla**: del expediente (las que van del nodo de recepción al nodo final del cliente). Igual que la recepción pero con el origen = nodo de recepción y destino = nodo final.
+2. **Nodos origen/destino del movimiento**: `origen_id` = nodo donde se recibió (C3.8), `destino_id` = nodo final del cliente. Ambos en `registro_mwt.nodos`.
+3. **Contexto legal** (`legal_context`): si hay DUA → `NATIONALIZATION`; si es interno → `INTERNAL`; distribución → `DISTRIBUTION`; consignación → `CONSIGNMENT`; exportación → `EXPORT`.
+4. **Tracking**: BL/AWB/booking número (del correo, HBL, imágenes).
+5. **Costos del DUA/DUE/factura comercial Marluvas** (del correo/archivos/OCR): FLETE, SEGURO, DAI, IVA, PROCOMER, LEY_6946, ALMACENAJE, AGENCIAMIENTO, MANIPULEO, CONSOLIDACION, timbres, OTRO — cada uno con monto, moneda y fuente. **NUNCA inventar montos**: si el DUA no está, `[PENDIENTE]`.
+6. Preparar la **lista de movimiento** (se la da al Operador para `transferencia_crear` + `transfer_costo_agregar`): `lineas = [{producto_id, sku, size, qty_transfer, unit_cost, unit_value}]` y `cost_lines` (del DUA).
+
+**A.3.4 SALIDAS DEL CONSULTOR hacia el Operador (C3) — listas operativas**
+- **Lista de recepción (A.3.2)**: `items` (expediente×producto×talla×qty×nodo destino) + `cost_lines` opcionales.
+- **Lista de movimiento (A.3.3)**: `lineas` (producto×talla×qty a transferir), `legal_context`, `ref_tracking`, `cost_lines` del DUA, `context_data` (bl_awb_number, dua_number).
+- **Lista de artefactos (§9)**: la del protocolo §9.
+- Estas 3 listas se entregan al **Auditor (C2)** para validar coherencia ANTES de que el Operador las use.
+
 **A.3.1 Detección y reconciliación de discrepancias (PROTOCOLO §8 — OBLIGATORIO)**
 1. **Extrae CADA número por separado** de CADA fuente (adjunto, OCR, imagen, cuerpo del correo, historial citado): cajas, bultos, peso bruto/neto, volumen, contenedores, precintos, SKU×talla×qty, precios, valores DUA, fechas, identificadores. Anota SIEMPRE la fuente (archivo/correo+fecha).
 2. **Llena la Matriz de Reconciliación Cruzada (§8.4)** en el `resumen_PF_<codigo>.md`: para cada campo, lista Valor A (fuente A) vs Valor B (fuente B) y la diferencia. **Nunca promedies ni "corrijas"**: registra los valores literales de cada fuente.
@@ -409,6 +432,8 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harn
 - `expediente.json` (formato completo abajo).
 - `documentos/` completo con TODOS los archivos.
 - **Lista de artefactos a persistir (protocolo §9)**: prepara para cada documento/evidencia del pedido: template_id/title, expediente(s), producto(s)/líneas, archivos (file), y valores extraídos (data). Esta lista la ejecuta el **Persistidor (contrato C4)** en FASE C4.
+- **Lista de RECEPCIÓN (A.3.2)**: `items` para `recepcion_crear` (expediente×producto×talla×qty×nodo destino) + `cost_lines` opcionales → la ejecuta el **Operador (C3.8)**.
+- **Lista de MOVIMIENTO (A.3.3)**: `lineas` para `transferencia_crear` (producto×talla×qty a transferir) + `legal_context` + `ref_tracking` + `cost_lines` del DUA + `context_data` → la ejecuta el **Operador (C3.9)**.
 - Si la carpeta ya existía: **actualiza** (no recrear desde cero); los archivos nuevos se añaden, los .md se regeneran, los duplicados se evitan.
 - Anota la **razón social detectada** (SONEPAR COLOMBIA SAS o MELEXA SAS) en ambos artefactos.
 
@@ -427,12 +452,25 @@ Valida que la carpeta esté completa y correcta **antes** de pasar al Operador:
 6. Los **correos originales** existen como artefactos (`CORREO_ORIGINAL`).
 7. **Matriz de discrepancias (§8.4)**: está completa, con valores por fuente y clasificación (BLOQUEANTE/ADVERTENCIA). Las discrepancias BLOQUEANTES quedan **registradas** (modo autónomo §8.5) — no es necesario que tengan decisión de Alvaro para continuar. Si la matriz no está completa → devuelve al Consultor.
 8. **Lista de persistencia de evidencia (§9)**: cada documento/imagen con template tiene su entrada (template, expediente(s), producto(s), archivo, valores) en el `.md` (§8) y en `expediente.json`. Si falta → devuelve al Consultor.
-9. Si algo falta / no coincide / hay duda → **devuelve al Consultor** con la lista de correcciones.
-10. Si todo está bien → **pasa al Operador MWT (C3)**.
+9. **Lista de RECEPCIÓN (A.3.2) — validar contra el inventario del pedido**:
+   - Cada `item` de `recepcion_crear` corresponde a un `expediente_id`/`producto_id`/`talla` real del expediente (verificado contra `expediente_lineas` / `inventario_saldos_por_expediente`).
+   - La `qty_asignada` de cada item ≤ cantidad pendiente del expediente (no inventar stock); las cantidades cuadran con el PL/Romaneiro (reconciliado en §8.4).
+   - El `nodo_id` destino existe y tiene capacidad `receive` (`nodo_obtener` → `capabilities`).
+   - Si algún item no corresponde al expediente o excede el pendiente → **devuelve al Consultor** con la corrección.
+10. **Lista de MOVIMIENTO (A.3.3) — validar contra el inventario**:
+    - Cada `linea` de `transferencia_crear` corresponde a un producto/talla con stock en el nodo origen (de la recepción C3.8); `qty_transfer` ≤ stock disponible en origen.
+    - `origen_id` tiene capacidad `dispatch` y `destino_id` tiene `receive` (`nodo_obtener`).
+    - `legal_context` coherente con la evidencia (DUA → NATIONALIZATION).
+    - Los `cost_lines` del DUA están documentados con su fuente (montos del DUA/factura del correo); si falta un monto → `[PENDIENTE]` (no inventar).
+    - Si un movimiento no corresponde al inventario o excede el stock → **devuelve al Consultor**.
+11. Si algo falta / no coincide / hay duda → **devuelve al Consultor** con la lista de correcciones.
+12. Si todo está bien → **pasa al Operador MWT (C3)** con las 3 listas validadas (artefactos §9, recepción, movimiento).
 
 ### C3 · FASE C — OPERADOR MWT (inserta/actualiza el expediente y sus datos — SOLO SONEPAR COLOMBIA)
 
 Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta de Alvaro (verificado en G1/protocolo 0.3). **El único cliente permitido es SONEPAR COLOMBIA SAS** (`88888888-0000-4000-8000-000000000011`), que incluye los pedidos de su razón social alterna **MELEXA SAS** (mismo `cliente_id`). Si el pedido no es de Sonepar Colombia / Melexa → **detente y pregunta**.
+
+> 📌 **Entrada del contrato**: recibe de C2 la carpeta validada + las **3 listas operativas validadas** (artefactos §9, recepción A.3.2, movimiento A.3.3). Úsalas tal cual en los pasos C3.8/C3.9. Si un dato de la lista no cuadra con el backend al momento de insertar → regístralo (G2) y usa el valor confirmado.
 
 > 📌 **Las firmas exactas, parámetros y ejemplos de TODAS estas tools están en la sección «🧭 GUÍA DETALLADA DE TOOLS DEL MCP MWT.ONE QUE USA EL OPERADOR»** (más abajo). Esta fase es el flujo de alto nivel; consulta la guía para cada invocación.
 
@@ -496,9 +534,10 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 
 **PASO C3.8 RECEPCIÓN DE INVENTARIO en el nodo destino** — ver guía §C.12 (nuevo)
 > 🎯 **Crear la recepción de inventario** (motor de recepción de la consola, `/inventario/recepcion`): la mercancía del expediente se recibe en el **nodo destino** (el que identificó/creó C3.3), asignando las cantidades de los expedientes, agregando **costos operativos** (flete, seguro, aranceles DAI/IVA) y **vinculando los artefactos** (Packing List, BL, Factura) a la recepción.
+> 📌 **El Consultor ya preparó la lista de recepción (A.3.2) y el Auditor la validó (C2.9)**: usa esa lista `items` para `recepcion_crear`. Si detectas un desajuste → regístralo (G2) y corrige.
 
 1. **Resolver el nodo DESTINO** (C3.3): el nodo donde llega la mercancía (debe tener capacidad `receive`). Es el mismo `destino_id` de `registro_mwt.nodos`.
-2. **Preparar los `items` de recepción**: por cada (expediente × producto × talla) del pedido → `{expediente_id, producto_id, talla, qty_asignada, nodo_id=<destino_id>}`. Puede asignar productos de **uno o más expedientes** al mismo nodo (el motor lo permite: "Puedes asignar productos de uno o más expedientes al mismo nodo"). Cantidad = la pendiente por asignar (la que indica el motor en `recepcion_crear`).
+2. **Usar los `items` de la lista de recepción (A.3.2, validada por C2)**: por cada (expediente × producto × talla) del pedido → `{expediente_id, producto_id, talla, qty_asignada, nodo_id=<destino_id>}`. Puede asignar productos de **uno o más expedientes** al mismo nodo (el motor lo permite: "Puedes asignar productos de uno o más expedientes al mismo nodo"). Cantidad = la pendiente por asignar (la que indica el motor en `recepcion_crear`).
 3. **Crear la recepción**:
    ```
    recepcion_crear(items=[
@@ -529,17 +568,18 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 
 **PASO C3.9 MOVIMIENTO / TRANSFERENCIA ENTRE NODOS** — ver guía §C.13 (nuevo)
 > 🎯 **Cuando el expediente está en estado EN DESTINO**, se crea el **movimiento inter-nodos** (motor de transferencias, `/transferencias`): mover el stock del nodo de recepción (ej. `PORT_MOIN`) al nodo final del cliente (ej. `CR-SONDEL`), con contexto legal, tracking BL/AWB, costos del DUA/factura (leídos del correo/archivos) y **artefactos vinculados** (DUA, factura comercial Marluvas, BL).
+> 📌 **El Consultor ya preparó la lista de movimiento (A.3.3) y el Auditor la validó (C2.10)**: usa esa lista (`lineas`, `legal_context`, `ref_tracking`, `cost_lines`) para `transferencia_crear`. Si detectas un desajuste → regístralo (G2) y corrige.
 
 1. **Confirmar el estado del expediente**: debe estar en `EN DESTINO` (o avanzar con `expediente_avanzar_estado(fase_to="EN_DESTINO")` si la evidencia lo respalda). El movimiento inter-nodos ocurre en ese momento.
 2. **Resolver nodos**: `origen_id` = el nodo donde se recibió la mercancía (el destino de C3.8, ej. `PORT_MOIN` con capacidad `dispatch`), `destino_id` = el nodo final del cliente (ej. `CR-SONDEL` con capacidad `receive`). Ambos ya están en `registro_mwt.nodos`.
-3. **LEER los documentos fiscales del correo/archivos** (OBLIGATORIO — están en los correos, adjuntos, enlaces de descarga y OCR): **DUA** (declaración aduanera), **DUE**, **factura comercial de Marluvas**, BL/AWB, liquidaciones. De aquí se extraen los costos del movimiento. Si hay DUA → el `legal_context` es `NATIONALIZATION` (ingreso a país con DUA).
-4. **Crear el movimiento**:
+3. **LEER los documentos fiscales del correo/archivos** (OBLIGATORIO — están en los correos, adjuntos, enlaces de descarga y OCR): **DUA** (declaración aduanera), **DUE**, **factura comercial de Marluvas**, BL/AWB, liquidaciones. De aquí se extraen los costos del movimiento (el Consultor ya los anotó en A.3.3). Si hay DUA → el `legal_context` es `NATIONALIZATION` (ingreso a país con DUA).
+4. **Crear el movimiento usando la lista de movimiento (A.3.3, validada por C2)**:
    ```
    transferencia_crear(
      origen_id="<uuid_nodo_origen>",          # ej. PORT_MOIN
      destino_id="<uuid_nodo_destino>",        # ej. CR-SONDEL
      legal_context="NATIONALIZATION",         # INTERNAL|NATIONALIZATION|EXPORT|DISTRIBUTION|CONSIGNMENT
-     lineas=[                                  # stock a mover (del expediente)
+     lineas=[                                  # stock a mover (de la lista A.3.3)
        {"producto_id": "<uuid>", "sku": "700282", "size": "39", "qty_transfer": 10,
         "unit_cost": 15.43, "unit_value": 15.43},
        ...                                     # todos los productos × tallas
@@ -605,10 +645,12 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 2. Verifica que **todos los productos** existen, están habilitados para Sonepar Colombia y tienen los precios correctos (`producto_buscar`).
 3. Verifica que el **SAP**, los **estados** y los **artefactos/documentos** quedaron registrados (`sap_obtener`, `inventario_artefactos_expediente`, `documento_listar`).
 4. **Verifica la persistencia de evidencia (§9)**: cada archivo de `./documentos/` con template tiene su artefacto en la Consola (`inventario_artefactos_expediente`), con archivos subidos (`storage_url`/`archivo_url` presentes), valores en `data`, `lines` correctas (expediente(s) y producto(s) reales) y `publicado=True` según el flujo. Los artefactos faltantes = brecha → devolver al Operador para crearlos.
-5. **Verifica finanzas (C5)**: comisión/margen/devengo y pagos documentados en `expediente.json` → `finanzas` y en el `.md` (§7). Si faltan datos evidenciales → `[PENDIENTE]` documentado.
-6. Verifica que **ningún dato insertado contradice una fuente** y que las **discrepancias** quedaron **registradas** (modo autónomo §8.5) — no requieren decisión de Alvaro para cerrar el pedido.
-7. Si hay errores → **devuelve al Operador/Persistidor/Finanzas** para corregir.
-8. Si está bien → pasa a la FASE E (C7).
+5. **Verifica la RECEPCIÓN (C3.8)**: `recepcion_crear` quedó registrada en el nodo destino; los items coinciden con la lista A.3.2 validada por C2; el stock recibido refleja las cantidades del expediente (`inventario_saldos_por_expediente` / `stock_listar(nodo)`). Si el stock no cuadra → devolver al Operador.
+6. **Verifica el MOVIMIENTO (C3.9)**: `transferencia_crear` existe con sus líneas, `legal_context`, `ref_tracking`, costos del DUA (`transfer_costos_listar`) y artefactos vinculados (`transfer_artefacto_crear`); el stock en el nodo destino refleja el movimiento (`stock_listar`). Si no cuadra → devolver al Operador.
+7. **Verifica finanzas (C5)**: comisión/margen/devengo y pagos documentados en `expediente.json` → `finanzas` y en el `.md` (§7). Si faltan datos evidenciales → `[PENDIENTE]` documentado.
+8. Verifica que **ningún dato insertado contradice una fuente** y que las **discrepancias** quedaron **registradas** (modo autónomo §8.5) — no requieren decisión de Alvaro para cerrar el pedido.
+9. Si hay errores → **devuelve al Operador/Persistidor/Finanzas** para corregir.
+10. Si está bien → pasa a la FASE E (C7).
 
 ### C7 · FASE E — RELATOR (informe DETALLADO a Alvaro y avanza al siguiente pedido)
 1. Al cerrar el pedido, prepara el **informe detallado** para Alvaro (lo presentará al final del loop o lo guarda en `RESUMEN_GENERAL_EXPEDIENTES.md`):
