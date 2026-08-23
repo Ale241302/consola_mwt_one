@@ -383,6 +383,10 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harn
 1. **Términos Comerciales**: moneda, forma de pago, días crédito MWT/cliente, incoterm, modo operación (FULL/PARTIAL), modo flete (SEA/AIR/COURIER/LAND), modo despacho (FCL/LCL/suelta).
 2. **Líneas de producto**: SKU, descripción, talla, qty, `unit_price_mwt`, `unit_price_client`, `unit_cost`, `total_price`, NCM, estado línea, `production_date`.
 3. **Cadena de nodos**: origen/fábrica, POL, POD, depósito fiscal, bodega final + fechas estimadas/real por nodo.
+   - **NODO DE ORIGEN** (de dónde SALE el pedido): se identifica leyendo el **cuerpo de cada correo**, las **imágenes pegadas en el cuerpo** (fotos de fábrica, etiquetas, pantallas de la naviera), los adjuntos (HBL, booking, certificados) y el OCR. Puede ser la fábrica/proveedor (ej. fábrica Marluvas en Brasil), el puerto de embarque (POL, ej. Santos/BR), o el nodo que describe el correo como punto de partida. Anota: código/nombre sugerido, país, tipo (FACTORY/ALMACEN/HUB/PUERTO), ciudad, operador.
+   - **NODO DE DESTINO** (a dónde LLEGA el pedido/expediente): también lo dice el cuerpo del correo y las imágenes (POD, puerto de destino, depósito fiscal, bodega final del cliente, ej. bodega SONEPAR COLOMBIA en Bogotá/Medellín). Anota: código/nombre sugerido, país, tipo, ciudad, operador.
+   - **Leer SIEMPRE el cuerpo completo de cada correo** (no solo el asunto): los nombres de origen/destino suelen estar en el texto o en imágenes/archivos incrustados en el cuerpo, no en adjuntos separados.
+   - Estos nodos origen/destino se pasan al Operador (C3) para verificar/crear en la Consola (paso C3.3).
 4. **Tracking físico**: naviera/aerolínea, forwarder, buque/vuelo/voyage, MBL/HBL/AWB, booking, remessas, contenedor(es) + tipo + seal, bultos, peso bruto/neto, volumen.
 5. **Estados del ciclo** (5 estados) con `fecha_inicio`/`fecha_fin`/`fuente` + **inferencia desde documentos**.
 6. **Fechas críticas**: emisión PF/OC, confirmación SAP, `fecha_fabricacion`, cargo ready, emisión BL, pagos (anticipo, saldo, SWIFT).
@@ -454,29 +458,42 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 2. Busca la OC con `oc_listar(q="<nro_oc>", client=SoneparColombia)` / `oc_obtener(oc_id)`.
 3. Si no existe → se creará automáticamente con `expediente_crear` (create-from-oc). Si existe → usa su `oc_id` (o `oc_editar` si hay que ajustarla).
 
-**PASO C3.3 Crear/Actualizar Expediente** — ver guía §C.4
+**PASO C3.3 Verificar/Crear NODOS de origen y destino** — ver guía §C.11 (nuevo)
+> 🎯 **Un nodo es el ORIGEN (de dónde sale el pedido) y el DESTINO (a dónde llega el expediente)**. Ambos se identifican leyendo el **cuerpo de cada correo** y las **imágenes/archivos pegados en el cuerpo** (el Consultor los anotó en A.3.3). Verifica en la Consola si el nodo existe; si NO existe → **créealo** con `nodo_crear`.
+
+1. **Nodo de ORIGEN**: toma el nodo origen que identificó el Consultor (fábrica/proveedor/POL, ej. "Fábrica Marluvas – Novo Hamburgo/BR" o "Santos/BR"). Busca con `nodo_listar(q="<codigo/nombre>", tipo="FACTORY"|"ALMACEN", pais="BR")` o `nodo_obtener(nodo_id)`.
+   - **Si existe** → usa su `id` como origen.
+   - **Si NO existe** → créalo con `nodo_crear(datos={codigo, nombre, tipo, pais_iso2, ciudad, operator_id, capabilities, status:"PLANNED"})` (ej. `{"codigo":"BR-FAB-MARLUVAS","nombre":"Fábrica Marluvas","tipo":"FACTORY","pais_iso2":"BR","ciudad":"Novo Hamburgo","status":"ACTIVE","capabilities":["store","dispatch"]}`). Registra el `id` creado.
+2. **Nodo de DESTINO**: toma el nodo destino (POD/depósito fiscal/bodega final del cliente, ej. "Bodega SONEPAR – Bogotá/CO"). Busca con `nodo_listar(q="<codigo/nombre>", pais="CO")` o `nodo_obtener(nodo_id)`.
+   - **Si existe** → usa su `id` como destino.
+   - **Si NO existe** → créalo con `nodo_crear` (ej. `{"codigo":"CO-SONEPAR-BOG","nombre":"Bodega SONEPAR Bogotá","tipo":"HUB","pais_iso2":"CO","ciudad":"Bogotá","status":"ACTIVE","capabilities":["receive","store"]}`).
+3. **Registra ambos `id`** en `expediente.json` → `registro_mwt.nodos` = `{"origen_id": ..., "destino_id": ...}` y en el `.md` (§4 Cadena de Nodos).
+4. **Regla**: si no se puede identificar el origen/destino del correo → deja el nodo `[PENDIENTE]` (no inventes) y se reporta; el expediente se crea igual con lo que se tenga.
+5. Los nodos origen/destino se usan después en `transferencia_crear` (origen/destino), `expediente_crear` (origin/destination) y para colgar artefactos (§9.3 paso 3).
+
+**PASO C3.4 Crear/Actualizar Expediente** — ver guía §C.4
 1. Busca si ya existe: `expediente_listar(oc="<oc_id>", client=SoneparColombia)` / `expediente_obtener(expediente_id=<ref>)`.
 2. Crea con `expediente_crear(client_id=SoneparColombia, operating_company_id, forma_pago, credit_days_mwt, credit_days_cliente, mode, freight_mode, transport_mode, dispatch_mode, price_basis, moneda, po_number, idempotence_token, file_path=<OC.pdf>, lines=[{sku, size, qty, unit_price, producto_id}])`.
 3. **Inserta las líneas directamente** con los precios correctos (regla C3.1.4) y las tallas/cantidades reales que extrajo el Consultor (OCR de OC y Proforma).
 4. Si ya existía → `expediente_editar(expediente_id, cambios)` y/o ajusta líneas.
 5. Anota el `expediente_id` (UUID) y `nodo_id` (si lo devuelve) en `expediente.json` → `registro_mwt`.
 
-**PASO C3.4 Registrar/Actualizar el SAP** — ver guía §C.5
+**PASO C3.5 Registrar/Actualizar el SAP** — ver guía §C.5
 1. `sap_upsert(expediente_id, sap_id="<codigo_sap>", lineas_confirmadas=[{sku, talla, qty, unit_price}], fecha_fabricacion, file_path=<SAP.xlsx>)`.
 2. Valida con `sap_obtener(expediente_id, sap_id)`.
 3. Si faltan términos → `sap_editar(expediente_id, sap_id, cambios={...})`.
 
-**PASO C3.5 Estados del ciclo del SAP/expediente** — ver guía §C.6
+**PASO C3.6 Estados del ciclo del SAP/expediente** — ver guía §C.6
 - `expediente_avanzar_estado(expediente_id, fase_to=<fase>, note=<evidencia>, idempotence_token=<uuid>, documento_id=<opcional>)`.
 - Secuencia: `REGISTRO → PRODUCCION → PREPARACION → DESPACHO → TRANSITO → EN_DESTINO → CERRADO`. Usa las fechas reales del Consultor.
 
-**PASO C3.6 Subir documentos al expediente** — ver guía §C.7
+**PASO C3.7 Subir documentos al expediente** — ver guía §C.7
 - **OC/Proforma/SAP con mapeo de líneas**: `match_subir(expediente_id, document_type="ART-01_OC"|"ART-02_PROFORMA"|"ART-04_SAP", file_path)`.
 - **Resto (BL/AWB, DUA, Factura, otros)**: `documento_subir(file_path, kind, codigo, expediente_id, audience="CLIENT")`.
 - Verifica con `documento_listar(expediente="<uuid>")`; borra rotos con `documento_eliminar`.
 
-**C3.7 Relevo a C4 (Persistidor de Evidencia)**
-- Al cerrar C3, entrega el `expediente_id`/`nodo_id` resuelto y la lista §9 al contrato C4. No se pasa a C5 sin persistir la evidencia.
+**C3.8 Relevo a C4 (Persistidor de Evidencia)**
+- Al cerrar C3, entrega el `expediente_id`, los `nodo_id` (origen/destino) resueltos y la lista §9 al contrato C4. No se pasa a C5 sin persistir la evidencia.
 
 ### C4 · FASE C4 — PERSISTIDOR DE EVIDENCIA (artefactos del Builder en la Consola)
 
@@ -662,12 +679,12 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 **Total de Pedidos Procesados**: [N]
 
 ## Matriz Consolidada de Expedientes y Nodos (incl. finanzas — contrato C5)
-| # | PF | OC | SAP | Modo | Transportista | HBL/AWB | ETD | ETA | DUA # | Estado Nodo | Estado Ciclo | Fecha Inicio | Delta/Margen (USD) | Comisión (USD) | Devengo | Docs Faltantes | Registrado MWT |
-|---|----|----|-----|------|---------------|---------|-----|-----|-------|-------------|--------------|--------------|--------------------|----------------|---------|----------------|----------------|
-| 1 | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | [DEVENGABLE/PROYECTADA] | ... | Sí/No |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
+| # | PF | OC | SAP | Modo | Nodo Origen | Nodo Destino | Transportista | HBL/AWB | ETD | ETA | DUA # | Estado Ciclo | Fecha Inicio | Delta/Margen (USD) | Comisión (USD) | Devengo | Docs Faltantes | Registrado MWT |
+|---|----|----|-----|------|-------------|--------------|---------------|---------|-----|-----|-------|--------------|--------------|--------------------|----------------|---------|----------------|----------------|
+| 1 | ... | ... | ... | ... | [fábrica/POL] | [POD/bodega] | ... | ... | ... | ... | ... | ... | ... | ... | ... | [DEVENGABLE/PROYECTADA] | ... | Sí/No |
+| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
 
-> Finanzas por expediente (C5): `finanzas_overview` / `finanzas_comisiones(client_id=Sonepar)` / `pago_listar(expediente_id)`.
+> Nodos (C3.3): origen/destino identificados del cuerpo del correo e imágenes; `nodo_listar`/`nodo_crear`. Finanzas (C5): `finanzas_overview` / `finanzas_comisiones(client_id=Sonepar)` / `pago_listar(expediente_id)`.
 
 ## Matriz de Alertas Críticas de Importación
 - **Riesgo de Demora / Factory Delay**: [lista de pedidos]
@@ -803,6 +820,12 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
     "expediente_id": null,
     "oc_id": null,
     "nodo_id": null,
+    "nodos": {
+      "origen_id": null,
+      "destino_id": null,
+      "origen_label": "[PENDIENTE]",
+      "destino_label": "[PENDIENTE]"
+    },
     "productos_creados": [],
     "productos_actualizados": [],
     "sap_id": null,
@@ -1200,6 +1223,46 @@ pago_obtener(pago_id="<uuid>")
  "fecha_facturada": "2026-06-25", "mes_pago_aproximado": "2026-07", "pagos": [...]}
 ```
 
+### C.11 NODOS — ORIGEN Y DESTINO DEL PEDIDO (contrato C3.3)
+
+> Un **nodo** es el ORIGEN (de dónde sale el pedido) o el DESTINO (a dónde llega el expediente). Ambos se identifican leyendo el **cuerpo de cada correo** y las **imágenes/archivos incrustados en el cuerpo** (NO solo el asunto ni los adjuntos). Ejemplo real de nodos existentes: `CNF_SJO` (San José), `CR-SONDEL` (Sondel CR), `MOIN_L` (Terminales APM), `PORT_MOIN` (Puerto Moín). Para SONEPAR COLOMBIA el destino típico es una bodega en Bogotá/Medellín (CO) y el origen la fábrica Marluvas (BR).
+
+**1. Listar / buscar nodos existentes**:
+```
+nodo_listar(tipo="FACTORY"|"ALMACEN"|"HUB", pais="BR"|"CO", q="<codigo/nombre>", status="ACTIVE")
+nodo_obtener(nodo_id="<uuid>")
+# → {id, codigo, nombre, tipo, pais_iso2, ciudad, status, capabilities, operator_id}
+```
+
+**2. Crear nodo si NO existe**:
+```
+nodo_crear(datos={
+  "codigo": "BR-FAB-MARLUVAS",        # slug corto 3-12
+  "nombre": "Fábrica Marluvas",
+  "tipo": "FACTORY",                  # FACTORY | ALMACEN | HUB | OFICINA | MARKETPLACE | DISTRIBUTOR
+  "pais_iso2": "BR",
+  "ciudad": "Novo Hamburgo",
+  "status": "ACTIVE",                 # o PLANNED (queda para que el CEO lo active)
+  "operator_id": "<uuid operador MWT>",
+  "capabilities": ["store", "dispatch"]   # receive|store|prepare|dispatch|report_sales|report_inventory
+})
+# → {id: "<uuid_nodo_nuevo>"}
+```
+
+**3. Ejemplos por tipo de nodo**:
+- **Origen (fábrica)**: `{"codigo":"BR-FAB-MARLUVAS","nombre":"Fábrica Marluvas","tipo":"FACTORY","pais_iso2":"BR","status":"ACTIVE","capabilities":["store","dispatch"]}`
+- **Origen (puerto de embarque POL)**: `{"codigo":"BR-POL-SANTOS","nombre":"Puerto Santos","tipo":"ALMACEN","pais_iso2":"BR","status":"ACTIVE","capabilities":["receive","dispatch"]}`
+- **Destino (puerto de llegada POD)**: `{"codigo":"CO-POD-CARTAGENA","nombre":"Puerto Cartagena","tipo":"ALMACEN","pais_iso2":"CO","status":"ACTIVE","capabilities":["receive","store"]}`
+- **Destino (bodega final cliente)**: `{"codigo":"CO-SONEPAR-BOG","nombre":"Bodega SONEPAR Bogotá","tipo":"HUB","pais_iso2":"CO","ciudad":"Bogotá","status":"ACTIVE","capabilities":["receive","store"]}`
+
+**4. Registrar en `expediente.json`** (`registro_mwt.nodos`):
+```
+{"origen_id": "<uuid_nodo_origen>", "destino_id": "<uuid_nodo_destino>",
+ "origen_label": "Fábrica Marluvas – BR", "destino_label": "Bodega SONEPAR Bogotá – CO"}
+```
+
+**5. Regla**: si el origen/destino no se puede identificar del correo/cuerpo/imágenes → nodo `[PENDIENTE]` (NO inventar); se reporta y el expediente se crea con lo disponible.
+
 ---
 
 ## 📋 RESUMEN DE LA SECUENCIA OPERATIVA DEL OPERADOR (contratos C3+C4+C5 — checklist)
@@ -1211,24 +1274,26 @@ pago_obtener(pago_id="<uuid>")
 2. VALIDAR PRODUCTOS   → por cada SKU: producto_buscar → crear/editar (tallas UUID, ncm, precios según regla)
                         → habilitar para Sonepar Colombia + producto_alias_crear (part-number)
 3. VALIDAR/CREAR OC    → oc_listar/oc_obtener → (la crea expediente_crear) u oc_editar
-4. CREAR EXPEDIENTE    → expediente_crear(client=SoneparColombia, lines reales SKU×talla, file_path=OC.pdf,
-                        idempotence_token, precios según regla) → anotar expediente_id
-5. REGISTRAR SAP       → sap_upsert(expediente_id, sap_id, lineas_confirmadas, file_path=SAP.xlsx)
-6. ESTADOS             → expediente_avanzar_estado(...) en la fase real del ciclo
-7. DOCUMENTOS          → match_subir (OC/Proforma/SAP) + documento_subir (BL, DUA, Factura, etc.)
-8. ARTEFACTOS (§9)     → TODO documento/imagen del pedido: verificar existencia (inventario_artefactos_expediente)
+4. NODOS (C3.3)        → nodo ORIGEN y DESTINO del pedido (del cuerpo del correo/imágenes): nodo_listar/nodo_obtener
+                        → si NO existen: nodo_crear (tipo/pais/ciudad/capabilities) + registrar en expediente.json
+5. CREAR EXPEDIENTE    → expediente_crear(client=SoneparColombia, lines reales SKU×talla, file_path=OC.pdf,
+                        idempotence_token, precios según regla) → anotar expediente_id + nodos origen/destino
+6. REGISTRAR SAP       → sap_upsert(expediente_id, sap_id, lineas_confirmadas, file_path=SAP.xlsx)
+7. ESTADOS             → expediente_avanzar_estado(...) en la fase real del ciclo
+8. DOCUMENTOS          → match_subir (OC/Proforma/SAP) + documento_subir (BL, DUA, Factura, etc.)
+9. ARTEFACTOS (§9)     → TODO documento/imagen del pedido: verificar existencia (inventario_artefactos_expediente)
                         → si NO existe: storage_subir_archivo + nodo_artefacto_crear (Packing, BL, Factura,
                         Certificado, OC/Proforma/SAP, evidencias) con lines (expedientes×productos) + data
                         → si EXISTE: artefacto_editar
                         → artefacto_publicar(publicado=True) + registrar en expediente.json
-9. DISCREPANCIAS        → registrar en §8.4/expediente.json (modo autónomo §8.5); NO detener — reportar al final
-10. FINANZAS            → por expediente: finanzas_overview / finanzas_comisiones(client_id=Sonepar) /
+10. DISCREPANCIAS       → registrar en §8.4/expediente.json (modo autónomo §8.5); NO detener — reportar al final
+11. FINANZAS            → por expediente: finanzas_overview / finanzas_comisiones(client_id=Sonepar) /
                          pago_listar(expediente_id) → comisión, margen, devengo, pagos; incluir en el informe
-11. ENTREGAR AL AUDITOR → FASE D (re-validación de lo insertado + persistencia de artefactos §9 + discrepancias registradas)
+12. ENTREGAR AL AUDITOR → FASE D (re-validación de lo insertado + persistencia de artefactos §9 + discrepancias registradas)
 ```
 
 > El Operador debe consultar SIEMPRE que un identificador (expediente/OC/SAP/producto) ya exista antes de crear, para **actualizar** en lugar de duplicar. Si el motor de pricing no resuelve un precio, usa el valor del OCR de la OC/Proforma (regla C3.1) e indícalo en el `expediente.json` (`registro_mwt`). El Persistidor (C4) sube TODA la evidencia como artefactos (§9).
 
 ---
 
-**INICIO (modo AUTÓNOMO)**: **Pregunta a Alvaro la ruta de Windows** de los pedidos de SONEPAR COLOMBIA (única pregunta obligatoria). Luego **corre el loop sin detenerte**: listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **cada pedido completo** (contratos C1→C6: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Finanzas → Auditor Final → Relator) pasando al siguiente al cerrar cada uno. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3) — solo detente si la identidad falla (G1). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **REGÍSTRALA, marca el pedido `BLOQUEADO (discrepancia)` y CONTINÚA** (gate G2 / modo autónomo §8.5) — se reporta al final en el informe. **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s). **Revisa FINANZAS por expediente** (§C6): comisión, margen, devengo, pagos. **Al terminar TODOS los pedidos**, presenta a Alvaro el informe detallado de cada expediente (búsqueda local, correos, expediente creado, estado actual, productos/lineas, finanzas, discrepancias y pendientes). No preguntes durante el proceso salvo la ruta inicial o un fallo de identidad/conexión.
+**INICIO (modo AUTÓNOMO)**: **Pregunta a Alvaro la ruta de Windows** de los pedidos de SONEPAR COLOMBIA (única pregunta obligatoria). Luego **corre el loop sin detenerte**: listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **cada pedido completo** (contratos C1→C7: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Finanzas → Auditor Final → Relator) pasando al siguiente al cerrar cada uno. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3) — solo detente si la identidad falla (G1). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Identifica los NODOS de origen y destino de cada pedido** leyendo el cuerpo del correo y las imágenes incrustadas (C3.3): verifica con `nodo_listar` y si no existen, créalos con `nodo_crear`. **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **REGÍSTRALA, marca el pedido `BLOQUEADO (discrepancia)` y CONTINÚA** (gate G2 / modo autónomo §8.5) — se reporta al final en el informe. **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s). **Revisa FINANZAS por expediente** (§C5): comisión, margen, devengo, pagos. **Al terminar TODOS los pedidos**, presenta a Alvaro el informe detallado de cada expediente (búsqueda local, correos, expediente creado, nodos origen/destino, estado actual, productos/lineas, finanzas, discrepancias y pendientes). No preguntes durante el proceso salvo la ruta inicial o un fallo de identidad/conexión.
