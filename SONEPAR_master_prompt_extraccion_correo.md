@@ -110,6 +110,10 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (ag
 3. **Si una carpeta ya existe**: NO la crees — **actualízala** (añade lo que falte, corrige, enriquece).
 4. **Si NO existe la carpeta de un pedido de Sonepar** que se descubre en correos/MCP: **créeala** con la estructura estándar.
 5. Guardar la ruta en la **memoria persistente** para no volver a preguntar en futuras ejecuciones.
+6. **RETOMAR desde `PROGRESO_LOOP.json` (§10.3)**: si existe, lee `en_curso`/`ultimo_expediente_procesado`/`pendientes_reexplorar` y continúa desde ahí (no desde cero).
+7. **RE-EXPLORAR PENDIENTES (§10.5)**: antes de procesar expedientes nuevos, re-busca en carpetas y correos los `[PENDIENTE]` de expedientes `EN_PROCESO`/`BLOQUEADO-DISCREPANCIA`/`COMPLETO-con-pendientes` (pueden haber llegado documentos nuevos) e intenta resolverlos.
+8. **Idempotencia (§10.2)**: los expedientes ya `COMPLETO` en el MCP se actualizan (no se recrean); los `EN_PROCESO` se retoman.
+9. Guardar en `PROGRESO_LOOP.json` la corrida actual (`corrida: N+1`, `fecha`).
 
 ### 0.3 CONEXIÓN Y VERIFICACIÓN DEL MCP MWT.ONE (OBLIGATORIO ANTES DE CUALQUIER PEDIDO)
 1. **Confirmar que el servidor MCP MWT.ONE está conectado** en el agente. Datos de conexión (OAuth):
@@ -311,6 +315,80 @@ Cada archivo/correlación de la lista §A.3.8 que tenga un template del Builder 
 - Cualquier documento/imagen que quede "solo en la carpeta" sin artefacto = **brecha** → se reporta en el resumen (§11 Requerimientos Faltantes) y se notifica a Alvaro.
 - Las **imágenes inline del correo** (fotos de cajas, etiquetas, screenshots) también se suben como artefacto (campo `file` + OCR en campos de valores), no solo se guardan en disco.
 
+### 10. CIERRE Y CONTINUIDAD DEL LOOP — GARANTÍA DEL 100% POR EXPEDIENTE (OBLIGATORIO)
+
+> **Principio**: el loop es **bloqueante por expediente**. Un expediente de la ruta local **NO se da por cerrado** y **NO se pasa al siguiente** hasta que quede **100% registrado y actualizado en el MCP MWT.ONE** con TODA la información encontrada. Los expedientes pueden quedar en distintos estados del ciclo (REGISTRO, PRODUCCIÓN, PREPARACIÓN DE DESPACHO, TRÁNSITO, EN DESTINO, CERRADO) según su evidencia — lo que se exige al 100% es el **registro completo**, no un estado final específico.
+
+#### 10.1 CHECKPOINT DE CIERRE POR EXPEDIENTE (mejora 1)
+- Cada expediente lleva un campo **`estado_procesamiento`** en `expediente.json` con 4 valores posibles:
+  - `PENDIENTE` — nunca se procesó.
+  - `EN_PROCESO` — se está procesando en esta corrida (o quedó a medias por corte).
+  - `COMPLETO` — registro 100% cerrado: todas las piezas verificadas.
+  - `BLOQUEADO-DISCREPANCIA` — se registró pero quedó una discrepancia/pendiente abierta (se reporta).
+- La **FASE C6 (Auditor Final)** emite el **veredicto de cierre**: marca `COMPLETO` solo si TODAS estas piezas están verificadas y registradas en el MCP:
+  1. **Expediente** creado/actualizado (`expediente_id`, `oc_id`).
+  2. **SAP** registrado (o `[PENDIENTE]` documentado si no existe evidencia).
+  3. **Estados del ciclo** con fechas (al menos el estado actual con evidencia).
+  4. **Nodos** origen/destino creados o existentes (`registro_mwt.nodos`).
+  5. **Recepción de inventario** en el nodo destino (`registro_mwt.recepcion`).
+  6. **Movimiento/transferencia** al estar EN DESTINO (`registro_mwt.transferencia`).
+  7. **Artefactos** persistidos (§9) — cobertura completa.
+  8. **Finanzas** documentadas (`registro_mwt.finanzas`).
+- **Si falta cualquier pieza** → el expediente queda `EN_PROCESO`/`BLOQUEADO-DISCREPANCIA` (según corresponda), se documenta qué falta, y **NO pasa al siguiente** hasta resolverlo (o hasta que la excepción §8.5 lo permita: pedido no identificable).
+
+#### 10.2 IDEMPOTENCIA FUERTE (mejora 2)
+- **Antes de crear CUALQUIER entidad** (producto, OC, expediente, SAP, recepción, transferencia, artefacto), el Operador **verifica primero si ya existe** por su identificador canónico:
+  - Expediente → `expediente_listar(oc=...)` / `expediente_obtener(<ref>)` (por PF/OC/SAP).
+  - Recepción → `inventario_artefactos_expediente` / stock ya asignado en el nodo.
+  - Transferencia → `transferencia_listar` por `origen_id`+`destino_id`+`ref_tracking`.
+  - Artefacto → `inventario_artefactos_expediente` / `nodo_artefactos_listar(nodo_id, template_id)`.
+- **Si existe → ACTUALIZAR (editar), nunca duplicar.** Si no existe → crear.
+- Al re-ejecutar una corrida, los expedientes ya `COMPLETO` se **actualizan** (no se recrean) y los que quedaron `EN_PROCESO`/`BLOQUEADO` se **retoman**.
+
+#### 10.3 RETOMABLE TRAS CAÍDA (mejora 3)
+- El loop **persiste su punto de avance** en un archivo `PROGRESO_LOOP.json` en la raíz de la ruta local:
+  ```
+  {"ultimo_expediente_procesado": "PF_2453", "en_curso": null,
+   "pendientes_reexplorar": ["PF_2404"], "corrida": 3, "fecha": "YYYY-MM-DD"}
+  ```
+- Al arrancar una corrida (protocolo 0), el Consultor **lee `PROGRESO_LOOP.json`**:
+  - Si hay `en_curso` → retoma ESE expediente (no empieza de cero).
+  - Si no → retoma desde `ultimo_expediente_procesado` + 1 (siguiente cronológico).
+  - Los `PENDIENTE` se procesan primero; los `COMPLETO` se saltan (o se re-verifican rápido).
+- Si el proceso se corta (IMAP, red, crash), al relanzar **detecta el `estado_procesamiento="EN_PROCESO"`** de la carpeta y continúa exactamente desde ahí.
+
+#### 10.4 BITÁCORA DE INTENTOS POR EXPEDIENTE (mejora 4)
+- Cada expediente registra en `expediente.json` → `bitacora_intentos`: lista de `{contrato, intento, resultado, error?, fecha}`.
+- Máx. **3 intentos por contrato** (C1↔C2, C3→C1, C3↔C4↔C5↔C6). Si se agotan → se documenta el bloqueo en `expediente.json` (`bloqueo: {contrato, motivo}`), se marca `BLOQUEADO-DISCREPANCIA` (si hay discrepancia) o `EN_PROCESO` (si falta info), y se continúa al siguiente (G3) — **pero el expediente queda en el reporte de deudas** para la próxima corrida.
+- No repetir el mismo intento fallido: se registra **qué se intentó y por qué falló** para no hacer lo mismo.
+
+#### 10.5 PENDIENTES RASTREADOS Y RE-EXPLORACIÓN (mejora 5)
+- Cada `[PENDIENTE]` de un expediente se registra con **dónde se buscó** (carpeta, correo, archivo, OCR, imagen, enlace) y la razón.
+- Al inicio de CADA corrida, el Consultor **re-busca primero los pendientes de los expedientes `EN_PROCESO`/`BLOQUEADO-DISCREPANCIA`/`COMPLETO-con-pendientes`**: vuelve a la carpeta y a los correos (pueden haber llegado documentos nuevos) e intenta resolverlos.
+- Si resuelve un pendiente → actualiza el expediente, el `.md`, los artefactos y (si aplica) el MCP.
+- Los pendientes NO resueltos quedan en el `RESUMEN_GENERAL` como deudas activas.
+
+#### 10.6 MARCO DE EXPEDIENTES COMPARTIDOS / MULTI-PF (mejora 6)
+- Un correo/embarque/transferencia puede cubrir **varias PF/expedientes** (regla §4 y §9.4).
+- El primer expediente del grupo que se procesa **crea/registra** la recepción, el movimiento y los artefactos compartidos. Los siguientes del MISMO grupo **NO los duplican**: reutilizan el `recepcion_id`/`transferencia_id`/`artifact_id` ya creados y solo **agregan sus líneas/expedientes** al alcance.
+- Se marca en `expediente.json` → `compartido` = `{"grupo": "<id_grupo_embarque>", "rol": "PRIMARIO|SECUNDARIO", "artefactos_compartidos": [ids], "recepcion_id": ..., "transferencia_id": ...}`.
+- El Auditor verifica que el grupo no duplique stock ni costos (la recepción/movimiento se contabilizan una vez).
+
+#### 10.7 LIBRO DE CIERRE POR CORRIDA (mejora 7)
+- Al terminar CADA corrida completa, el **Relator (C7)** genera/actualiza el **`LIBRO_CIERRE.md`** (raíz) con:
+  - **Totales**: expedientes procesados, COMPLETOS, EN_PROCESO, BLOQUEADO-DISCREPANCIA, PENDIENTES.
+  - **Por estado del ciclo**: cuántos en REGISTRO, PRODUCCIÓN, PREPARACIÓN DE DESPACHO, TRÁNSITO, EN DESTINO, CERRADO.
+  - **Deudas**: pendientes abiertos (expediente → qué falta → dónde se buscó).
+  - **Discrepancias activas** (resumen §8).
+  - **Compartidos/multi-PF**: grupos y sus expedientes.
+  - **Qué quedó para la próxima corrida**.
+- Este libro es el **reporte de cierre** que Alvaro revisa; actualiza `RESUMEN_GENERAL_EXPEDIENTES.md` con los mismos conteos.
+
+#### 10.8 MODO PAUSA OPCIONAL ENTRE EXPEDIENTES (mejora 8)
+- El modo por defecto es **autónomo continuo**. Si Alvaro lo pide (configuración o consigna al inicio), el loop puede **pausar al cierre de cada expediente** para que Alvaro revise y confirme antes de pasar al siguiente.
+- En modo pausa: el Relator presenta el resumen del expediente recién cerrado y **espera confirmación de Alvaro** (`continuar` / `revisar` / `corregir`). Si Alvaro pide corregir → devuelve el expediente al circuito (C1/C3) con las indicaciones.
+- En modo autónomo (default) NO pausa: se procesan todos en serie y se entrega el `LIBRO_CIERRE.md` + `RESUMEN_GENERAL` al final.
+
 ---
 
 ## 📋 LISTA DE PEDIDOS / CÓDIGOS DE BÚSQUEDA
@@ -337,6 +415,8 @@ Cada archivo/correlación de la lista §A.3.8 que tenga un template del Builder 
 <RUTA_SONEPAR_ALVARO>/
 ├── MEMORIA_EXTRACCION.md                 (memoria persistente de aprendizaje)
 ├── RESUMEN_GENERAL_EXPEDIENTES.md        (cuadro de mando consolidado)
+├── PROGRESO_LOOP.json                    (punto de avance del loop — retomable tras caída, §10.3)
+├── LIBRO_CIERRE.md                       (libro de cierre por corrida, §10.7)
 ├── PF_<codigo>/                          (1 carpeta por pedido)
 │   ├── documentos/
 │   │   ├── PO_<OC>.pdf
@@ -486,6 +566,8 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 > 📌 **Entrada del contrato**: recibe de C2 la carpeta validada + las **3 listas operativas validadas** (artefactos §9, recepción A.3.2, movimiento A.3.3). Úsalas tal cual en los pasos C3.8/C3.9. Si un dato de la lista no cuadra con el backend al momento de insertar → regístralo (G2) y usa el valor confirmado.
 
 > 🔁 **CONSULTA AL CONSULTOR (C3→C1) — si tienes una duda sobre el expediente**: NO le preguntes a Alvaro durante el proceso. **Pregúntale al Consultor (C1)** por ese expediente: el Consultor revisa lo ya extraído, y si falta, **re-busca en la carpeta de archivos y en los correos** (OCR incluido) y te responde con el valor + la fuente (protocolo A.6). Si la respuesta es `[PENDIENTE]`, registra el pendiente y continúa.
+
+> 🧩 **IDEMPOTENCIA (§10.2)**: antes de crear cualquier entidad, verifica si ya existe por su identificador canónico (expediente por PF/OC/SAP, recepción por stock en nodo, transferencia por origen+destino+tracking, artefacto por nodo+template). Si existe → **actualiza (editar), nunca duplicar**. Esto evita duplicados al re-ejecutar la corrida.
 
 > 📌 **Las firmas exactas, parámetros y ejemplos de TODAS estas tools están en la sección «🧭 GUÍA DETALLADA DE TOOLS DEL MCP MWT.ONE QUE USA EL OPERADOR»** (más abajo). Esta fase es el flujo de alto nivel; consulta la guía para cada invocación.
 
@@ -655,7 +737,7 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 **C5.1 Relevo a C6 (Auditor Final)**
 - Al terminar C5, pasa a C6 para **re-validar lo insertado (C3), lo persistido (C4) y lo financiero (C5)**.
 
-### C6 · FASE D — AUDITOR FINAL (2ª pasada sobre C3 + C4 + C5)
+### C6 · FASE D — AUDITOR FINAL (2ª pasada sobre C3 + C4 + C5 + veredicto de cierre §10.1)
 1. Verifica que el expediente quedó creado/actualizado correctamente (consultando el MCP: `expediente_obtener`, `expediente_lineas`).
 2. Verifica que **todos los productos** existen, están habilitados para Sonepar Colombia y tienen los precios correctos (`producto_buscar`).
 3. Verifica que el **SAP**, los **estados** y los **artefactos/documentos** quedaron registrados (`sap_obtener`, `inventario_artefactos_expediente`, `documento_listar`).
@@ -663,9 +745,15 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 5. **Verifica la RECEPCIÓN (C3.8)**: `recepcion_crear` quedó registrada en el nodo destino; los items coinciden con la lista A.3.2 validada por C2; el stock recibido refleja las cantidades del expediente (`inventario_saldos_por_expediente` / `stock_listar(nodo)`). Si el stock no cuadra → devolver al Operador.
 6. **Verifica el MOVIMIENTO (C3.9)**: `transferencia_crear` existe con sus líneas, `legal_context`, `ref_tracking`, costos del DUA (`transfer_costos_listar`) y artefactos vinculados (`transfer_artefacto_crear`); el stock en el nodo destino refleja el movimiento (`stock_listar`). Si no cuadra → devolver al Operador.
 7. **Verifica finanzas (C5)**: comisión/margen/devengo y pagos documentados en `expediente.json` → `finanzas` y en el `.md` (§7). Si faltan datos evidenciales → `[PENDIENTE]` documentado.
-8. Verifica que **ningún dato insertado contradice una fuente** y que las **discrepancias** quedaron **registradas** (modo autónomo §8.5) — no requieren decisión de Alvaro para cerrar el pedido.
-9. Si hay errores → **devuelve al Operador/Persistidor/Finanzas** para corregir.
-10. Si está bien → pasa a la FASE E (C7).
+8. **Verifica idempotencia (§10.2)**: no hay duplicados (el expediente, la recepción y el movimiento se crearon una sola vez; los re-encuentros se editaron). Para grupos compartidos (§10.6), el `rol` y los ids compartidos son correctos.
+9. **EMITE EL VEREDICTO DE CIERRE (§10.1)**: marca `expediente.json → estado_procesamiento`:
+   - `COMPLETO` — las 8 piezas (§10.1) verificadas y registradas en el MCP.
+   - `BLOQUEADO-DISCREPANCIA` — se registró todo pero quedó discrepancia/pendiente abierta (se reporta).
+   - `EN_PROCESO` — falta alguna pieza por resolver; queda como deuda de la corrida.
+   Actualiza `bitacora_intentos` (§10.4) con el resultado.
+10. Verifica que **ningún dato insertado contradice una fuente** y que las **discrepancias** quedaron **registradas** (modo autónomo §8.5) — no requieren decisión de Alvaro para cerrar el pedido.
+11. Si hay errores → **devuelve al Operador/Persistidor/Finanzas** para corregir (máx. 3 intentos, §10.4).
+12. Si está bien → pasa a la FASE E (C7) con el **veredicto de cierre**.
 
 ### C7 · FASE E — RELATOR (informe DETALLADO a Alvaro y avanza al siguiente pedido)
 1. Al cerrar el pedido, prepara el **informe detallado** para Alvaro (lo presentará al final del loop o lo guarda en `RESUMEN_GENERAL_EXPEDIENTES.md`):
@@ -680,8 +768,11 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
    - **Finanzas**: comisión, margen, devengo (DEVENGABLE/PROYECTADA/etc.), pagos.
    - **Discrepancias detectadas** (§8): campo, fuentes, valores, clasificación, estado (ABIERTA).
    - **Errores y falta de información**: datos `[PENDIENTE]`, docs no descargados (por qué).
-2. **Actualiza `RESUMEN_GENERAL_EXPEDIENTES.md`** con el resumen del pedido (matrices: expedientes, nodos, recepción, discrepancias, artefactos, finanzas).
-3. Luego **pasa al siguiente pedido/carpeta** y repite el loop.
+   - **Veredicto de cierre (§10.1)**: `estado_procesamiento` = COMPLETO / BLOQUEADO-DISCREPANCIA / EN_PROCESO (con qué pieza falta, si aplica).
+2. **Actualiza `RESUMEN_GENERAL_EXPEDIENTES.md`** con el resumen del pedido (matrices: expedientes, nodos, recepción, movimiento, discrepancias, artefactos, finanzas, estado_procesamiento).
+3. **Actualiza `PROGRESO_LOOP.json` (§10.3)**: `ultimo_expediente_procesado`, `en_curso` (si quedó a medias), `pendientes_reexplorar`.
+4. **En modo pausa (§10.8)**: presenta el resumen del expediente y **espera confirmación de Alvaro** (`continuar` / `revisar` / `corregir`) antes de pasar al siguiente. En modo autónomo: continúa directo.
+5. Luego **pasa al siguiente pedido/carpeta** y repite el loop. Al terminar TODA la corrida, genera/actualiza el **`LIBRO_CIERRE.md` (§10.7)** con los totales y deudas.
 
 ---
 
@@ -811,13 +902,13 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 **Cliente**: SONEPAR COLOMBIA SAS / MELEXA SAS (`88888888-0000-4000-8000-000000000011`)
 **Total de Pedidos Procesados**: [N]
 
-## Matriz Consolidada de Expedientes y Nodos (incl. recepción, movimiento y finanzas)
-| # | PF | OC | SAP | Modo | Nodo Origen | Nodo Destino | Recepción (id) | Movimiento (TRF) | Transportista | HBL/AWB | ETD | ETA | DUA # | Estado Ciclo | Delta/Margen (USD) | Comisión (USD) | Devengo | Docs Faltantes | Registrado MWT |
-|---|----|----|-----|------|-------------|--------------|----------------|------------------|---------------|---------|-----|-----|-------|--------------|--------------------|----------------|---------|----------------|----------------|
-| 1 | ... | ... | ... | ... | [fábrica/POL] | [POD/bodega] | [uuid/—] | [TRF-…/estado] | ... | ... | ... | ... | ... | ... | ... | ... | [DEVENGABLE/PROYECTADA] | ... | Sí/No |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
+## Matriz Consolidada de Expedientes y Nodos (incl. recepción, movimiento, finanzas y cierre §10)
+| # | PF | OC | SAP | Modo | Nodo Origen | Nodo Destino | Recepción (id) | Movimiento (TRF) | Estado Ciclo | Delta/Margen (USD) | Comisión (USD) | Devengo | Docs Faltantes | estado_procesamiento (§10.1) |
+|---|----|----|-----|------|-------------|--------------|----------------|------------------|--------------|--------------------|----------------|---------|----------------|------------------------------|
+| 1 | ... | ... | ... | ... | [fábrica/POL] | [POD/bodega] | [uuid/—] | [TRF-…/estado] | ... | ... | ... | [DEVENGABLE/PROYECTADA] | ... | COMPLETO / BLOQUEADO / EN_PROCESO |
+| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
 
-> Nodos (C3.3): origen/destino del cuerpo del correo e imágenes; `nodo_listar`/`nodo_crear`. Recepción (C3.8): `recepcion_crear` en el nodo destino + costos + artefactos vinculados. Movimiento (C3.9): `transferencia_crear` al estar EN DESTINO, costos del DUA/factura (`transfer_costo_agregar`) + artefactos (`transfer_artefacto_crear`). Finanzas (C5): `finanzas_overview` / `finanzas_comisiones(client_id=Sonepar)` / `pago_listar(expediente_id)`.
+> Nodos (C3.3): origen/destino del cuerpo del correo e imágenes; `nodo_listar`/`nodo_crear`. Recepción (C3.8): `recepcion_crear` en el nodo destino + costos + artefactos vinculados. Movimiento (C3.9): `transferencia_crear` al estar EN DESTINO, costos del DUA/factura (`transfer_costo_agregar`) + artefactos (`transfer_artefacto_crear`). Finanzas (C5): `finanzas_overview` / `finanzas_comisiones(client_id=Sonepar)` / `pago_listar(expediente_id)`. Cierre (§10): `estado_procesamiento` lo fija el Auditor Final (C6).
 
 ## Matriz de Alertas Críticas de Importación
 - **Riesgo de Demora / Factory Delay**: [lista de pedidos]
@@ -855,6 +946,16 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 - **Datos/documentos no encontrados** tras agotar ruta local + correos (asunto, cuerpo, hilo, enlaces, OCR): [lista por pedido].
 - **Errores corregidos durante el procesamiento** (interpretaciones malas, duplicados, re-subidas): [lista].
 - **Pedidos con estados `[PENDIENTE]`** sin cerrar: [lista] (para seguimiento).
+
+## Libro de Cierre de la Corrida (protocolo §10.7 — SIEMPRE presente)
+> Generado por el Relator (C7) al terminar TODA la corrida. Es el reporte que Alvaro revisa.
+
+- **Totales**: procesados: [N] | COMPLETOS: [N] | EN_PROCESO: [N] | BLOQUEADO-DISCREPANCIA: [N] | PENDIENTES: [N].
+- **Por estado del ciclo**: REGISTRO: [N] | PRODUCCIÓN: [N] | PREPARACIÓN DE DESPACHO: [N] | TRÁNSITO: [N] | EN DESTINO: [N] | CERRADO: [N].
+- **Deudas activas (pendientes por expediente)**: [expediente → qué falta → dónde se buscó] (§10.5).
+- **Discrepancias activas**: [resumen §8].
+- **Compartidos / multi-PF**: [grupo → expedientes → recepcion_id/transferencia_id compartidos] (§10.6).
+- **Para la próxima corrida**: [expedientes `EN_PROCESO`/`BLOQUEADO-DISCREPANCIA` a retomar (§10.3) + pendientes a re-explorar (§10.5)].
 ```
 
 ---
@@ -868,6 +969,11 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
   "cliente_nombre": "SONEPAR COLOMBIA SAS",
   "razon_social_detectada": "SONEPAR COLOMBIA SAS | MELEXA SAS",
   "operado_por_muito_work": true,
+  "estado_procesamiento": "PENDIENTE",
+  "bloqueo": null,
+  "bitacora_intentos": [],
+  "pendientes": [],
+  "compartido": null,
   "ambigua": null,
   "mensajes": 0,
   "primer_correo": null,
@@ -1005,6 +1111,13 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 ```
 
 **Campos obligatorios**: todas las claves deben existir; usar `null`/`"[PENDIENTE]"` si no hay datos. `registro_mwt` se llena por el **Operador** al insertar en el sistema. `artefactos_subidos` documenta cada artefacto persistido en la Consola (protocolo §9): un artefacto puede listar **varios** `expedientes` y **varios** `productos`.
+
+**Campos de cierre del loop (protocolo §10)**:
+- `estado_procesamiento`: `PENDIENTE | EN_PROCESO | COMPLETO | BLOQUEADO-DISCREPANCIA` — lo setea el Auditor Final (C6) al emitir el veredicto (§10.1).
+- `bloqueo`: `{contrato, motivo, fecha}` — si se agotaron los 3 intentos (§10.4).
+- `bitacora_intentos`: `[{contrato, intento, resultado, error?, fecha}]` (§10.4).
+- `pendientes`: `[{dato, donde_se_busco, razon, resuelto: bool, fecha}]` — para la re-exploración en la próxima corrida (§10.5).
+- `compartido`: `{grupo, rol: PRIMARIO|SECUNDARIO, recepcion_id?, transferencia_id?, artefactos_compartidos: []}` — para embarques multi-PF (§10.6).
 
 ---
 
@@ -1594,4 +1707,4 @@ transferencia_cerrar(transferencia_id)   # → CLOSED (opcional al cierre)
 
 ---
 
-**INICIO (modo AUTÓNOMO)**: **Pregunta a Alvaro la ruta de Windows** de los pedidos de SONEPAR COLOMBIA (única pregunta obligatoria). Luego **corre el loop sin detenerte**: listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **cada pedido completo** (contratos C1→C7: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Finanzas → Auditor Final → Relator) pasando al siguiente al cerrar cada uno. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3) — solo detente si la identidad falla (G1). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Identifica los NODOS de origen y destino de cada pedido** leyendo el cuerpo del correo y las imágenes incrustadas (C3.3): verifica con `nodo_listar` y si no existen, créalos con `nodo_crear`. **Crea la RECEPCIÓN DE INVENTARIO en el nodo destino** (C3.8): `recepcion_crear` con las cantidades de los expedientes en el nodo, agrega los costos operativos (flete/seguro/aranceles del DUA) y **vincula los artefactos** (Packing List, BL, Factura) a la recepción. **Cuando el expediente esté EN DESTINO, crea el MOVIMIENTO ENTRE NODOS** (C3.9): `transferencia_crear` del nodo de recepción al nodo final del cliente con `legal_context` según el DUA; **LEE los DUA/DUE/facturas comerciales de Marluvas del correo/archivos/OCR** para agregar los costos (`transfer_costo_agregar`: FLETE/SEGURO/DAI/IVA/LEY_6946/PROCOMER/AGENCIAMIENTO) y **vincula los artefactos** al movimiento (`transfer_artefacto_crear`); luego aprobar → despachar → recibir → conciliar → cerrar. **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **REGÍSTRALA, marca el pedido `BLOQUEADO (discrepancia)` y CONTINÚA** (gate G2 / modo autónomo §8.5) — se reporta al final en el informe. **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s). **Revisa FINANZAS por expediente** (§C5): comisión, margen, devengo, pagos. **Al terminar TODOS los pedidos**, presenta a Alvaro el informe detallado de cada expediente (búsqueda local, correos, expediente creado, nodos origen/destino, recepción de inventario, estado actual, productos/lineas, finanzas, discrepancias y pendientes). No preguntes durante el proceso salvo la ruta inicial o un fallo de identidad/conexión.
+**INICIO (modo AUTÓNOMO)**: **Pregunta a Alvaro la ruta de Windows** de los pedidos de SONEPAR COLOMBIA (única pregunta obligatoria). Luego **corre el loop sin detenerte**: listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **cada pedido completo** (contratos C1→C7: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Finanzas → Auditor Final → Relator) pasando al siguiente al cerrar cada uno. **El loop es BLOQUEANTE por expediente (§10)**: un expediente NO se da por cerrado ni se pasa al siguiente hasta quedar **100% registrado y actualizado en el MCP** (veredicto de cierre en C6: COMPLETO / BLOQUEADO-DISCREPANCIA / EN_PROCESO). Los expedientes pueden quedar en distintos estados del ciclo segun su evidencia (REGISTRO, PRODUCCION, PREPARACION DE DESPACHO, TRANSITO, EN DESTINO, CERRADO). **Retoma desde `PROGRESO_LOOP.json` (§10.3) y re-explora pendientes (§10.5)**. **Si el Operador duda → consulta al Consultor (C1), no a Alvaro (A.6)**. **Usa idempotencia (§10.2): actualiza, no dupliques**. **Al terminar TODA la corrida, genera el `LIBRO_CIERRE.md` (§10.7)**. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3) — solo detente si la identidad falla (G1). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Identifica los NODOS de origen y destino de cada pedido** leyendo el cuerpo del correo y las imágenes incrustadas (C3.3): verifica con `nodo_listar` y si no existen, créalos con `nodo_crear`. **Crea la RECEPCIÓN DE INVENTARIO en el nodo destino** (C3.8): `recepcion_crear` con las cantidades de los expedientes en el nodo, agrega los costos operativos (flete/seguro/aranceles del DUA) y **vincula los artefactos** (Packing List, BL, Factura) a la recepción. **Cuando el expediente esté EN DESTINO, crea el MOVIMIENTO ENTRE NODOS** (C3.9): `transferencia_crear` del nodo de recepción al nodo final del cliente con `legal_context` según el DUA; **LEE los DUA/DUE/facturas comerciales de Marluvas del correo/archivos/OCR** para agregar los costos (`transfer_costo_agregar`: FLETE/SEGURO/DAI/IVA/LEY_6946/PROCOMER/AGENCIAMIENTO) y **vincula los artefactos** al movimiento (`transfer_artefacto_crear`); luego aprobar → despachar → recibir → conciliar → cerrar. **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **REGÍSTRALA, marca el pedido `BLOQUEADO (discrepancia)` y CONTINÚA** (gate G2 / modo autónomo §8.5) — se reporta al final en el informe. **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s). **Revisa FINANZAS por expediente** (§C5): comisión, margen, devengo, pagos. **Al terminar TODOS los pedidos**, presenta a Alvaro el informe detallado de cada expediente (búsqueda local, correos, expediente creado, nodos origen/destino, recepción de inventario, estado actual, productos/lineas, finanzas, discrepancias y pendientes). No preguntes durante el proceso salvo la ruta inicial o un fallo de identidad/conexión.
