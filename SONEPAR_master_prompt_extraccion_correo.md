@@ -492,8 +492,41 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 - **Resto (BL/AWB, DUA, Factura, otros)**: `documento_subir(file_path, kind, codigo, expediente_id, audience="CLIENT")`.
 - Verifica con `documento_listar(expediente="<uuid>")`; borra rotos con `documento_eliminar`.
 
-**C3.8 Relevo a C4 (Persistidor de Evidencia)**
-- Al cerrar C3, entrega el `expediente_id`, los `nodo_id` (origen/destino) resueltos y la lista §9 al contrato C4. No se pasa a C5 sin persistir la evidencia.
+**PASO C3.8 RECEPCIÓN DE INVENTARIO en el nodo destino** — ver guía §C.12 (nuevo)
+> 🎯 **Crear la recepción de inventario** (motor de recepción de la consola, `/inventario/recepcion`): la mercancía del expediente se recibe en el **nodo destino** (el que identificó/creó C3.3), asignando las cantidades de los expedientes, agregando **costos operativos** (flete, seguro, aranceles DAI/IVA) y **vinculando los artefactos** (Packing List, BL, Factura) a la recepción.
+
+1. **Resolver el nodo DESTINO** (C3.3): el nodo donde llega la mercancía (debe tener capacidad `receive`). Es el mismo `destino_id` de `registro_mwt.nodos`.
+2. **Preparar los `items` de recepción**: por cada (expediente × producto × talla) del pedido → `{expediente_id, producto_id, talla, qty_asignada, nodo_id=<destino_id>}`. Puede asignar productos de **uno o más expedientes** al mismo nodo (el motor lo permite: "Puedes asignar productos de uno o más expedientes al mismo nodo"). Cantidad = la pendiente por asignar (la que indica el motor en `recepcion_crear`).
+3. **Crear la recepción**:
+   ```
+   recepcion_crear(items=[
+     {"expediente_id": "<uuid_exp>", "producto_id": "<uuid_prod>", "talla": "37", "qty_asignada": 10, "nodo_id": "<destino_id>"},
+     ...  # todos los productos × tallas del expediente (pueden ser varios expedientes)
+   ], cost_lines=[...])   # opcional, paso 3 de costos
+   ```
+4. **Costos operativos (paso 3, opcional pero recomendado)**: si el pedido tiene flete/seguro/aranceles (del DUA, factura, correos), agrégalos en `cost_lines`:
+   ```
+   cost_lines=[
+     {"kind": "FLETE", "amount": <monto>, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
+      "scope": {"applies_to_all": true}},   # o restringir a expedientes/líneas
+     {"kind": "SEGURO", "amount": <monto>, ...},
+     {"kind": "DAI", "amount": <monto>, ...},   # aranceles
+     {"kind": "IVA", "amount": <monto>, ...},   # se excluye del landed en liquidación
+   ]
+   ```
+   - **Kinds válidos** (del catálogo `transferencias/select_cost_kinds/`): `DAI`, `IVA`, `PROCOMER`, `LEY_6946`, `ALMACENAJE`, `TIMBRE_ARCHIVO`, `TIMBRE_AGENTES`, `TIMBRE_CONTADORES`, `AGENCIAMIENTO`, `MANIPULEO`, `FLETE`, `SEGURO`, `CONSOLIDACION`, `OTRO`.
+   - Se prorratean por unidad y quedan asociados al inventario del nodo (viajan al transferir).
+5. **Vincular ARTEFACTOS a la recepción** (paso 4 Confirmar — el motor permite "Conectar proformas, BL, facturas u otros documentos del Builder a esta recepción"): cada artefacto se vincula a los expedientes/líneas elegidas en el paso 2. Usa la tool de artefactos del nodo destino (`nodo_artefacto_crear` con `nodo_id=<destino_id>`, `template_id`, `data` con el PDF/imagen del documento y `lines` con los expedientes/productos/tallas de la recepción). **Los artefactos de la recepción SON los mismos del protocolo §9** — se persisten en el nodo destino y quedan asociados a las líneas recibidas.
+   - Packing List/Romaneiro → template 23 (`Packing List Dellado`), con `# Cajas`, `Peso bruto`, `Peso neto`, `m3`.
+   - AWB/BL → template 9.
+   - Factura Comercial → template 13.
+   - Certificado de Origen → template 25.
+   - Verifica/crea con `inventario_artefactos_expediente(expediente_id)` / `nodo_artefactos_listar(nodo_id)` antes de crear (no duplicar).
+6. **Confirmar la recepción**: `recepcion_crear` devuelve el resultado de la asignación (líneas, productos, unidades, expedientes). Si el backend requiere `recepcion_id` (actualización), pásalo.
+7. **Registrar en `expediente.json`** → `registro_mwt.recepcion` = `{"recepcion_id": ..., "nodo_destino_id": ..., "items_asignados": N, "costos": [kinds], "artefactos": [artifact_ids]}` y en el `.md` (§4 nodos / §8 artefactos).
+
+**C3.9 Relevo a C4 (Persistidor de Evidencia)**
+- Al cerrar C3, entrega el `expediente_id`, los `nodo_id` (origen/destino) resueltos, el `recepcion_id` y la lista §9 al contrato C4. No se pasa a C5 sin persistir la evidencia.
 
 ### C4 · FASE C4 — PERSISTIDOR DE EVIDENCIA (artefactos del Builder en la Consola)
 
@@ -543,11 +576,13 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
    - **Búsqueda en ruta local**: archivos encontrados, OCR, carpetas internas.
    - **Búsqueda en correos**: hilos, adjuntos, enlaces, imágenes, discrepancias de evidencia.
    - **Expediente**: `expediente_id`, `oc_id`, estados del ciclo (REGISTRO→…→EN DESTINO/CERRADO) con fechas y estado actual.
+   - **Nodos (C3.3)**: origen y destino (código/nombre/país), creados o existentes, con sus `id`.
+   - **Recepción de inventario (C3.8)**: `recepcion_id`, nodo destino, items asignados, unidades, costos agregados (flete/seguro/aranceles), **artefactos vinculados a la recepción** (Packing List, BL, Factura).
    - **Productos / líneas**: SKU, descripción, talla, cantidad por talla, precio de cada SKU (cliente/MWT), NCM.
    - **Finanzas**: comisión, margen, devengo (DEVENGABLE/PROYECTADA/etc.), pagos.
    - **Discrepancias detectadas** (§8): campo, fuentes, valores, clasificación, estado (ABIERTA).
    - **Errores y falta de información**: datos `[PENDIENTE]`, docs no descargados (por qué).
-2. **Actualiza `RESUMEN_GENERAL_EXPEDIENTES.md`** con el resumen del pedido (matrices: expedientes, discrepancias, artefactos, finanzas).
+2. **Actualiza `RESUMEN_GENERAL_EXPEDIENTES.md`** con el resumen del pedido (matrices: expedientes, nodos, recepción, discrepancias, artefactos, finanzas).
 3. Luego **pasa al siguiente pedido/carpeta** y repite el loop.
 
 ---
@@ -678,13 +713,13 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
 **Cliente**: SONEPAR COLOMBIA SAS / MELEXA SAS (`88888888-0000-4000-8000-000000000011`)
 **Total de Pedidos Procesados**: [N]
 
-## Matriz Consolidada de Expedientes y Nodos (incl. finanzas — contrato C5)
-| # | PF | OC | SAP | Modo | Nodo Origen | Nodo Destino | Transportista | HBL/AWB | ETD | ETA | DUA # | Estado Ciclo | Fecha Inicio | Delta/Margen (USD) | Comisión (USD) | Devengo | Docs Faltantes | Registrado MWT |
-|---|----|----|-----|------|-------------|--------------|---------------|---------|-----|-----|-------|--------------|--------------|--------------------|----------------|---------|----------------|----------------|
-| 1 | ... | ... | ... | ... | [fábrica/POL] | [POD/bodega] | ... | ... | ... | ... | ... | ... | ... | ... | ... | [DEVENGABLE/PROYECTADA] | ... | Sí/No |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
+## Matriz Consolidada de Expedientes y Nodos (incl. recepción y finanzas)
+| # | PF | OC | SAP | Modo | Nodo Origen | Nodo Destino | Recepción (id) | Transportista | HBL/AWB | ETD | ETA | DUA # | Estado Ciclo | Delta/Margen (USD) | Comisión (USD) | Devengo | Docs Faltantes | Registrado MWT |
+|---|----|----|-----|------|-------------|--------------|----------------|---------------|---------|-----|-----|-------|--------------|--------------------|----------------|---------|----------------|----------------|
+| 1 | ... | ... | ... | ... | [fábrica/POL] | [POD/bodega] | [uuid/—] | ... | ... | ... | ... | ... | ... | ... | ... | [DEVENGABLE/PROYECTADA] | ... | Sí/No |
+| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
 
-> Nodos (C3.3): origen/destino identificados del cuerpo del correo e imágenes; `nodo_listar`/`nodo_crear`. Finanzas (C5): `finanzas_overview` / `finanzas_comisiones(client_id=Sonepar)` / `pago_listar(expediente_id)`.
+> Nodos (C3.3): origen/destino del cuerpo del correo e imágenes; `nodo_listar`/`nodo_crear`. Recepción (C3.8): `recepcion_crear` en el nodo destino + costos + artefactos vinculados. Finanzas (C5): `finanzas_overview` / `finanzas_comisiones(client_id=Sonepar)` / `pago_listar(expediente_id)`.
 
 ## Matriz de Alertas Críticas de Importación
 - **Riesgo de Demora / Factory Delay**: [lista de pedidos]
@@ -825,6 +860,16 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
       "destino_id": null,
       "origen_label": "[PENDIENTE]",
       "destino_label": "[PENDIENTE]"
+    },
+    "recepcion": {
+      "recepcion_id": null,
+      "nodo_destino_id": null,
+      "nodo_destino_label": "[PENDIENTE]",
+      "items_asignados": 0,
+      "expedientes": [],
+      "unidades": 0,
+      "costos": [],
+      "artefactos": []
     },
     "productos_creados": [],
     "productos_actualizados": [],
@@ -1263,6 +1308,58 @@ nodo_crear(datos={
 
 **5. Regla**: si el origen/destino no se puede identificar del correo/cuerpo/imágenes → nodo `[PENDIENTE]` (NO inventar); se reporta y el expediente se crea con lo disponible.
 
+### C.12 RECEPCIÓN DE INVENTARIO EN EL NODO DESTINO (contrato C3.8)
+
+> Motor de recepción de la consola (`/inventario/recepcion`). Flujo de la UI: **1. Contexto → 2. Reconciliación → 3. Costos → 4. Confirmar**. El agente lo replica vía MCP: crear la recepción en el nodo destino (con capacidad `receive`), asignar cantidades de uno o más expedientes, agregar costos y **vincular los artefactos** del documento.
+
+**1. Resolver nodo destino**: es el `destino_id` de C3.3 (el nodo donde llega la mercancía). Verifica que tenga capacidad `receive` (`nodo_obtener` → `capabilities`).
+
+**2. Crear la recepción** (asignación de expedientes al nodo):
+```
+recepcion_crear(
+  items=[
+    {"expediente_id": "<uuid_exp>", "producto_id": "<uuid_prod>", "talla": "37", "qty_asignada": 10, "nodo_id": "<destino_id>"},
+    {"expediente_id": "<uuid_exp>", "producto_id": "<uuid_prod>", "talla": "38", "qty_asignada": 40, "nodo_id": "<destino_id>"},
+    ...  # TODOS los productos × tallas (pueden ser varios expedientes)
+  ],
+  cost_lines=[...],   # opcional (paso 3)
+)
+```
+- **Multi-expediente**: puedes asignar productos de uno o más expedientes al MISMO nodo (el motor lo permite).
+- La cantidad `qty_asignada` = la pendiente por asignar (el motor solo muestra pendientes).
+- Para transferir stock entre nodos (si hace falta mover de origen a destino) usa `inventario_transferir_asignaciones(origin_nodo_id, destination_nodo_id, items)`.
+
+**3. Costos operativos** (paso 3 de la UI — opcional pero recomendado si el pedido tiene flete/seguro/aranceles del DUA):
+```
+recepcion_crear(items=[...], cost_lines=[
+  {"kind": "FLETE", "amount": 1200.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
+   "scope": {"applies_to_all": true}},
+  {"kind": "SEGURO", "amount": 80.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
+   "scope": {"applies_to_all": true}},
+  {"kind": "DAI", "amount": 3500.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
+   "scope": {"applies_to_all": true}},      # aranceles
+  {"kind": "IVA", "amount": 4500.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
+   "scope": {"applies_to_all": true}},      # se excluye del landed en liquidación
+])
+```
+- **Kinds** (catálogo `select_cost_kinds/`): `DAI`, `IVA`, `PROCOMER`, `LEY_6946`, `ALMACENAJE`, `TIMBRE_ARCHIVO`, `TIMBRE_AGENTES`, `TIMBRE_CONTADORES`, `AGENCIAMIENTO`, `MANIPULEO`, `FLETE`, `SEGURO`, `CONSOLIDACION`, `OTRO`.
+- **Scope**: `{"applies_to_all": true}` = todo el batch, o `{"applies_to_all": false, "expediente_ids":[...], "lines":[{expediente_id, producto_id, talla}]}` = solo expedientes/líneas específicos.
+- Se prorratean por unidad y quedan asociados al inventario del nodo (viajan al transferir). `IVA` se excluye del landed cost en `transfer_liquidar`.
+
+**4. VINCULAR ARTEFACTOS a la recepción** (paso 4 Confirmar — el motor permite "Conectar proformas, BL, facturas u otros documentos del Builder a esta recepción"):
+- Los artefactos de la recepción se persisten en el **nodo destino** con `nodo_artefacto_crear(nodo_id=<destino_id>, template_id, template_title, data, structure_snapshot, lines)`.
+- `lines` = los expedientes/productos/tallas de la recepción (mismos que en `items`).
+- Templates: Packing List → 23, AWB/BL → 9, Factura Comercial → 13, Certificado de Origen → 25.
+- **Verificar primero** con `inventario_artefactos_expediente(expediente_id)` / `nodo_artefactos_listar(nodo_id)` → si existe, editar; si no, crear. (Protocolo §9 completo en la guía C.9.)
+- Subir los binarios con `storage_subir_archivo(file_path, scope="artifact-field/<field_id>", filename)` → `data[field_id]={key,url,name,mime,size}`.
+
+**5. Registro en `expediente.json`** (`registro_mwt.recepcion`):
+```
+{"recepcion_id": "<uuid>", "nodo_destino_id": "<uuid>", "nodo_destino_label": "PORT MOIN – CR",
+ "items_asignados": 8, "expedientes": ["<uuid_exp>"], "unidades": 130,
+ "costos": [{"kind": "SEGURO", "amount_usd": 10.0}], "artefactos": ["<artifact_id>"]}
+```
+
 ---
 
 ## 📋 RESUMEN DE LA SECUENCIA OPERATIVA DEL OPERADOR (contratos C3+C4+C5 — checklist)
@@ -1286,14 +1383,18 @@ nodo_crear(datos={
                         Certificado, OC/Proforma/SAP, evidencias) con lines (expedientes×productos) + data
                         → si EXISTE: artefacto_editar
                         → artefacto_publicar(publicado=True) + registrar en expediente.json
-10. DISCREPANCIAS       → registrar en §8.4/expediente.json (modo autónomo §8.5); NO detener — reportar al final
-11. FINANZAS            → por expediente: finanzas_overview / finanzas_comisiones(client_id=Sonepar) /
+10. RECEPCIÓN (C3.8)   → recepcion_crear(items=[{expediente_id,producto_id,talla,qty_asignada,nodo_id=destino}])
+                        → cost_lines (FLETE/SEGURO/DAI/IVA según DUA/factura) opcional pero recomendado
+                        → VINCULAR artefactos a la recepción (nodo_artefacto_crear en el nodo destino,
+                        lines = los de la recepción) + registrar recepcion_id en expediente.json
+11. DISCREPANCIAS       → registrar en §8.4/expediente.json (modo autónomo §8.5); NO detener — reportar al final
+12. FINANZAS            → por expediente: finanzas_overview / finanzas_comisiones(client_id=Sonepar) /
                          pago_listar(expediente_id) → comisión, margen, devengo, pagos; incluir en el informe
-12. ENTREGAR AL AUDITOR → FASE D (re-validación de lo insertado + persistencia de artefactos §9 + discrepancias registradas)
+13. ENTREGAR AL AUDITOR → FASE D (re-validación de lo insertado + recepción + persistencia §9 + discrepancias registradas)
 ```
 
 > El Operador debe consultar SIEMPRE que un identificador (expediente/OC/SAP/producto) ya exista antes de crear, para **actualizar** en lugar de duplicar. Si el motor de pricing no resuelve un precio, usa el valor del OCR de la OC/Proforma (regla C3.1) e indícalo en el `expediente.json` (`registro_mwt`). El Persistidor (C4) sube TODA la evidencia como artefactos (§9).
 
 ---
 
-**INICIO (modo AUTÓNOMO)**: **Pregunta a Alvaro la ruta de Windows** de los pedidos de SONEPAR COLOMBIA (única pregunta obligatoria). Luego **corre el loop sin detenerte**: listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **cada pedido completo** (contratos C1→C7: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Finanzas → Auditor Final → Relator) pasando al siguiente al cerrar cada uno. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3) — solo detente si la identidad falla (G1). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Identifica los NODOS de origen y destino de cada pedido** leyendo el cuerpo del correo y las imágenes incrustadas (C3.3): verifica con `nodo_listar` y si no existen, créalos con `nodo_crear`. **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **REGÍSTRALA, marca el pedido `BLOQUEADO (discrepancia)` y CONTINÚA** (gate G2 / modo autónomo §8.5) — se reporta al final en el informe. **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s). **Revisa FINANZAS por expediente** (§C5): comisión, margen, devengo, pagos. **Al terminar TODOS los pedidos**, presenta a Alvaro el informe detallado de cada expediente (búsqueda local, correos, expediente creado, nodos origen/destino, estado actual, productos/lineas, finanzas, discrepancias y pendientes). No preguntes durante el proceso salvo la ruta inicial o un fallo de identidad/conexión.
+**INICIO (modo AUTÓNOMO)**: **Pregunta a Alvaro la ruta de Windows** de los pedidos de SONEPAR COLOMBIA (única pregunta obligatoria). Luego **corre el loop sin detenerte**: listar carpetas, **ordenarlas de atrás hacia adelante** (más viejas → más nuevas de 2026) y procesar **cada pedido completo** (contratos C1→C7: Consultor → Auditor de Evidencia → Operador MWT → Persistidor de Evidencia → Finanzas → Auditor Final → Relator) pasando al siguiente al cerrar cada uno. **Verifica la conexión MCP primero** (`mwt_whoami` = alvaro@muitowork.com Admin/CEO; protocolo 0.3) — solo detente si la identidad falla (G1). **Recuerda**: los pedidos de **MELEXA SAS** son de SONEPAR COLOMBIA SAS (mismo `cliente_id`). **Identifica los NODOS de origen y destino de cada pedido** leyendo el cuerpo del correo y las imágenes incrustadas (C3.3): verifica con `nodo_listar` y si no existen, créalos con `nodo_crear`. **Crea la RECEPCIÓN DE INVENTARIO en el nodo destino** (C3.8): `recepcion_crear` con las cantidades de los expedientes en el nodo, agrega los costos operativos (flete/seguro/aranceles del DUA) y **vincula los artefactos** (Packing List, BL, Factura) a la recepción. **Aplica el protocolo de discrepancias (§8) en CADA pedido**: extrae cada número por fuente, reconcilia campo a campo, y ante cualquier **discrepancia** (ej. Packing List 89 cajas vs Romaneiro/real 150 cajas) **REGÍSTRALA, marca el pedido `BLOQUEADO (discrepancia)` y CONTINÚA** (gate G2 / modo autónomo §8.5) — se reporta al final en el informe. **Aplica el protocolo de persistencia de evidencia (§9)**: TODO documento/imagen/OCR del pedido se persiste como **artefacto del Builder en la Consola** (crear si no existe, actualizar si existe), asociado a su expediente(s) y producto(s). **Revisa FINANZAS por expediente** (§C5): comisión, margen, devengo, pagos. **Al terminar TODOS los pedidos**, presenta a Alvaro el informe detallado de cada expediente (búsqueda local, correos, expediente creado, nodos origen/destino, recepción de inventario, estado actual, productos/lineas, finanzas, discrepancias y pendientes). No preguntes durante el proceso salvo la ruta inicial o un fallo de identidad/conexión.
