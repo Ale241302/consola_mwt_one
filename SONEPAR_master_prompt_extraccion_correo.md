@@ -180,6 +180,29 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (ag
     - **Total moneda nacional (CRC)** para referencia (ej. 1.422.888,96).
   - **Acción**: descarga/OCR ambos, extrae los valores, y pásalos al Operador para `transfer_costo_agregar` en el movimiento (C3.9, guía §C.13). **NUNCA inventar**: si el DUA no está, `[PENDIENTE]`.
 
+- **Caso E2 (EXTRACCIÓN POR PAÍS DE DESTINO — importación)** — MWT opera clientes en **Costa Rica, Colombia, Guatemala, Honduras, Panamá y El Salvador**. Cada país usa su propio documento aduanero y tributos. **El patrón de extracción es el MISMO que en el Caso E**: identificar el documento (nombre/número), leer cada tributo (descripción → `kind`, valor en moneda local, %), y convertirlo a USD con el tipo de cambio (del DUA, del correo, o `tipo_cambio`).
+
+| País de destino | Documento aduanero (importación) | Tributos típicos → `kind` del MCP | Notas de extracción |
+|---|---|---|---|
+| **Costa Rica** | **DUA** (Declaración Única Aduanera) + consulta de impuestos | `DAI` (arancel, según NCM), `IVA` (13%, Ley 9635), `PROCOMER`, `LEY_6946` (1% s/CIF), `TIMBRE_ARCHIVO`, `TIMBRE_AGENTES` (Ley 7017), `TIMBRE_CONTADORES`, `AGENCIAMIENTO`, `MANIPULEO`, `FLETE`, `SEGURO` | Tributos en USD y CRC; Total moneda nacional de referencia |
+| **Colombia** | **DUA** (Declaración de Importación) vía MUISCA/DIAN + liquidación | `DAI` (arancel, según arancel nacional), `IVA` (19%), `FLETE`, `SEGURO`, `MANIPULEO`, `ALMACENAJE`, `AGENCIAMIENTO`, otros | Tributos en **COP**; usar `fx_to_usd` con el TC del documento/correo |
+| **Guatemala** | **DUA** (Declaración Única Aduanera) vía SIRE/DGA + liquidación | `DAI` (arancel, según arancel centroamericano/SA), `IVA` (12% o 15%), tasas de almacenaje, `MANIPULEO`, `AGENCIAMIENTO`, `FLETE`, `SEGURO` | Tributos en **GTQ**; usar `fx_to_usd` con el TC |
+| **Honduras** | **DUA** (Declaración Única Aduanera) + liquidación de impuestos | `DAI` (arancel), `IVA`/ISV (15%), impuestos selectivos al consumo, `MANIPULEO`, `ALMACENAJE`, `AGENCIAMIENTO`, `FLETE`, `SEGURO` | Tributos en **HNL**; usar `fx_to_usd` con el TC |
+| **El Salvador** | **DUA** (Declaración Única Aduanera) + liquidación | `DAI` (arancel), `IVA` (13%), impuestos selectivos, `MANIPULEO`, `ALMACENAJE`, `AGENCIAMIENTO`, `FLETE`, `SEGURO` | Tributos en **USD** (El Salvador usa dólar) |
+| **Panamá** | **DUA** (Declaración Única Aduanera) + liquidación de la ANA | `DAI` (arancel), **ITBMS** (7%, Impuesto de Transferencia de Bienes Muebles), tasas portuarias, `MANIPULEO`, `ALMACENAJE`, `AGENCIAMIENTO`, `FLETE`, `SEGURO` | Tributos en **USD** (Panamá usa dólar) |
+
+**Reglas de extracción (todos los países)**:
+1. **Identificar el país de destino** del pedido (del expediente, factura comercial, DUA/DUE, correos, `nodo_destino`).
+2. **Buscar el documento aduanero del país** en correos/archivos/OCR (nombre según la tabla: DUA, declaración, liquidación, extrato DUE). Muchos llegan como capturas de pantalla de la web de la aduana o PDF de la liquidación.
+3. **Extraer cada tributo**: descripción → `kind` (mapear al catálogo `select_cost_kinds/`; el arancel siempre `DAI`, el IVA local `IVA`, etc.). Anotar **valor en moneda local + %**.
+4. **Convertir a USD** con `fx_to_usd` (el tipo de cambio del documento, del correo, o `tipo_cambio` del MCP). Guardar también el valor en moneda local para referencia.
+5. **Regla**:
+   - El **arancel** (`DAI`) es **capitalizable** (entra al landed cost).
+   - El **IVA/impuesto al consumo** local **NO se capitaliza** (crédito fiscal) — `kind="IVA"`.
+   - `AGENCIAMIENTO` = honorarios del agente de aduanas; `MANIPULEO` = handling; `ALMACENAJE` = bodegaje.
+6. **Verificar contra la factura/DUE**: FOB/CIF del DUE (VMLE/VMCV) o de la factura deben cuadrar con la base del DUA. **NUNCA inventar montos**: si el documento del país no está, `[PENDIENTE]` con dónde se buscó.
+7. En `expediente.json` registrar el país (`pais_destino`) y los tributos extraídos con su moneda original y `fx_to_usd`.
+
 ### 4. BÚSQUEDA MULTI-CRITERIO Y ASOCIACIÓN CRUZADA
 - Busca por subcadenas: PF, OC, SAP, marca/proveedor, HBL/AWB, booking, contenedor, remessa.
 - Si un hilo ampara varias PF, **replica los artefactos** en las carpetas de todas las PF involucradas.
@@ -516,7 +539,7 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harn
 2. **Nodos origen/destino del movimiento**: `origen_id` = nodo donde se recibió (C3.8), `destino_id` = nodo final del cliente. Ambos en `registro_mwt.nodos`.
 3. **Contexto legal** (`legal_context`): si hay DUA → `NATIONALIZATION`; si es interno → `INTERNAL`; distribución → `DISTRIBUTION`; consignación → `CONSIGNMENT`; exportación → `EXPORT`.
 4. **Tracking**: BL/AWB/booking número (del correo, HBL, imágenes).
-5. **Costos del DUA/DUE/factura comercial Marluvas** (del correo/archivos/OCR — protocolo 3 Caso E): FLETE, SEGURO, DAI, IVA, PROCOMER, LEY_6946, ALMACENAJE, AGENCIAMIENTO, MANIPULEO, CONSOLIDACION, timbres, OTRO — cada uno con monto, moneda y fuente. **Los tributos del DUA** (consulta de impuestos, ej. DUA `005-2026-307232`) se extraen así:
+5. **Costos del DUA/DUE/factura comercial Marluvas** (del correo/archivos/OCR — protocolo 3 Caso E **y E2 por país de destino**): FLETE, SEGURO, DAI, IVA, PROCOMER, LEY_6946, ALMACENAJE, AGENCIAMIENTO, MANIPULEO, CONSOLIDACION, timbres, OTRO — cada uno con monto, moneda y fuente. **Los tributos del DUA** (consulta de impuestos, ej. DUA `005-2026-307232`) se extraen así:
    - **DAI** (Derechos Arancelarios) → USD (ej. 1.451,23 @ 14%).
    - **IVA** (Impuesto sobre el Valor Agregado, Ley 9635) → USD (ej. 1.549,71 @ 13%) — **no capitalizable**.
    - **PROCOMER** → USD (ej. 3,00).
@@ -525,6 +548,7 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harn
    - **TIMBRE_AGENTES** (Ley 7017) → USD (ej. 0,11).
    - **TIMBRE_CONTADORES** → USD (ej. 0,00).
    - **VMLE (FOB)** y **VMCV (CIF)** del DUE (Brasil) para verificar la factura. **NUNCA inventar montos**: si el DUA no está, `[PENDIENTE]`.
+   - **Para OTROS PAÍSES** (Colombia/Guatemala/Honduras/Panamá/El Salvador) usa la **tabla del Caso E2** (protocolo 3): documento aduanero del país, tributos en moneda local (COP/GTQ/HNL/USD), y `fx_to_usd` con el tipo de cambio del documento/correo. Anota `pais_destino` en `expediente.json`.
 6. Preparar la **lista de movimiento** (se la da al Operador para `transferencia_crear` + `transfer_costo_agregar`): `lineas = [{producto_id, sku, size, qty_transfer, unit_cost, unit_value}]` y `cost_lines` (del DUA).
 
 **A.3.4 SALIDAS DEL CONSULTOR hacia el Operador (C3) — listas operativas**
@@ -1001,6 +1025,7 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
   "cliente_id": "88888888-0000-4000-8000-000000000011",
   "cliente_nombre": "SONEPAR COLOMBIA SAS",
   "razon_social_detectada": "SONEPAR COLOMBIA SAS | MELEXA SAS",
+  "pais_destino": "[CO | CR | GT | HN | SV | PA | PENDIENTE]",
   "operado_por_muito_work": true,
   "estado_procesamiento": "PENDIENTE",
   "bloqueo": null,
@@ -1676,6 +1701,7 @@ transfer_costo_agregar(transferencia_id, kind="AGENCIAMIENTO", amount=300.00, cu
 transfer_costo_agregar(transferencia_id, kind="OTRO", label="Transporte terrestre", amount=119.57, currency="USD", ...)
 ```
 - **DUE (Brasil)** para verificación: `VMLE` (ej. 4.719,15) ≈ **FOB** y `VMCV` (ej. 5.700,83) ≈ **CIF** del embarque.
+- **Para OTROS PAÍSES** (Colombia/Guatemala/Honduras/Panamá/El Salvador): usa la **tabla del Caso E2** (protocolo 3). El `kind` es el mismo (arancel → `DAI`, IVA local → `IVA`, etc.), pero los montos vienen en **moneda local** (COP/GTQ/HNL/USD) y se convierten con `fx_to_usd` (tipo de cambio del documento/correo o `tipo_cambio`). Ejemplo Colombia: `transfer_costo_agregar(transferencia_id, kind="DAI", amount=<COP>, currency="COP", fx_to_usd=<TC>, ...)`. Anota `pais_destino` en `expediente.json`.
 - **Kinds** (catálogo `select_cost_kinds/`): `DAI`, `IVA`, `PROCOMER`, `LEY_6946`, `ALMACENAJE`, `TIMBRE_ARCHIVO`, `TIMBRE_AGENTES`, `TIMBRE_CONTADORES`, `AGENCIAMIENTO`, `MANIPULEO`, `FLETE`, `SEGURO`, `CONSOLIDACION`, `OTRO`.
 - **scope_json**: `{"applies_to_all": true}` (todo el batch) o `{"applies_to_all": false, "expediente_ids": [...], "lines": [{expediente_id, producto_id, talla}]}` (DAI por NCM/expediente).
 - **Motor OCR · Aduanas** (`SKILL_OCR_ADUANAS`, `ocr-aduanas`): sube el DUA/liquidación y el motor IA detecta y agrega/fusiona costos automáticamente. Los montos deben cuadrar con el desglose del DUA.
