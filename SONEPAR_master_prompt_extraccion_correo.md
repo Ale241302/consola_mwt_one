@@ -156,6 +156,10 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (ag
 - Muchos correos **NO mencionan el pedido en el Asunto** pero sí en el **cuerpo, historial citado o adjuntos**.
 - **Caso A (mención en cuerpo/historial)**: un correo con Asunto `Registro de Proforma nº XXXX` puede mencionar en el cuerpo *"sincronizar com despacho do 2393 e 2404"*. Ese correo y sus adjuntos pertenecen a **todas** las PF mencionadas.
 - **Caso B (asuntos consolidados / embarques multi-PF)**: correos tipo `copias de todos os docts MARLUVAS 2428-2026 e EXP-2393-2025-2404-2026` amparan varias PF. Descarga todos los documentos de la cadena.
+- **Caso D (FACTURAS COMERCIALES DE MARLUVAS — MUITO WORK/SONEPAR)**: las **facturas comerciales** que emite Marluvas llegan en correos cuyo asunto suele ser **`FACTURAS MUITO WORK 2452-2026 e 2454-2026`** (o **`FACTURAS SONEPAR ...`** para los pedidos de SONEPAR COLOMBIA) con la factura como **PDF adjunto** (ej. `MARLUVAS 2452-2026 Factura ORIGINAL - TRE26-0470.pdf`).
+  - **Los números del asunto (2452-2026, 2454-2026) son NÚMEROS DE PROFORMA = EXPEDIENTES** del sistema. Una sola factura puede cubrir **varias proformas** (ej. "2452-2026 e 2454-2026" = 2 expedientes en un solo documento).
+  - **Acción obligatoria**: descarga el PDF de la factura, aplica OCR, y extrae los **costos de la factura comercial** (TOTAL MERCADERIA, SEGURO, COSTO DEL FRETE/FLETE, SUB TOTAL, TOTAL CIF) — estos son los **costos que se cargan en el paso de costos de la RECEPCIÓN de inventario (C3.8)** y del **movimiento (C3.9)**.
+  - Busca SIEMPRE el término `FACTURAS` + los números de PF del pedido en Asunto + Cuerpo + adjuntos.
 - **Caso C (ENLACES DE DESCARGA DENTRO DEL CUERPO — MUY IMPORTANTE para Zendesk/Marluvas)**:
   - Muchos correos de tickets de Marluvas (ej. `[Marluvas] Re: [Ticket #42461] - Registero proforma 2473-2026`) NO traen el archivo adjunto clásico sino un **enlace de descarga** embebido en el cuerpo (tipicamente un `[TOKEN]`/archivo `.xlsx`, `.pdf`, `.zip`, `.docx` al final del correo).
   - **Ejemplo real**: el correo de `Rai Melo - Backoffice <backoffice@marluvas.com.br>` termina con `275150.xlsx` / `275150` / `XLSX` y un identificador tipo `[Y5R25X-ZM0LP]`. **Ese identificador es el enlace de descarga.**
@@ -279,7 +283,7 @@ Cada archivo/correlación de la lista §A.3.8 que tenga un template del Builder 
 |---|---|---|---|
 | Packing List / Romaneiro | `Packing List Dellado` (23) | PDF/imagen del PL | `# Cajas`, `Peso bruto`, `Peso neto`, `Metros cúbicos`, contenedores, precintos |
 | AWB / BL / Booking | `AWB/BL` (9) | PDF del BL/AWB/booking | Tipo (awb/bl), transport mode, freight mode, dispatch mode, carrier, vessel/vuelo |
-| Factura Comercial | `Factura Comercial` (13) | PDF factura | Nº factura, fechas, montos, moneda |
+| Factura Comercial | `Factura Comercial` (13) | PDF factura | Nº factura (ej. TRE26/0470), TOTAL MERCADERIA, SEGURO, COSTO DEL FRETE/FLETE, SUB TOTAL, TOTAL CIF, moneda, fechas (AWB/DUE), MAWB, navío/transportista, puertos |
 | DUA / DUE / Liquidación aduanal | `DUA_Aduana` (o template disponible) | PDF del DUA/liquidación | Nº DUA, FOB, flete, seguro, CIF, DAI, IVA, PROCOMER, LEY_6946, agenciamiento, timbres |
 | Certificado de Origen | `Certificado de Origen` (25) | PDF certificado | Nº certificado, emisor, fecha |
 | OC Cliente | `OC Cliente` (ART-01) | PDF OC | Total, nº OC, cliente |
@@ -485,8 +489,14 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harn
 1. **Cantidades por SKU×talla a recibir**: del Packing List / Romaneiro / factura / correos (OCR), extrae por cada (expediente × producto × talla) la cantidad pendiente por recibir. Anota la fuente (PL/Romaneiro/HBL).
 2. **Nodo destino de la recepción**: el nodo donde llega la mercancía (el `destino_id` de C3.3). Debe tener capacidad `receive`.
 3. **Expedientes a asignar**: los expedientes del pedido (uno o varios) cuyos productos se asignan al nodo en la recepción.
-4. **Costos operativos de la recepción** (si el correo/DUA los muestra): flete, seguro, aranceles, con monto/moneda.
-5. Preparar la **lista de recepción** (se la da al Operador para `recepcion_crear`): `items = [{expediente_id, producto_id, talla, qty_asignada, nodo_id}]` y `cost_lines` (opcional).
+4. **Costos de la FACTURA COMERCIAL de Marluvas (OBLIGATORIO)** — buscar en correos (asunto `FACTURAS ...`, PDF adjunto), archivos y OCR:
+   - **TOTAL MERCADERIA** (valor de la mercancía — suele coincidir con el valor del expediente ya creado).
+   - **SEGURO** → kind `SEGURO` (ej. USD 118.97).
+   - **COSTO DEL FRETE / FLETE** → kind `FLETE` (ej. USD 2.930,00).
+   - **SUB TOTAL / OTROS GASTOS / DESCUENTO** → si aplican, con su signo.
+   - **TOTAL CIF** = TOTAL MERCADERIA + FLETE + SEGURO (verificación).
+   - Preparar `cost_lines = [{"kind":"SEGURO","amount":118.97,...}, {"kind":"FLETE","amount":2930.00,...}]` para `recepcion_crear`. **NUNCA inventar montos**: si la factura no está, `[PENDIENTE]` con dónde se buscó.
+5. Preparar la **lista de recepción** (se la da al Operador para `recepcion_crear`): `items = [{expediente_id, producto_id, talla, qty_asignada, nodo_id}]` y `cost_lines` (SEGURO/FLETE de la factura).
 
 **A.3.3 Extracción de datos de MOVIMIENTO / TRANSFERENCIA ENTRE NODOS (para C3.9)**
 1. **Cantidades a transferir por SKU×talla**: del expediente (las que van del nodo de recepción al nodo final del cliente). Igual que la recepción pero con el origen = nodo de recepción y destino = nodo final.
@@ -642,18 +652,20 @@ Usa el **MCP MWT.ONE** (server `1290625df81d4121a18a66bb164f87f1`) con la cuenta
      ...  # todos los productos × tallas del expediente (pueden ser varios expedientes)
    ], cost_lines=[...])   # opcional, paso 3 de costos
    ```
-4. **Costos operativos (paso 3, opcional pero recomendado)**: si el pedido tiene flete/seguro/aranceles (del DUA, factura, correos), agrégalos en `cost_lines`:
+4. **Costos de la FACTURA COMERCIAL de Marluvas (paso 3 — OBLIGATORIO)**: los costos de la recepción salen de la **factura comercial** que emite Marluvas (el valor de la mercancía ya está en el expediente, pero **SEGURO** y **COSTO DEL FRETE/FLETE** se leen de la factura, buscada en correos `FACTURAS ...`/archivos/OCR — protocolo 3 Caso D y A.3.2). Agrégalos en `cost_lines`:
    ```
    cost_lines=[
-     {"kind": "FLETE", "amount": <monto>, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
-      "scope": {"applies_to_all": true}},   # o restringir a expedientes/líneas
-     {"kind": "SEGURO", "amount": <monto>, ...},
-     {"kind": "DAI", "amount": <monto>, ...},   # aranceles
+     {"kind": "SEGURO", "amount": 118.97, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
+      "scope": {"applies_to_all": true}},   # SEGURO de la factura comercial
+     {"kind": "FLETE", "amount": 2930.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
+      "scope": {"applies_to_all": true}},   # COSTO DEL FRETE de la factura
+     {"kind": "DAI", "amount": <monto>, ...},   # aranceles (del DUA, si aplica a la recepción)
      {"kind": "IVA", "amount": <monto>, ...},   # se excluye del landed en liquidación
    ]
    ```
    - **Kinds válidos** (del catálogo `transferencias/select_cost_kinds/`): `DAI`, `IVA`, `PROCOMER`, `LEY_6946`, `ALMACENAJE`, `TIMBRE_ARCHIVO`, `TIMBRE_AGENTES`, `TIMBRE_CONTADORES`, `AGENCIAMIENTO`, `MANIPULEO`, `FLETE`, `SEGURO`, `CONSOLIDACION`, `OTRO`.
    - Se prorratean por unidad y quedan asociados al inventario del nodo (viajan al transferir).
+   - **NUNCA inventar montos**: los montos de SEGURO/FLETE salen del OCR de la factura comercial; si la factura no está en correos/archivos → `[PENDIENTE]`.
 5. **Vincular ARTEFACTOS a la recepción** (paso 4 Confirmar — el motor permite "Conectar proformas, BL, facturas u otros documentos del Builder a esta recepción"): cada artefacto se vincula a los expedientes/líneas elegidas en el paso 2. Usa la tool de artefactos del nodo destino (`nodo_artefacto_crear` con `nodo_id=<destino_id>`, `template_id`, `data` con el PDF/imagen del documento y `lines` con los expedientes/productos/tallas de la recepción). **Los artefactos de la recepción SON los mismos del protocolo §9** — se persisten en el nodo destino y quedan asociados a las líneas recibidas.
    - Packing List/Romaneiro → template 23 (`Packing List Dellado`), con `# Cajas`, `Peso bruto`, `Peso neto`, `m3`.
    - AWB/BL → template 9.
@@ -1554,17 +1566,20 @@ recepcion_crear(
 - La cantidad `qty_asignada` = la pendiente por asignar (el motor solo muestra pendientes).
 - Para transferir stock entre nodos (si hace falta mover de origen a destino) usa `inventario_transferir_asignaciones(origin_nodo_id, destination_nodo_id, items)`.
 
-**3. Costos operativos** (paso 3 de la UI — opcional pero recomendado si el pedido tiene flete/seguro/aranceles del DUA):
+**3. Costos de la FACTURA COMERCIAL de Marluvas** (paso 3 de la UI — OBLIGATORIO). Los costos se leen del **OCR de la factura comercial** que emite Marluvas (correos con asunto `FACTURAS MUITO WORK/SONEPAR <PF> e <PF>`, PDF adjunto — protocolo 3 Caso D). El valor de la mercancía ya está en el expediente; se agregan **SEGURO** y **COSTO DEL FRETE/FLETE**:
 ```
+# Ejemplo real — Factura "MARLUVAS 2452-2026 Factura ORIGINAL - TRE26-0470":
+#   TOTAL MERCADERIA: 23.991,45 (coincide con el valor del expediente)
+#   SEGURO:             118,97  → kind SEGURO
+#   COSTO DEL FRETE:  2.930,00  → kind FLETE
+#   TOTAL CIF:        27.040,42 (= mercadería + flete + seguro)
+
 recepcion_crear(items=[...], cost_lines=[
-  {"kind": "FLETE", "amount": 1200.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
+  {"kind": "SEGURO", "amount": 118.97, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
    "scope": {"applies_to_all": true}},
-  {"kind": "SEGURO", "amount": 80.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
+  {"kind": "FLETE", "amount": 2930.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
    "scope": {"applies_to_all": true}},
-  {"kind": "DAI", "amount": 3500.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
-   "scope": {"applies_to_all": true}},      # aranceles
-  {"kind": "IVA", "amount": 4500.00, "currency": "USD", "fx_to_usd": 1.0, "source": "MANUAL",
-   "scope": {"applies_to_all": true}},      # se excluye del landed en liquidación
+  # DAI/IVA van al MOVIMIENTO (C3.9), del DUA
 ])
 ```
 - **Kinds** (catálogo `select_cost_kinds/`): `DAI`, `IVA`, `PROCOMER`, `LEY_6946`, `ALMACENAJE`, `TIMBRE_ARCHIVO`, `TIMBRE_AGENTES`, `TIMBRE_CONTADORES`, `AGENCIAMIENTO`, `MANIPULEO`, `FLETE`, `SEGURO`, `CONSOLIDACION`, `OTRO`.
