@@ -166,6 +166,19 @@ El flujo se ejecuta como un **loop secuencial por pedido** con **7 contratos (ag
   - **Acción obligatoria**: extrae el identificador/enlace, **descarga el archivo** y guárdalo en `documentos/` como `ARCHIVO_DESCARGA_LINK__<nombre_archivo>` (ej. `ARCHIVO_DESCARGA_LINK__SAP_275150.xlsx`).
   - **Si el enlace no es directo** (requiere login Zendesk/SharePoint/Dropbox/Google Drive), intenta abrirlo con la sesión disponible; si requiere credenciales que no tienes, **PREGUNTA a Alvaro** cómo descargarlo (no lo marques simplemente como "no descargado").
   - Verifica también los **links a OC/Proforma por método de envío** que Alvaro solicita: si el pedido tiene documentos de envío (booking, BL, AWB), trae los relacionados.
+- **Caso E (DUA / DUE — DOCUMENTOS ADUANEROS)**: los costos fiscales del MOVIMIENTO entre nodos (C3.9) salen de dos documentos que llegan por correo/archivos/OCR:
+  - **DUE — Extrato Simplificado (Brasil, exportación)**: documento de la exportación brasileña. Campos clave (OCR): **DU-E** (ej. `26BR000974411-6`), **RUC** / Chave de acesso (ej. `26RTX168627608`), declarante/exportador (MARLUVAS), país del importador (Costa Rica), peso líquido (KG), moneda (USD), **Valor total mercadorias (R$)** (ej. 28.795,32), **VMLE = Valor da Mercadoria no Local de Embarque** (ej. 4.719,15 → **FOB**), **VMCV = Valor da Mercadoria na Condição de Venda** (ej. 5.700,83 → **CIF**), local de embarque (recinto aduaneiro, aeropuerto), **NF-e** (ej. 001/000274397).
+    - **VMLE ≈ FOB** y **VMCV ≈ CIF** del embarque → sirven para verificar la factura comercial (TOTAL MERCADERIA, FLETE, SEGURO).
+  - **DUA — Consulta de Impuestos (Costa Rica, importación)**: documento/liquidación de la aduana costarricense. Campos clave (OCR): **número de DUA** (ej. `005-2026-307232`), y por cada tributo: **descripción, valor en USD, % aplicado**:
+    - **DERECHOS ARANCELARIOS A LA IMPORTACIÓN (DAI)** → `transfer_costo_agregar(kind="DAI")` (ej. USD 1.451,23 @ 14%).
+    - **IMPUESTO SOBRE EL VALOR AGREGADO. LEY 9635 (IVA)** → `kind="IVA"` (ej. USD 1.549,71 @ 13%) — se excluye del landed.
+    - **PROCOMER** → `kind="PROCOMER"` (ej. USD 3,00).
+    - **TIMBRE ARCHIVO NACIONAL** → `kind="TIMBRE_ARCHIVO"` (ej. USD 0,04).
+    - **TIMBRE ASOCIACION AGENTES DE ADUANA LEY 7017** → `kind="TIMBRE_AGENTES"` (ej. USD 0,11).
+    - **TIMBRE CONTADORES PRIVADOS DE COSTA RICA** → `kind="TIMBRE_CONTADORES"` (ej. USD 0,00).
+    - **LEY 6946** → `kind="LEY_6946"` (ej. USD 103,66 @ 1%).
+    - **Total moneda nacional (CRC)** para referencia (ej. 1.422.888,96).
+  - **Acción**: descarga/OCR ambos, extrae los valores, y pásalos al Operador para `transfer_costo_agregar` en el movimiento (C3.9, guía §C.13). **NUNCA inventar**: si el DUA no está, `[PENDIENTE]`.
 
 ### 4. BÚSQUEDA MULTI-CRITERIO Y ASOCIACIÓN CRUZADA
 - Busca por subcadenas: PF, OC, SAP, marca/proveedor, HBL/AWB, booking, contenedor, remessa.
@@ -284,7 +297,7 @@ Cada archivo/correlación de la lista §A.3.8 que tenga un template del Builder 
 | Packing List / Romaneiro | `Packing List Dellado` (23) | PDF/imagen del PL | `# Cajas`, `Peso bruto`, `Peso neto`, `Metros cúbicos`, contenedores, precintos |
 | AWB / BL / Booking | `AWB/BL` (9) | PDF del BL/AWB/booking | Tipo (awb/bl), transport mode, freight mode, dispatch mode, carrier, vessel/vuelo |
 | Factura Comercial | `Factura Comercial` (13) | PDF factura | Nº factura (ej. TRE26/0470), TOTAL MERCADERIA, SEGURO, COSTO DEL FRETE/FLETE, SUB TOTAL, TOTAL CIF, moneda, fechas (AWB/DUE), MAWB, navío/transportista, puertos |
-| DUA / DUE / Liquidación aduanal | `DUA_Aduana` (o template disponible) | PDF del DUA/liquidación | Nº DUA, FOB, flete, seguro, CIF, DAI, IVA, PROCOMER, LEY_6946, agenciamiento, timbres |
+| DUA / DUE / Liquidación aduanal | `DUA_Aduana` (o template disponible) | PDF del DUA/liquidación | Nº DUA (ej. 005-2026-307232), DAI (14%), IVA (13%), PROCOMER, LEY_6946, TIMBRE_ARCHIVO, TIMBRE_AGENTES, TIMBRE_CONTADORES, VMLE/FOB, VMCV/CIF, Total moneda nacional (CRC) |
 | Certificado de Origen | `Certificado de Origen` (25) | PDF certificado | Nº certificado, emisor, fecha |
 | OC Cliente | `OC Cliente` (ART-01) | PDF OC | Total, nº OC, cliente |
 | Proforma MWT | `Proforma MWT` (ART-02) | PDF proforma | Consecutivo, marca, montos, modo |
@@ -503,7 +516,15 @@ Para **cada pedido/carpeta**, ejecuta en orden estricto los 7 contratos del harn
 2. **Nodos origen/destino del movimiento**: `origen_id` = nodo donde se recibió (C3.8), `destino_id` = nodo final del cliente. Ambos en `registro_mwt.nodos`.
 3. **Contexto legal** (`legal_context`): si hay DUA → `NATIONALIZATION`; si es interno → `INTERNAL`; distribución → `DISTRIBUTION`; consignación → `CONSIGNMENT`; exportación → `EXPORT`.
 4. **Tracking**: BL/AWB/booking número (del correo, HBL, imágenes).
-5. **Costos del DUA/DUE/factura comercial Marluvas** (del correo/archivos/OCR): FLETE, SEGURO, DAI, IVA, PROCOMER, LEY_6946, ALMACENAJE, AGENCIAMIENTO, MANIPULEO, CONSOLIDACION, timbres, OTRO — cada uno con monto, moneda y fuente. **NUNCA inventar montos**: si el DUA no está, `[PENDIENTE]`.
+5. **Costos del DUA/DUE/factura comercial Marluvas** (del correo/archivos/OCR — protocolo 3 Caso E): FLETE, SEGURO, DAI, IVA, PROCOMER, LEY_6946, ALMACENAJE, AGENCIAMIENTO, MANIPULEO, CONSOLIDACION, timbres, OTRO — cada uno con monto, moneda y fuente. **Los tributos del DUA** (consulta de impuestos, ej. DUA `005-2026-307232`) se extraen así:
+   - **DAI** (Derechos Arancelarios) → USD (ej. 1.451,23 @ 14%).
+   - **IVA** (Impuesto sobre el Valor Agregado, Ley 9635) → USD (ej. 1.549,71 @ 13%) — **no capitalizable**.
+   - **PROCOMER** → USD (ej. 3,00).
+   - **LEY_6946** (Seguridad Ciudadana) → USD (ej. 103,66 @ 1%).
+   - **TIMBRE_ARCHIVO** (Archivo Nacional) → USD (ej. 0,04).
+   - **TIMBRE_AGENTES** (Ley 7017) → USD (ej. 0,11).
+   - **TIMBRE_CONTADORES** → USD (ej. 0,00).
+   - **VMLE (FOB)** y **VMCV (CIF)** del DUE (Brasil) para verificar la factura. **NUNCA inventar montos**: si el DUA no está, `[PENDIENTE]`.
 6. Preparar la **lista de movimiento** (se la da al Operador para `transferencia_crear` + `transfer_costo_agregar`): `lineas = [{producto_id, sku, size, qty_transfer, unit_cost, unit_value}]` y `cost_lines` (del DUA).
 
 **A.3.4 SALIDAS DEL CONSULTOR hacia el Operador (C3) — listas operativas**
@@ -1631,19 +1652,30 @@ transferencia_despachar(transferencia_id)                  # APPROVED→IN_TRANS
 transferencia_editar(transferencia_id, {"eta": "YYYY-MM-DD", "dispatched_at": "YYYY-MM-DD"})
 ```
 
-**3. Costos del DUA/factura comercial (LEER del correo/archivos/OCR)**:
+**3. Costos del DUA/factura comercial (LEER del correo/archivos/OCR — protocolo 3 Caso E)**:
 ```
+# Ejemplo real — DUA 005-2026-307232 (Consulta de Impuestos, Costa Rica):
+#   DAI           1.451,23 @ 14%   → kind="DAI"
+#   IVA (Ley 9635)1.549,71 @ 13%   → kind="IVA" (no capitalizable)
+#   PROCOMER          3,00         → kind="PROCOMER"
+#   LEY 6946        103,66 @ 1%    → kind="LEY_6946"
+#   TIMBRE ARCHIVO    0,04         → kind="TIMBRE_ARCHIVO"
+#   TIMBRE AGENTES    0,11         → kind="TIMBRE_AGENTES"
+#   TIMBRE CONTADORES 0,00         → kind="TIMBRE_CONTADORES"
+
 transfer_costo_agregar(transferencia_id, kind="FLETE", amount=962.92, currency="USD",
                        fx_to_usd=1.0, source="MANUAL", scope_json={"applies_to_all": true})
 transfer_costo_agregar(transferencia_id, kind="SEGURO", amount=18.75, currency="USD", fx_to_usd=1.0, ...)
-transfer_costo_agregar(transferencia_id, kind="DAI", amount=785.48, currency="USD", ...)   # aranceles del DUA (14% NCM calzado, 10% plantillas)
-transfer_costo_agregar(transferencia_id, kind="IVA", amount=850.63, currency="USD", ...)   # 13% — se excluye del landed
-transfer_costo_agregar(transferencia_id, kind="LEY_6946", amount=57.01, currency="USD", ...)  # 1% s/CIF
+transfer_costo_agregar(transferencia_id, kind="DAI", amount=1451.23, currency="USD", ...)   # del DUA (14%)
+transfer_costo_agregar(transferencia_id, kind="IVA", amount=1549.71, currency="USD", ...)   # 13% — se excluye del landed
+transfer_costo_agregar(transferencia_id, kind="LEY_6946", amount=103.66, currency="USD", ...)  # 1% s/CIF
 transfer_costo_agregar(transferencia_id, kind="PROCOMER", amount=3.00, currency="USD", ...)
+transfer_costo_agregar(transferencia_id, kind="TIMBRE_ARCHIVO", amount=0.04, currency="USD", ...)
+transfer_costo_agregar(transferencia_id, kind="TIMBRE_AGENTES", amount=0.11, currency="USD", ...)
 transfer_costo_agregar(transferencia_id, kind="AGENCIAMIENTO", amount=300.00, currency="USD", ...)  # honorarios agente
 transfer_costo_agregar(transferencia_id, kind="OTRO", label="Transporte terrestre", amount=119.57, currency="USD", ...)
-# timbres: TIMBRE_ARCHIVO (₡20), TIMBRE_AGENTES (Ley 7017), TIMBRE_CONTADORES
 ```
+- **DUE (Brasil)** para verificación: `VMLE` (ej. 4.719,15) ≈ **FOB** y `VMCV` (ej. 5.700,83) ≈ **CIF** del embarque.
 - **Kinds** (catálogo `select_cost_kinds/`): `DAI`, `IVA`, `PROCOMER`, `LEY_6946`, `ALMACENAJE`, `TIMBRE_ARCHIVO`, `TIMBRE_AGENTES`, `TIMBRE_CONTADORES`, `AGENCIAMIENTO`, `MANIPULEO`, `FLETE`, `SEGURO`, `CONSOLIDACION`, `OTRO`.
 - **scope_json**: `{"applies_to_all": true}` (todo el batch) o `{"applies_to_all": false, "expediente_ids": [...], "lines": [{expediente_id, producto_id, talla}]}` (DAI por NCM/expediente).
 - **Motor OCR · Aduanas** (`SKILL_OCR_ADUANAS`, `ocr-aduanas`): sube el DUA/liquidación y el motor IA detecta y agrega/fusiona costos automáticamente. Los montos deben cuadrar con el desglose del DUA.
