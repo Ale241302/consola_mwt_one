@@ -353,3 +353,29 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+
+<!-- HARNESS:BEGIN -->
+<!-- Bloque gestionado por harness — NO editar a mano. Regenera con `python -m harness.sync --target claude`. -->
+
+## Harness — subagentes y skills canónicos
+
+Estos subagentes y skills se sincronizan desde `harness/canonical/` hacia `.claude/`. La fuente de verdad es canónica; `.claude/` es derivado.
+
+### Subagentes
+
+- `backend-engineer` — Implementa y refactoriza la API Django 4 + DRF + SimpleJWT de MWT.ONE con modelos managed=False, excepciones especificas y log estructurado. Cambios en ai_hub exigen eval cases.
+- `db-architect` — Disena y evoluciona el esquema SQL-first de MWT.ONE creando archivos .sql numerados e idempotentes en backend/sql/. NUNCA usa migraciones Django.
+- `frontend-architect` — Construye y refactoriza la UI React + Vite (JSX) de alta densidad de MWT.ONE respetando las 6 reglas de oro y reutilizando los componentes core. NO Next.js.
+- `mcp-toolsmith` — Mantiene mcp_server/ (FastMCP, ~88 tools sobre la API REST de MWT.ONE) y conserva la paridad de las tools con la API. Token de servicio de larga vida.
+- `reviewer` — Audita diffs y componentes aplicando el Gate de Componentes (checklist de pre-commit). Marca R1 (cero hex), R3 (visibilidad) y R4 (policy-driven) como CRITICAL, no como warning.
+
+### Skills
+
+- `deploy_vps` — Despliega un cambio a produccion en MWT.ONE stageando SOLO el archivo objetivo (nunca git add -A por el churn CRLF), haciendo git push a main y corriendo redeploy_vps.sh en el VPS por SSH.
+- `genera_ui` — Genera o refactoriza un componente de UI React+Vite (JSX/TSX) de MWT.ONE pasando el Gate de Componentes antes de entregar. Entrega el codigo completo con la ruta exacta como cabecera del bloque.
+- `mwt-operations` — Opera la Consola MWT.ONE a traves de su servidor MCP (mwt-one). Enseña que tool usar en cada flujo (alta de cliente/producto, creacion de expediente desde OC, documentos y SAP, proformas, recepcion/inventario, transferencias, liquidacion landed cost y pagos), el orden correcto, y los anti-patrones que rompen la operacion.
+- `nueva_migracion_sql` — Crea un nuevo archivo .sql numerado e idempotente en backend/sql/ para evolucionar el esquema SQL-first de MWT.ONE. NUNCA usa migraciones Django (makemigrations/migrate).
+- `revisa_ux` — Audita un componente o vista del frontend de MWT.ONE buscando violaciones de tokens (R1), falta de loading/error states, problemas de a11y y fugas de visibilidad por rol (R3). Solo lectura; emite veredicto accionable.
+
+<!-- HARNESS:END -->

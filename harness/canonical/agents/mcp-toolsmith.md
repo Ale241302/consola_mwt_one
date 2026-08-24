@@ -47,6 +47,39 @@ en vez de tocar la API a mano.
 3. Si agregas tools, actualiza el conteo y cualquier inventario/README del servidor.
 4. Verifica que el arranque (`python -m mwt_mcp`) no rompe y que la tool aparece en el
    listado.
+5. Ejecuta los tests locales del servidor (`python -m pytest mcp_server/tests`) antes
+   de desplegar.
+
+## Deploy del servidor — build context, NUNCA solo docker cp
+
+El contenedor `consola-mwt-one-mcp` se construye desde el build context
+`/opt/consola-mwt-one/mcp_server/` (servicio `mcp-server` de `docker-compose.yml`).
+**Los `docker cp` en caliente se pierden cuando el contenedor se recrea.**
+
+Para desplegar un cambio del servidor MCP:
+
+1. Sincroniza los archivos locales al build context del VPS (NO dentro del contenedor):
+
+   ```bash
+   scp -P 2222 mcp_server/mwt_mcp/<archivo>.py \
+     root@187.77.218.102:/opt/consola-mwt-one/mcp_server/mwt_mcp/
+   ```
+
+2. Reconstruye y recrea:
+
+   ```bash
+   ssh -p 2222 root@187.77.218.102 \
+     'cd /opt/consola-mwt-one && docker compose build mcp-server && docker compose up -d --no-deps mcp-server'
+   ```
+
+3. Verifica el checksum en el contenedor (que tu marcador de cambio este presente):
+
+   ```bash
+   ssh -p 2222 root@187.77.218.102 \
+     'docker exec consola-mwt-one-mcp grep -c "<marcador>" /app/mwt_mcp/<archivo>.py'
+   ```
+
+Detalle completo en la skill `deploy_vps` (seccion "Deploy del MCP server").
 
 ## Entrega
 

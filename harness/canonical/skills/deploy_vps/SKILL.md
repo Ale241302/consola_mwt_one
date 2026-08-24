@@ -67,6 +67,51 @@ ssh -p 2222 root@187.77.218.102 'docker compose -f /root/.../docker-compose.yml 
 Comprueba que `https://consola.mwt.one` responde y que no hay errores en los logs de
 `django` ni `frontend`.
 
+## Deploy del MCP server (mcp_server/) — build context, NO docker cp
+
+> ⚠️ **CRITICO**: el contenedor `consola-mwt-one-mcp` se construye desde el build
+> context `/opt/consola-mwt-one/mcp_server/` (ver `docker-compose.yml` servicio
+> `mcp-server`). Los cambios dentro del contenedor con `docker cp` **se pierden**
+> cuando el contenedor se recrea (`docker compose up -d --build` o auto-deploy).
+>
+> Hubo varios deploys fallidos por esto: `docker cp /tmp/x.py contenedor:/app/...`
+> funcionaba en caliente pero la siguiente recreacion devolvia el codigo viejo.
+
+### Procedimiento correcto para cambiar codigo MCP
+
+1. **Sincroniza los archivos locales al build context del VPS** (NO dentro del
+   contenedor):
+
+   ```bash
+   scp -P 2222 mcp_server/mwt_mcp/server.py mcp_server/mwt_mcp/enrich.py mcp_server/mwt_mcp/redact.py \
+     root@187.77.218.102:/opt/consola-mwt-one/mcp_server/mwt_mcp/
+   ```
+
+2. **Reconstruye la imagen y recrea el contenedor**:
+
+   ```bash
+   ssh -p 2222 root@187.77.218.102 \
+     'cd /opt/consola-mwt-one && docker compose build mcp-server && docker compose up -d --no-deps mcp-server'
+   ```
+
+3. **Verifica el checksum** (confirma que el contenedor tiene tu codigo):
+
+   ```bash
+   ssh -p 2222 root@187.77.218.102 \
+     'docker exec consola-mwt-one-mcp sh -c "grep -c enrich_lineas /app/mwt_mcp/server.py; grep -c filter_internal_ids /app/mwt_mcp/redact.py"'
+   # Esperado: 2 y 6 (o los marcadores de tu cambio) — NO 0.
+   ```
+
+4. Confirma que el contenedor esta healthy:
+
+   ```bash
+   ssh -p 2222 root@187.77.218.102 'docker ps --filter name=consola-mwt-one-mcp --format "{{.Status}}"'
+   ```
+
+> Si usas `docker cp` igual, recuerda que es **temporal**: sobrevivira al restart
+> pero NO a una recreacion (`compose up`). Para persistir, sincroniza al build
+> context y reconstruye.
+
 ## Checklist antes de pushear
 
 - [ ] Solo el archivo objetivo esta staged (verificado con `git diff --cached`).
