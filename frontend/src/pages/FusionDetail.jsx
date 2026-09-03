@@ -459,24 +459,40 @@ export default function ScreenFusionDetail() {
       // backend responde "credenciales no provistas". Mismo fix que
       // OCDetail.handleViewDoc (storageUrl + forceToken).
       url = storageUrl(url, { forceToken: true }) || url;
-      const ext = extOf(doc);
-      // Documento HTML (proforma dinámica O archivo almacenado .html):
-      // el proxy lo sirve como attachment por seguridad, así que una URL
-      // directa no lo muestra inline. Lo traemos con fetch (Authorization
-      // header) y lo abrimos como Blob en pestaña nueva.
-      if (resp?.dynamic === true || ext === "html") {
-        const apiBase = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
-        const fullUrl = url.startsWith("/") ? url : `${apiBase}${url}`;
+      // Sprint 2026-09-03 (rev2) · HTML inline SIN blob. window.open a un
+      // blob:text/html queda en blanco en Chrome; en cambio el endpoint
+      // proforma-html responde text/html inline (como una página normal),
+      // y como top-level nav no manda headers, le adjuntamos ?token=.
+      const openInlineHtml = (target) => {
         const token = getToken() || "";
-        const r = await fetch(fullUrl, {
-          method: "GET",
-          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const html = await r.text();
-        const blobUrl = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
-        window.open(blobUrl, "_blank", "noopener,noreferrer");
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+        const sep = target.includes("?") ? "&" : "?";
+        window.open(`${target}${sep}token=${encodeURIComponent(token)}`, "_blank", "noopener,noreferrer");
+      };
+      // Proforma dinámica (marker dynamic://proforma) → visor server-rendered.
+      if (resp?.dynamic === true) {
+        openInlineHtml(url);
+        return;
+      }
+      const ext = extOf(doc);
+      // Documento HTML almacenado como archivo (.html). Si es una PROFORMA
+      // la abrimos por el visor dinámico (mismo render que generate-proforma,
+      // inline y seguro). Otro HTML genérico → se descarga como archivo.
+      if (ext === "html") {
+        const kind = String(doc.kind || doc.type || "").toUpperCase();
+        if (kind === "PROFORMA" && doc.expediente_id) {
+          const qs = new URLSearchParams();
+          if (doc.codigo) qs.set("codigo", doc.codigo);
+          const q = qs.toString();
+          openInlineHtml(`/api/expedientes/${doc.expediente_id}/proforma-html/${q ? `?${q}` : ""}`);
+        } else {
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${doc.filename || doc.codigo || `doc-${doc.id}`}.html`;
+          a.rel = "noopener noreferrer";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
         return;
       }
       const downloadExts = new Set(["xlsx", "xls", "xlsm", "csv", "docx", "doc", "zip"]);

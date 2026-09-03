@@ -405,3 +405,31 @@ class MwtJWTAuthentication(JWTAuthentication):
         except Exception:
             pass
         return legal_entity_ids
+
+
+class QueryTokenJWTAuthentication(MwtJWTAuthentication):
+    """Igual que MwtJWTAuthentication pero además acepta el JWT por
+    `?token=<JWT>` cuando no viene header `Authorization`.
+
+    Necesario para endpoints que devuelven HTML inline (proforma-html)
+    y deben poder abrirse como navegación top-level (`window.open`,
+    `<a href>`, iframe): el navegador NO manda el header Authorization
+    en esos casos, igual que ya ocurre con /api/storage/download/?token=.
+
+    Orden de resolución:
+      1. Header `Authorization: Bearer <jwt>` (comportamiento normal).
+      2. Query param `?token=<jwt>` (activos privados vía URL directa).
+    """
+
+    def authenticate(self, request):
+        header = request.headers.get("Authorization")
+        raw = None
+        if header:
+            raw = self.get_raw_token(header)
+        else:
+            raw = request.query_params.get("token") or None
+        if not raw:
+            return None
+        validated = self.get_validated_token(raw)
+        user = self.get_user(validated)
+        return (user, validated)

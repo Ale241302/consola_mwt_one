@@ -23,9 +23,11 @@ import logging
 import uuid
 
 from django.db import connection, transaction
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from apps.core.jwt_auth import QueryTokenJWTAuthentication
 
 from .models import Documento, Expediente
 from .proforma_renderer import render_proforma_html
@@ -305,6 +307,7 @@ from django.http import HttpResponse  # noqa: E402
 
 
 @api_view(["GET"])
+@authentication_classes([QueryTokenJWTAuthentication])
 @permission_classes([IsAuthenticated])
 def proforma_html_dynamic(request, expediente_id):
     """GET /api/expedientes/{id}/proforma-html/ — render dinámico.

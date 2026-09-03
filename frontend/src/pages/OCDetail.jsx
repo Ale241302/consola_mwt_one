@@ -919,41 +919,60 @@ export default function ScreenOCDetail() {
         url = `${window.location.origin}${url}`;
       }
       url = storageUrl(url, { forceToken: true }) || url;      // Sprint 2026-05-08 · documentos DINÁMICOS (Proforma HTML).
-      // Backend devuelve { url:"/api/expedientes/.../proforma-html/...", dynamic:true }.
-      // window.open no envía el JWT del usuario → 401. Hacemos fetch
-      // con Authorization, recibimos text/html, lo convertimos a Blob
-      // URL y lo abrimos con window.open. El token nunca está en la URL.
-      if (resp?.dynamic === true) {
-        const apiBase = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || '/api';
-        // url puede venir como "/api/expedientes/..." absoluto desde la
-        // raíz; respetar tal cual.
-        const fullUrl = url.startsWith('/') ? url : `${apiBase}${url}`;
+      // Sprint 2026-09-03 · HTML inline SIN blob: window.open a un
+      // blob:text/html se queda en blanco en Chrome. El visor
+      // proforma-html responde text/html inline (página normal); como
+      // navegación top-level no manda headers, le adjuntamos ?token=.
+      const openInlineHtml = (target) => {
         const token = getToken() || '';
-        const r = await fetch(fullUrl, {
-          method: 'GET',
-          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        });
-        if (!r.ok) {
-          throw new Error(`HTTP ${r.status} al renderizar proforma`);
+        const sep = target.includes('?') ? '&' : '?';
+        window.open(`${target}${sep}token=${encodeURIComponent(token)}`, '_blank', 'noopener,noreferrer');
+      };
+      // Backend devuelve { url:"/api/expedientes/.../proforma-html/...", dynamic:true }.
+      if (resp?.dynamic === true) {
+        openInlineHtml(url);
+        return;
+      }
+      const ext = String(doc.ext || doc.file_ext || '').toLowerCase().replace(/^\./, '');
+      // Proforma almacenada como archivo .html (misma vista que generó
+      // generate-proforma) → abrirla por el visor server-rendered inline
+      // (el proxy de descarga la sirve como attachment, y un blob queda
+      // en blanco). Cualquier otro HTML se descarga tal cual.
+      if (ext === 'html') {
+        const raw = doc._raw || doc;
+        const kind = String(raw.kind || raw.type || '').toUpperCase();
+        if (kind === 'PROFORMA' && raw.expediente_id) {
+          const qs = new URLSearchParams();
+          if (raw.codigo) qs.set('codigo', raw.codigo);
+          const q = qs.toString();
+          openInlineHtml(`/api/expedientes/${raw.expediente_id}/proforma-html/${q ? `?${q}` : ''}`);
+        } else {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${doc.filename || doc.code || doc.codigo || `doc-${doc.id}`}.html`;
+          a.rel = 'noopener noreferrer';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
         }
-        const html = await r.text();
-        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-        const blobUrl = URL.createObjectURL(blob);
-        window.open(blobUrl, '_blank', 'noopener,noreferrer');
-        // Liberar la URL después de un rato (el tab ya tiene el HTML cargado).
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
         return;
       }
       // Sprint 2026-05-06 · si el archivo es Excel/CSV/Word/Zip → forzar
       // download (esos formatos no se renderean inline en el browser y
       // window.open abre una pestaña vacía). PDF/imagenes siguen abriendo
       // en pestaña nueva como antes.
-      const ext = String(doc.ext || doc.file_ext || '').toLowerCase().replace(/^\./, '');
       const downloadExts = new Set(['xlsx', 'xls', 'xlsm', 'csv', 'docx', 'doc', 'zip']);
       if (downloadExts.has(ext)) {
         const a = document.createElement('a');
         a.href = url;
-        a.download = doc.code || doc.codigo || doc.filename || `${doc.id}.${ext}`;
+        // Nombre de descarga con extensión real: el code/codigo no trae
+        // extensión y un Excel/Word sin .xlsx/.docx no abre al bajarse.
+        // El nombre original vive en el último segmento del key MinIO.
+        const storedName = String(resp?.key || '').split('/').pop() || '';
+        const named = doc.filename || doc.code || doc.codigo || `doc-${doc.id}`;
+        a.download = storedName && storedName.includes('.')
+          ? storedName
+          : `${named}.${ext}`;
         a.rel = 'noopener noreferrer';
         document.body.appendChild(a);
         a.click();
