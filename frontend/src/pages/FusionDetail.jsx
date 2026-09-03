@@ -19,7 +19,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import {
   expedientesApi, ocsApi, lineasApi, documentosApi, clientesApi,
-  productosApi, storageApi, getToken,
+  productosApi, storageApi, getToken, storageUrl,
   // Sprint 2026-06-11 (rev3) · tablas combinadas de costos y pagos.
   nodoAssignmentsApi, financePaymentsApi,
 } from "../lib/api.js";
@@ -453,7 +453,18 @@ export default function ScreenFusionDetail() {
       if (resp?.proxy === true && url.startsWith("/")) {
         url = `${window.location.origin}${url}`;
       }
-      if (resp?.dynamic === true) {
+      // Sprint 2026-09-03 · descargas 401 en la fusión. window.open /
+      // <a download> NO envían el JWT por header, y el proxy sirve el
+      // archivo con ?token=<JWT> para activos privados. Sin ese token el
+      // backend responde "credenciales no provistas". Mismo fix que
+      // OCDetail.handleViewDoc (storageUrl + forceToken).
+      url = storageUrl(url, { forceToken: true }) || url;
+      const ext = extOf(doc);
+      // Documento HTML (proforma dinámica O archivo almacenado .html):
+      // el proxy lo sirve como attachment por seguridad, así que una URL
+      // directa no lo muestra inline. Lo traemos con fetch (Authorization
+      // header) y lo abrimos como Blob en pestaña nueva.
+      if (resp?.dynamic === true || ext === "html") {
         const apiBase = (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
         const fullUrl = url.startsWith("/") ? url : `${apiBase}${url}`;
         const token = getToken() || "";
@@ -468,12 +479,18 @@ export default function ScreenFusionDetail() {
         setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
         return;
       }
-      const ext = extOf(doc);
       const downloadExts = new Set(["xlsx", "xls", "xlsm", "csv", "docx", "doc", "zip"]);
       if (downloadExts.has(ext)) {
         const a = document.createElement("a");
         a.href = url;
-        a.download = doc.codigo || doc.filename || `${doc.id}.${ext}`;
+        // Nombre de descarga con extensión real: doc.codigo no trae
+        // extensión, y un Excel/Word sin .xlsx/.docx no abre al bajarse.
+        // El nombre original vive en el último segmento del key MinIO.
+        const storedName = String(resp?.key || "").split("/").pop() || "";
+        const named = doc.filename || doc.codigo || `doc-${doc.id}`;
+        a.download = storedName && storedName.includes(".")
+          ? storedName
+          : `${named}.${ext}`;
         a.rel = "noopener noreferrer";
         document.body.appendChild(a);
         a.click();
