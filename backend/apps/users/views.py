@@ -158,6 +158,21 @@ class MwtUserViewSet(viewsets.ModelViewSet):
             qs = qs.filter(email_plain__icontains=q) | qs.filter(full_name__icontains=q)
         return qs.order_by("-is_active", "email_plain")
 
+    def get_object(self):
+        """Busca por pk SIN el filtro de is_active del queryset.
+
+        Permite ver/editar/eliminar/activar usuarios INACTIVOS (el queryset
+        por defecto filtra activos y hacía que el detail de un inactivo
+        respondiera 404 'No MwtUser matches the given query.').
+        """
+        from rest_framework.exceptions import NotFound
+        try:
+            obj = MwtUser.objects.get(pk=self.kwargs.get("pk"))
+        except MwtUser.DoesNotExist:
+            raise NotFound("Usuario no encontrado.")
+        self.check_object_permissions(self.request, obj)
+        return obj
+
     def create(self, request, *args, **kwargs):
         data = dict(request.data)
         if not data.get("id"):
