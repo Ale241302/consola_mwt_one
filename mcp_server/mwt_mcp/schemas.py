@@ -263,6 +263,9 @@ _EXPEDIENTE_KEYS = {
     "incoterm", "forma_pago", "operating_company_id", "credit_days",
     "credit_days_mwt", "credit_days_cliente", "moneda", "po_number",
     "estado", "origin", "destination",
+    # Ola 7 · envío / tracking / fechas (shipment_date=ETD).
+    "tracking", "carrier", "shipment_date", "eta",
+    "origin_country", "destination_country",
 }
 _SAP_KEYS = {"sap", "fecha", "fecha_fabricacion", "fecha_embarque", "eta",
              "observaciones", "estado", "valores"}

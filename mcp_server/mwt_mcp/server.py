@@ -2109,13 +2109,15 @@ def factura_payload(expediente_id: str) -> Any:
 # --- Estados SAP / pipeline -------------------------------------------------
 @mcp.tool()
 @write_tool
-def expediente_avanzar_estado(expediente_id: str, fase_to: str, note: str | None = None, idempotence_token: str | None = None, documento_id: str | None = None) -> Any:
+def expediente_avanzar_estado(expediente_id: str, fase_to: str, note: str | None = None, idempotence_token: str | None = None, documento_id: str | None = None, occurred_at: str | None = None) -> Any:
     """Avanza el expediente/SAP a la siguiente fase. `fase_to`: REGISTRO, PRODUCCION,
-    PREPARACION, DESPACHO, TRANSITO, EN_DESTINO o CERRADO. Registra un evento inmutable."""
+    PREPARACION, DESPACHO, TRANSITO, EN_DESTINO o CERRADO. Registra un evento inmutable.
+    `occurred_at`: ISO-8601 (YYYY-MM-DD o YYYY-MM-DDTHH:MM:SS) de la fecha-hora REAL
+    del evento (cargas históricas); si se omite se usa ahora."""
     g = _wguard()
     if g:
         return g
-    body = _params(fase_to=fase_to, note=note, idempotence_token=idempotence_token, documento_id=documento_id)
+    body = _params(fase_to=fase_to, note=note, idempotence_token=idempotence_token, documento_id=documento_id, occurred_at=occurred_at)
     return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/transition/", body))
 
 

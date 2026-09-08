@@ -1841,6 +1841,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
         idempotence_token = request.data.get("idempotence_token")
         note              = request.data.get("note")
         documento_id      = request.data.get("documento_id")
+        occurred_at       = (request.data.get("occurred_at") or "").strip() or None
 
         if not fase_to:
             return Response({"detail": "fase_to requerido"}, status=400)
@@ -1902,6 +1903,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "is_rollback":  t_is_rollback,
             "note":         note,
             "documento_id": documento_id,
+            "occurred_at":  occurred_at,
             "catalog_hit":  bool(t),
             "required_doc": t_required,
         }
@@ -1912,13 +1914,13 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     c.execute("""
                         UPDATE expedientes.expediente
                            SET estado = %s,
-                               last_event_at = now(),
+                               last_event_at = COALESCE(%s::timestamptz, now()),
                                phase_signal = CASE
                                    WHEN %s = 'CERRADO' THEN 'ON_TRACK'
                                    ELSE COALESCE(phase_signal, 'ON_TRACK')
                                END
                          WHERE id = %s::uuid
-                    """, [fase_to, fase_to, str(exp.id)])
+                    """, [fase_to, occurred_at, fase_to, str(exp.id)])
 
                     c.execute("""
                         INSERT INTO pipeline.event_log (

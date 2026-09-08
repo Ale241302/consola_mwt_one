@@ -122,6 +122,9 @@ class Expediente(models.Model):
     destination_country = models.CharField(max_length=2,   null=True, blank=True)
     shipment_date       = models.DateField(null=True, blank=True)
     eta                 = models.DateField(null=True, blank=True)
+    # Ola 7 · envío / tracking (cargados por el operador vía MCP/consola).
+    tracking            = models.CharField(max_length=128, null=True, blank=True)
+    carrier             = models.CharField(max_length=128, null=True, blank=True)
     container_count     = models.IntegerField(default=0)
     product_count       = models.IntegerField(default=0)
 
