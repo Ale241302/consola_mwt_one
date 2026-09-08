@@ -28,6 +28,41 @@ const newAddress = (defaultAll = false) => ({
   address_line_1: "", city: "", country: "CR", zip_code: "", is_default: defaultAll,
 });
 
+const EyeIcon = ({ open }) => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+    {open ? (
+      <>
+        <path d="M3 3l18 18"/>
+        <path d="M10.6 6.1A10.2 10.2 0 0 1 12 6c5 0 9 4 10 6-0.5 1-1.7 2.6-3.5 4"/>
+        <path d="M6.6 6.6C4.2 8.1 2.5 10.4 2 12c1 2 5 6 10 6 1.5 0 2.9-.3 4.1-.8"/>
+        <circle cx="12" cy="12" r="3"/>
+      </>
+    ) : (
+      <>
+        <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </>
+    )}
+  </svg>
+);
+
+const pwScore = (p) => {
+  let s = 0;
+  if (p.length >= 8) s++;
+  if (/[A-Z]/.test(p)) s++;
+  if (/[a-z]/.test(p)) s++;
+  if (/\d/.test(p)) s++;
+  if (/[^A-Za-z0-9]/.test(p)) s++;
+  return s; // 0..5
+};
+
+const PW_LEVELS = [
+  { bars: 1, color: "#F87171", label: "Débil" },
+  { bars: 2, color: "#FBBF24", label: "Media" },
+  { bars: 3, color: "#34D399", label: "Fuerte" },
+];
+
 // Reutiliza la estética del login (clases) pero amplía el ancho de la tarjeta.
 const PAGE = {
   minHeight: "100vh", color: "#E8EEF5", fontFamily: "var(--font-display)",
@@ -74,6 +109,13 @@ export default function RegistroMCP() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
+  const [showPass, setShowPass] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const pwScoreN = useMemo(() => pwScore(form.password), [form.password]);
+  const pwLevel = pwScoreN <= 2 ? PW_LEVELS[0] : pwScoreN <= 4 ? PW_LEVELS[1] : PW_LEVELS[2];
+  const pwFilled = pwLevel.bars;
+  const pwMismatch = !!form.confirm && form.confirm !== form.password;
 
   useEffect(() => { document.title = "MWT ONE · Registro MCP"; }, []);
 
@@ -193,14 +235,51 @@ export default function RegistroMCP() {
             </Field>
 
             <Field label="Contraseña *">
-              <input className="login-input" style={{ ...INPUT, letterSpacing: "0.18em" }} type="password"
-                     required minLength={8} value={form.password} onChange={set("password")}
-                     placeholder="Mínimo 8 caracteres" autoComplete="new-password" />
+              <div style={{ position: "relative" }}>
+                <input className="login-input" style={{ ...INPUT, paddingRight: 44, letterSpacing: "0.18em" }}
+                       type={showPass ? "text" : "password"} required minLength={8}
+                       value={form.password} onChange={set("password")}
+                       placeholder="Mínimo 8 caracteres" autoComplete="new-password" />
+                <button type="button" aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
+                        onClick={() => setShowPass((s) => !s)}
+                        style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                                 background: "transparent", border: "none", cursor: "pointer", color: "#1EE3D7" }}>
+                  <EyeIcon open={showPass} />
+                </button>
+              </div>
+              {/* Fortaleza */}
+              {form.password.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[0, 1, 2].map((i) => (
+                      <span key={i} style={{ flex: 1, height: 5, borderRadius: 3,
+                             background: i < pwFilled ? pwLevel.color : "rgba(255,255,255,0.12)" }} />
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: pwLevel.color, marginTop: 4 }}>{pwLevel.label}</div>
+                </div>
+              )}
             </Field>
             <Field label="Confirmar contraseña *">
-              <input className="login-input" style={{ ...INPUT, letterSpacing: "0.18em" }} type="password"
-                     required minLength={8} value={form.confirm} onChange={set("confirm")}
-                     placeholder="Repite la contraseña" autoComplete="new-password" />
+              <div style={{ position: "relative" }}>
+                <input className="login-input"
+                       style={{ ...INPUT, paddingRight: 44, letterSpacing: "0.18em",
+                                borderColor: pwMismatch ? "rgba(248,113,113,0.8)" : undefined }}
+                       type={showConfirm ? "text" : "password"} required minLength={8}
+                       value={form.confirm} onChange={set("confirm")}
+                       placeholder="Repite la contraseña" autoComplete="new-password" />
+                <button type="button" aria-label={showConfirm ? "Ocultar contraseña" : "Mostrar contraseña"}
+                        onClick={() => setShowConfirm((s) => !s)}
+                        style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                                 background: "transparent", border: "none", cursor: "pointer", color: "#1EE3D7" }}>
+                  <EyeIcon open={showConfirm} />
+                </button>
+              </div>
+              {pwMismatch && (
+                <div style={{ fontSize: 11.5, color: "#F87171", marginTop: 6 }}>
+                  Las contraseñas no coinciden.
+                </div>
+              )}
             </Field>
 
             {/* Empresa — misma fila que contraseña/confirmar, listado flotante */}
