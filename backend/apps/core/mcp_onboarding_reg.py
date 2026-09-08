@@ -162,16 +162,22 @@ def _resolve_legal_scope(cliente_id: str) -> tuple[list[str], str]:
 
 
 def _email_registrado(email: str) -> bool:
+    """¿Existe un usuario ACTIVO con ese email? (para el formulario público).
+
+    Solo cuenta un usuario activo (is_active TRUE y, en core.users, sin
+    deleted_at). Un usuario eliminado/inactivo se considera NO registrado,
+    para poder volver a pre-registrarse.
+    """
     email_low = (email or "").strip().lower()
     with connection.cursor() as cur:
         cur.execute(
-            "SELECT 1 FROM users.mwtuser WHERE lower(trim(email_plain)) = %s LIMIT 1",
+            "SELECT 1 FROM users.mwtuser WHERE lower(trim(email_plain)) = %s AND is_active = TRUE LIMIT 1",
             [email_low],
         )
         if cur.fetchone():
             return True
         cur.execute(
-            "SELECT 1 FROM core.users WHERE lower(email_plain) = %s LIMIT 1",
+            "SELECT 1 FROM core.users WHERE lower(email_plain) = %s AND is_active = TRUE AND deleted_at IS NULL LIMIT 1",
             [email_low],
         )
         return cur.fetchone() is not None
