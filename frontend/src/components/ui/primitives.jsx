@@ -9,6 +9,17 @@ export function Badge({ kind='neutral', children, dot=false, style }) {
 }
 
 export function StatusBadge({ status, lang='es' }) {
+  const canonical = (s) => {
+    const t = (s || '').toUpperCase().replace(/[\s_]+/g, ' ').trim();
+    const aliases = {
+      'PREPARACION DE DESPACHO': 'PREPARACION',
+      'PREPARACION DESPACHO': 'PREPARACION',
+      'EN DESTINO': 'EN_DESTINO',
+      'EN_ DESTINO': 'EN_DESTINO',
+    };
+    return (aliases[t] || t).replace(/ /g, '_');
+  };
+  const key = canonical(status);
   const map = {
     REGISTRO:    'info',
     PRODUCCION:  'warning',
@@ -19,7 +30,13 @@ export function StatusBadge({ status, lang='es' }) {
     CERRADO:     'success',
     CANCELADO:   'critical',
   };
-  return <Badge kind={map[status] || 'neutral'} dot>{tr(lang, displayStage(status))}</Badge>;
+  return (
+    <Badge kind={map[key] || 'neutral'} dot
+           style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    maxWidth: 150, flexShrink: 0 }}>
+      {tr(lang, displayStage(key))}
+    </Badge>
+  );
 }
 
 export function CreditDot({ band }) {
