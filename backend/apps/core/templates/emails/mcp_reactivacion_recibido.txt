@@ -1,0 +1,10 @@
+Hola{% if nombre %} {{ nombre }}{% endif %},
+
+Recibimos tu solicitud de reactivacion para {{ email }} ({{ empresa }}).
+
+Motivo: {{ motivo|default:"(sin indicar)" }}
+
+Tu solicitud quedo PENDIENTE. Un administrador la revisara y, al activar tu
+cuenta, te enviaremos tus credenciales MCP (.json + .md).
+
+— MWT.ONE

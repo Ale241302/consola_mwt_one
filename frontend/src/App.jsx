@@ -54,6 +54,7 @@ const ScreenAIGovernance = lazy(() => import("./pages/AIGovernance.jsx"));
 const ScreenUsers = lazy(() => import("./pages/Users.jsx"));
 const ScreenUserFormView = lazy(() => import("./pages/UserFormView.jsx"));
 const RegistroMCP = lazy(() => import("./pages/RegistroMCP.jsx"));
+const ReactivarMCP = lazy(() => import("./pages/ReactivarMCP.jsx"));
 const ScreenRegistroSolicitudes = lazy(() => import("./pages/RegistroSolicitudes.jsx"));
 const ScreenRolesPermissions = lazy(() => import("./pages/RolesPermissions.jsx"));
 const ScreenPriceHistory = lazy(() => import("./pages/PriceHistory.jsx"));
@@ -110,6 +111,8 @@ export default function App() {
       <Route path="/reset" element={<ScreenPasswordReset />} />
       {/* Fase 2 · Registro público para acceder al MCP de una empresa */}
       <Route path="/registro-mcp" element={<RegistroMCP />} />
+      {/* Fase 2 · Reactivación de un usuario inactivo */}
+      <Route path="/reactivar-mcp" element={<ReactivarMCP />} />
 
       {/* Protegidas — todas pasan por <ProtectedRoute/> y comparten AppLayout */}
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>

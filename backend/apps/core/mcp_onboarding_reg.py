@@ -247,15 +247,20 @@ def _push_activity_feed(user_id: str, kind: str, title: str, body: str,
         )
 
 
-def notify_admins(req_id: str, solicitante: dict, empresa: str) -> None:
+def notify_admins(req_id: str, solicitante: dict, empresa: str,
+                  tipo: str = "registro", motivo: str = "") -> None:
     admins = _admin_emails()
     if not admins:
-        log.info("sin admins para notificar (registro %s)", req_id)
+        log.info("sin admins para notificar (solicitud %s)", req_id)
         return
     deep = f"/registro-solicitudes"
-    title = "Nueva solicitud de acceso MCP"
-    body = (f"{solicitante.get('email')} solicitó acceso MCP de {empresa or '…'} "
-            f"para su equipo.")
+    es_react = tipo == "reactivacion"
+    title = ("Nueva solicitud de reactivación" if es_react else "Nueva solicitud de acceso MCP")
+    body = (f"{solicitante.get('email')} solicitó "
+            f"{'la reactivación de su cuenta' if es_react else 'acceso MCP'} "
+            f"de {empresa or '…'}.")
+    if motivo:
+        body += f" Motivo: {motivo}"
     for a in admins:
         try:
             _push_activity_feed(a["id"], "registration.pending", title, body, deep, req_id)
@@ -266,6 +271,9 @@ def notify_admins(req_id: str, solicitante: dict, empresa: str) -> None:
         "nombre": solicitante.get("full_name") or "",
         "phone": solicitante.get("phone") or "",
         "empresa": empresa or "",
+        "motivo": motivo or "",
+        "tipo": "reactivacion" if es_react else "registro",
+        "tipo_label": "Reactivación de cuenta" if es_react else "Acceso MCP",
         "fecha": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     }
     # Email: uno por admin, vía el buzón mcp@mwt.one (SMTP robusto).
@@ -278,38 +286,66 @@ def notify_admins(req_id: str, solicitante: dict, empresa: str) -> None:
     try:
         txt = render_to_string("emails/mcp_admin_notificacion.txt", ctx)
     except Exception:  # noqa: BLE001
-        txt = f"Nueva solicitud MCP de {ctx['solicitante_email']} ({ctx['empresa']})"
+        txt = f"{title} de {ctx['solicitante_email']} ({ctx['empresa']})"
     for a in admins:
-        send_raw(a["email"], subject="Nueva solicitud de acceso MCP",
-                 text_body=txt, html_body=html or None)
+        send_raw(a["email"], subject=title, text_body=txt, html_body=html or None)
 
 
 # ── Alta de solicitud (registro público) ───────────────────────────────
 
 def create_registration(payload: dict, ip: str | None = None,
-                        user_agent: str | None = None) -> dict:
+                        user_agent: str | None = None, tipo: str | None = None) -> dict:
     email = (payload.get("email") or "").strip().lower()
-    raw_pwd = payload.get("password") or ""
     cliente_id = str(payload.get("cliente_id") or "").strip()
     full_name = (payload.get("full_name") or "").strip()
+    tipo = (tipo or payload.get("tipo") or "registro").strip().lower()
+    if tipo not in ("registro", "reactivacion"):
+        tipo = "registro"
+    motivo = (payload.get("motivo") or "").strip()
 
     if not email or "@" not in email:
         return {"ok": False, "detail": "Email inválido."}
-    if len(raw_pwd) < 8:
-        return {"ok": False, "detail": "La contraseña debe tener al menos 8 caracteres."}
-    if _email_registrado(email):
-        return {"ok": False, "detail": "Ese correo ya está registrado en la consola.", "code": "EMAIL_EXISTE"}
-    if _pending_existe(email):
-        return {"ok": False, "detail": "Ya existe una solicitud pendiente para ese correo.", "code": "PENDIENTE_EXISTE"}
     if not cliente_id:
         return {"ok": False, "detail": "Selecciona una empresa."}
 
+    if tipo == "reactivacion":
+        state = _user_active_state(email)
+        if state == "ACTIVE":
+            return {"ok": False, "detail": "Tu cuenta ya está activa.",
+                    "code": "CUENTA_ACTIVA"}
+        if state != "INACTIVE":
+            return {"ok": False, "detail": "No hay una cuenta inactiva con ese correo; "
+                                           "usa el registro de acceso MCP.",
+                    "code": "NO_INACTIVO"}
+        if not motivo:
+            return {"ok": False, "detail": "Indica el motivo de la reactivación.",
+                    "code": "MOTIVO"}
+    else:  # registro
+        raw_pwd = payload.get("password") or ""
+        if len(raw_pwd) < 8:
+            return {"ok": False, "detail": "La contraseña debe tener al menos 8 caracteres."}
+        if _email_registrado(email):
+            return {"ok": False, "detail": "Ese correo ya está registrado en la consola.",
+                    "code": "EMAIL_EXISTE"}
+
+    if _pending_existe(email):
+        return {"ok": False, "detail": "Ya existe una solicitud pendiente para ese correo.",
+                "code": "PENDIENTE_EXISTE"}
+
     leids, label = _resolve_legal_scope(cliente_id)
     if not _mcp_cliente_provisionado(cliente_id):
-        # si resolvimos hacia el padre, validar el padre
         if not leids or not _mcp_cliente_provisionado(leids[0]):
-            return {"ok": False, "detail": "La empresa seleccionada no tiene acceso MCP.", "code": "SIN_MCP"}
+            return {"ok": False, "detail": "La empresa seleccionada no tiene acceso MCP.",
+                    "code": "SIN_MCP"}
         label = label or cliente_id
+
+    if tipo == "registro":
+        raw_pwd = payload.get("password") or ""
+        pwd_pbk = _hash_password(raw_pwd)
+        pwd_core = _core_sha256(raw_pwd)
+    else:
+        pwd_pbk = ""
+        pwd_core = ""
 
     addresses = payload.get("addresses") or []
     req_id = str(uuid.uuid4())
@@ -321,31 +357,44 @@ def create_registration(payload: dict, ip: str | None = None,
                     (id, email, email_low, full_name, contact_email, phone,
                      password_pbkdf2, password_core_sha256,
                      cliente_id, cliente_razon, legal_entity_ids,
-                     role_default, addresses, estado, ip_origen, user_agent)
+                     role_default, addresses, estado, ip_origen, user_agent,
+                     tipo, motivo)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        'PENDIENTE', %s, %s)
+                        'PENDIENTE', %s, %s, %s, %s)
                 """,
                 [
                     req_id, email, email, full_name,
                     (payload.get("contact_email") or "").strip() or None,
                     (payload.get("phone") or "").strip() or None,
-                    _hash_password(raw_pwd), _core_sha256(raw_pwd),
+                    pwd_pbk, pwd_core,
                     cliente_id, label, leids,
                     payload.get("role_default") or ROLE_CLIENT,
                     __import__("json").dumps(addresses),
                     ip, (user_agent or "")[:300],
+                    tipo, motivo or None,
                 ],
             )
 
     # Notificaciones fuera de la TX (best-effort).
-    send_mail_tpl(
-        email,
-        "Recibimos tu solicitud de acceso MCP",
-        "mcp_registro_recibido",
-        {"email": email, "nombre": full_name, "empresa": label},
-    )
-    notify_admins(req_id, {"email": email, "full_name": full_name,
-                           "phone": payload.get("phone")}, label)
+    if tipo == "reactivacion":
+        send_mail_tpl(
+            email,
+            "Recibimos tu solicitud de reactivación",
+            "mcp_reactivacion_recibido",
+            {"email": email, "nombre": full_name, "empresa": label, "motivo": motivo},
+        )
+        notify_admins(req_id, {"email": email, "full_name": full_name,
+                               "phone": payload.get("phone")}, label,
+                      tipo=tipo, motivo=motivo)
+    else:
+        send_mail_tpl(
+            email,
+            "Recibimos tu solicitud de acceso MCP",
+            "mcp_registro_recibido",
+            {"email": email, "nombre": full_name, "empresa": label},
+        )
+        notify_admins(req_id, {"email": email, "full_name": full_name,
+                               "phone": payload.get("phone")}, label)
     return {"ok": True, "id": req_id, "detail": "Solicitud creada, pendiente de aprobación."}
 
 
@@ -392,7 +441,7 @@ def _find_request(req_id: str) -> dict | None:
                    password_pbkdf2, password_core_sha256,
                    cliente_id::text, cliente_razon, legal_entity_ids,
                    role_default, addresses::text, estado, motivo_rechazo,
-                   ip_origen::text, user_agent
+                   ip_origen::text, user_agent, tipo, motivo
               FROM users.registration_request WHERE id = %s
             """,
             [req_id],
@@ -403,7 +452,8 @@ def _find_request(req_id: str) -> dict | None:
         cols = ["id", "email", "full_name", "contact_email", "phone",
                 "password_pbkdf2", "password_core_sha256", "cliente_id",
                 "cliente_razon", "legal_entity_ids", "role_default",
-                "addresses", "estado", "motivo_rechazo", "ip_origen", "user_agent"]
+                "addresses", "estado", "motivo_rechazo", "ip_origen",
+                "user_agent", "tipo", "motivo"]
         d = dict(zip(cols, r))
         import json
         d["legal_entity_ids"] = [str(x) for x in (d["legal_entity_ids"] or [])]
@@ -414,6 +464,79 @@ def _find_request(req_id: str) -> dict | None:
         return d
 
 
+def _user_active_state(email: str) -> str:
+    """'ACTIVE' | 'INACTIVE' | 'NONE' según el email en users.mwtuser."""
+    email_low = (email or "").strip().lower()
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT is_active FROM users.mwtuser WHERE lower(trim(email_plain)) = %s LIMIT 1",
+            [email_low],
+        )
+        r = cur.fetchone()
+        if r:
+            return "ACTIVE" if r[0] else "INACTIVE"
+        cur.execute(
+            "SELECT is_active, deleted_at IS NOT NULL FROM core.users WHERE lower(email_plain) = %s LIMIT 1",
+            [email_low],
+        )
+        r = cur.fetchone()
+        if r:
+            return "ACTIVE" if (r[0] and not r[1]) else "INACTIVE"
+    return "NONE"
+
+
+def _reactivar_usuario(req: dict, admin_user_id: str | None) -> tuple[str, str]:
+    """Re-activa el usuario existente (pasa de INACTIVO a ACTIVO) y marca APROBADO.
+
+    Devuelve (user_uuid, role). Asume que el bloque ya está en transaction.atomic.
+    """
+    email = req["email"]
+    leids = req["legal_entity_ids"] or []
+    req_id = req["id"]
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT id::text, role_default, legal_entity_ids FROM users.mwtuser "
+            "WHERE lower(trim(email_plain)) = %s LIMIT 1",
+            [email],
+        )
+        row = cur.fetchone()
+        if not row:
+            raise Exception("No existe el usuario a reactivar.")
+        uid, role, existing_leids = row
+        role = role or ROLE_CLIENT
+        new_leids = leids or [str(x) for x in (existing_leids or []) if x]
+        cur.execute(
+            """
+            UPDATE users.mwtuser
+               SET is_active = TRUE, legal_entity_id = %s, legal_entity_ids = %s,
+                   updated_at = NOW()
+             WHERE id = %s
+            """,
+            [(new_leids[0] if new_leids else None), new_leids, uid],
+        )
+        cur.execute(
+            "SELECT id FROM core.users WHERE id = %s OR lower(email_plain) = %s LIMIT 1",
+            [uid, email],
+        )
+        cr = cur.fetchone()
+        if cr:
+            cur.execute(
+                "UPDATE core.users SET is_active = TRUE, deleted_at = NULL, updated_at = NOW() "
+                "WHERE id = %s",
+                [cr[0]],
+            )
+        cur.execute(
+            """
+            UPDATE users.registration_request
+               SET estado = 'APROBADO', aprobado_por = %s, aprobado_at = NOW(),
+                   activado_user_uuid = %s, updated_at = NOW()
+             WHERE id = %s
+            """,
+            [admin_user_id, uid, req_id],
+        )
+    return uid, role
+
+
 def aprobar_solicitud(req_id: str, admin_user_id: str | None = None) -> dict:
     req = _find_request(req_id)
     if not req:
@@ -421,56 +544,67 @@ def aprobar_solicitud(req_id: str, admin_user_id: str | None = None) -> dict:
     if req["estado"] != "PENDIENTE":
         return {"ok": False, "detail": f"La solicitud ya está {req['estado'].lower()}.",
                 "code": "ESTADO"}
+    # Reactivación: el usuario YA existe (inactivo). No puede estar activo.
+    # Registro: no puede existir un usuario activo con ese email.
     if _email_registrado(req["email"]):
-        return {"ok": False, "detail": "El correo ya está registrado.", "code": "EMAIL_EXISTE"}
+        code = "CUENTA_ACTIVA" if req.get("tipo") == "reactivacion" else "EMAIL_EXISTE"
+        return {"ok": False, "detail": "El correo ya tiene una cuenta activa.", "code": code}
 
-    user_id = str(uuid.uuid4())
     role = req["role_default"] or ROLE_CLIENT
     leids = req["legal_entity_ids"]
-    now = datetime.now(timezone.utc).isoformat()
+    user_id = str(uuid.uuid4())
     try:
         with transaction.atomic():
-            with connection.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO users.mwtuser
-                        (id, email_plain, contact_email, phone, full_name,
-                         password_hash, password_changed_at,
-                         legal_entity_id, legal_entity_ids, role_default,
-                         preferred_language, timezone, is_superuser, is_active)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'es',
-                            'America/Lima', FALSE, TRUE)
-                    """,
-                    [user_id, req["email"], req["contact_email"], req["phone"],
-                     req["full_name"], req["password_pbkdf2"], now,
-                     (leids[0] if leids else None), leids, role],
-                )
-                if req["addresses"]:
-                    from apps.users.views import _process_addresses_atomic  # noqa: PLC0415
-                    _process_addresses_atomic(user_id, req["addresses"])
-                _core_upsert_hashed(email=req["email"], full_name=req["full_name"],
-                                    role=role, pwd_hash=req["password_core_sha256"],
-                                    user_uuid=user_id)
-                cur.execute(
-                    """
-                    UPDATE users.registration_request
-                       SET estado = 'APROBADO', aprobado_por = %s,
-                           aprobado_at = NOW(), activado_user_uuid = %s,
-                           updated_at = NOW()
-                     WHERE id = %s
-                    """,
-                    [admin_user_id, user_id, req_id],
-                )
+            if req.get("tipo") == "reactivacion":
+                user_id, role = _reactivar_usuario(req, admin_user_id)
+            else:
+                now = datetime.now(timezone.utc).isoformat()
+                with connection.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO users.mwtuser
+                            (id, email_plain, contact_email, phone, full_name,
+                             password_hash, password_changed_at,
+                             legal_entity_id, legal_entity_ids, role_default,
+                             preferred_language, timezone, is_superuser, is_active)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'es',
+                                'America/Lima', FALSE, TRUE)
+                        """,
+                        [user_id, req["email"], req["contact_email"], req["phone"],
+                         req["full_name"], req["password_pbkdf2"], now,
+                         (leids[0] if leids else None), leids, role],
+                    )
+                    if req["addresses"]:
+                        from apps.users.views import _process_addresses_atomic  # noqa: PLC0415
+                        _process_addresses_atomic(user_id, req["addresses"])
+                    _core_upsert_hashed(email=req["email"], full_name=req["full_name"],
+                                        role=role, pwd_hash=req["password_core_sha256"],
+                                        user_uuid=user_id)
+                    cur.execute(
+                        """
+                        UPDATE users.registration_request
+                           SET estado = 'APROBADO', aprobado_por = %s,
+                               aprobado_at = NOW(), activado_user_uuid = %s,
+                               updated_at = NOW()
+                         WHERE id = %s
+                        """,
+                        [admin_user_id, user_id, req_id],
+                    )
     except Exception as exc:  # noqa: BLE001
         log.exception("aprobar_solicitud falló")
         return {"ok": False, "detail": f"No se pudo activar la cuenta: {exc}"}
 
     # Authentik (IdP): fail-safe.
     try:
-        from apps.users.authentik_sync import ensure_user, sync_groups  # noqa: PLC0415
-        ensure_user(req["email"], req["full_name"], is_active=True)
-        if leids:
-            sync_groups(req["email"], leids)
+        from apps.users.authentik_sync import ensure_user, set_active, sync_groups  # noqa: PLC0415
+        if req.get("tipo") == "reactivacion":
+            set_active(req["email"], True)
+            if leids:
+                sync_groups(req["email"], leids)
+        else:
+            ensure_user(req["email"], req["full_name"], is_active=True)
+            if leids:
+                sync_groups(req["email"], leids)
     except Exception:  # noqa: BLE001
         log.exception("authentik sync en aprobación falló")
 
@@ -550,7 +684,7 @@ def listar_solicitudes(estado: str = "PENDIENTE", limit: int = 100) -> list[dict
             SELECT id::text, email, full_name, phone, cliente_id::text,
                    cliente_razon, legal_entity_ids, role_default, estado,
                    motivo_rechazo, aprobado_at, activado_user_uuid::text,
-                   created_at, updated_at
+                   created_at, updated_at, tipo, motivo
               FROM users.registration_request
              WHERE estado = %s
              ORDER BY created_at DESC LIMIT %s
@@ -559,7 +693,8 @@ def listar_solicitudes(estado: str = "PENDIENTE", limit: int = 100) -> list[dict
         )
         cols = ["id", "email", "full_name", "phone", "cliente_id", "cliente_razon",
                 "legal_entity_ids", "role_default", "estado", "motivo_rechazo",
-                "aprobado_at", "activado_user_uuid", "created_at", "updated_at"]
+                "aprobado_at", "activado_user_uuid", "created_at", "updated_at",
+                "tipo", "motivo"]
         rows = []
         for r in cur.fetchall():
             d = dict(zip(cols, r))

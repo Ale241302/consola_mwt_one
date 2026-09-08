@@ -2,9 +2,11 @@ Hola{% if nombre %} {{ nombre }}{% endif %},
 
 Tu cuenta ({{ email }}) existe en MWT.ONE pero aun no esta activa.
 
-Un administrador debe validar y activar tu acceso antes de emitir credenciales MCP.
-Te avisaremos por correo en cuanto este listo.
+Para solicitar la REACTIVACION de tu cuenta, completa el formulario:
 
-Si crees que es un error, contacta al equipo de MWT indicando tu correo.
+  {{ consola_url }}/reactivar-mcp
+
+Un administrador revisara la solicitud y, al activarla, te enviaremos tus
+credenciales MCP (.json + .md).
 
 — MWT.ONE

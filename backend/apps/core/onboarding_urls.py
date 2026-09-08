@@ -5,6 +5,7 @@ from .onboarding_views import (
     EnviarCredencialesMCPView,
     OnboardingEmitGrantView,
     OnboardingValidateView,
+    ReactivacionMCPView,
     RegistrableClientsView,
     RegistroMCPView,
     SolicitudesView,
@@ -15,6 +16,8 @@ from .onboarding_views import (
 urlpatterns = [
     path("clientes", RegistrableClientsView.as_view(), name="onboarding-clientes"),
     path("registro", RegistroMCPView.as_view(), name="onboarding-registro"),
+    # Usuario INACTIVO → solicitud de re-activación (pública).
+    path("reactivacion", ReactivacionMCPView.as_view(), name="onboarding-reactivacion"),
     # Servicio (ServiceToken · mcp:token_exchange) — uso externo del pipeline.
     path("validate", OnboardingValidateView.as_view(), name="onboarding-validate"),
     path("emit-grant", OnboardingEmitGrantView.as_view(), name="onboarding-emit-grant"),

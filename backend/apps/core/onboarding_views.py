@@ -223,7 +223,31 @@ class RegistroMCPView(APIView):
         )
         if not result.get("ok"):
             code = result.get("code")
-            st = 409 if code in ("EMAIL_EXISTE", "PENDIENTE_EXISTE") else status.HTTP_400_BAD_REQUEST
+            st = 409 if code in ("EMAIL_EXISTE", "PENDIENTE_EXISTE", "CUENTA_ACTIVA") else status.HTTP_400_BAD_REQUEST
+            return Response({"detail": result.get("detail"), "code": code},
+                            status=st)
+        return Response({"ok": True, "id": result["id"],
+                         "detail": result.get("detail")},
+                        status=status.HTTP_201_CREATED)
+
+
+class ReactivacionMCPView(APIView):
+    """POST /api/onboarding/reactivacion — usuario inactivo pide re-activarse."""
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mcp_registro"
+
+    def post(self, request):
+        payload = request.data or {}
+        result = reg.create_registration(
+            payload,
+            ip=_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT"),
+            tipo="reactivacion",
+        )
+        if not result.get("ok"):
+            code = result.get("code")
+            st = 409 if code in ("EMAIL_EXISTE", "PENDIENTE_EXISTE", "CUENTA_ACTIVA") else status.HTTP_400_BAD_REQUEST
             return Response({"detail": result.get("detail"), "code": code},
                             status=st)
         return Response({"ok": True, "id": result["id"],

@@ -137,8 +137,18 @@ export default function RegistroSolicitudes() {
               <React.Fragment key={r.id}>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
                   <td style={{ padding: "10px 14px" }}>
-                    <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{r.full_name || "—"}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{r.full_name || "—"}</span>
+                      {r.tipo === "reactivacion" && (
+                        <span className="badge badge-warning" style={{ fontSize: 10.5 }}>Reactivación</span>
+                      )}
+                    </div>
                     <div style={{ color: "var(--text-secondary)", fontSize: 12 }}>{r.email}</div>
+                    {r.tipo === "reactivacion" && r.motivo && (
+                      <div style={{ color: "var(--text-tertiary)", fontSize: 11.5, marginTop: 3, maxWidth: 280 }}>
+                        Motivo: {r.motivo}
+                      </div>
+                    )}
                   </td>
                   <td style={{ padding: "10px 14px", color: "var(--text-secondary)" }}>{r.cliente_razon || "—"}</td>
                   <td style={{ padding: "10px 14px", color: "var(--text-secondary)" }}>{r.phone || "—"}</td>
