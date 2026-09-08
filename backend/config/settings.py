@@ -333,12 +333,14 @@ CELERY_BEAT_SCHEDULE = {
     },
     # Onboarding MCP por correo (Fase 1): procesa el INBOX de mcp@mwt.one
     # cada 2 minutos. Sin MCP_MAILBOX_USER/PASSWORD el task no hace nada.
-    # [ACTIVO · Fase 3] — el DeviceToken ya autentica (MCP + gateway).
-    "mcp_poll_inbox": {
-        "task":     "core.mcp_poll_inbox",
-        "schedule": 120.0,
-        "options":  {"queue": "default", "expires": 300},
-    },
+    # [APAGADO hasta cerrar ContextForge direct-proxy para DeviceToken] — el
+    # backend/MCP ya validan el token, pero el gateway aún responde
+    # "requires OAuth" en el enrutado del server. Enciéndelo descomentando:
+    # "mcp_poll_inbox": {
+    #     "task":     "core.mcp_poll_inbox",
+    #     "schedule": 120.0,
+    #     "options":  {"queue": "default", "expires": 300},
+    # },
     # Archival a S3 Glacier — Fase 5C (placeholder; el task se crea
     # en una sub-fase posterior. Comentado hasta que esté implementado).
     # "archive_old_payments": {
