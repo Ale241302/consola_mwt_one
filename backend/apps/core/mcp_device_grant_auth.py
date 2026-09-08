@@ -44,7 +44,7 @@ def authenticate_grant(secret: str, ip: str | None = None) -> dict:
     if not secret:
         return {"ok": False, "code": "GRANT_REQUIRED",
                 "detail": "Falta grant_secret."}
-    ip = (ip or "").strip() or None
+    ip = ((ip or "").strip().split("/")[0] or None) if ip else None
 
     with connection.cursor() as cur:
         cur.execute(
@@ -63,6 +63,8 @@ def authenticate_grant(secret: str, ip: str | None = None) -> dict:
                               "del archivo .json."}
         (gid, user_uuid, email, cliente_id, estado,
          bound_ip, expira_at, prefix) = row
+        # Postgres inet::text incluye la máscara (ej. 1.2.3.4/32): se normaliza.
+        bound_ip = (bound_ip or "").split("/")[0] or None
 
         if estado in ("REVOKED",):
             return {"ok": False, "code": "GRANT_REVOKED",
