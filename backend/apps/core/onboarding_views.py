@@ -83,6 +83,7 @@ class SolicitudResolverView(APIView):
     """POST /api/onboarding/solicitudes/<id>/aprobar|rechazar"""
 
     permission_classes = [IsAuthenticated, IsCeoOrAdmin]
+    action = "aprobar"  # sobreescrito por as_view(action=...)
 
     def _admin_id(self, request) -> str | None:
         uid = getattr(request.user, "user_id", None) or getattr(request.user, "id", None)
