@@ -105,6 +105,43 @@ def fetch_target(email: str) -> dict | None:
                 "role_name": row[8],
                 "legal_entity_ids": [str(x).lower() for x in leis if x],
             }
+
+    # Fallback a users.mwtuser: un usuario "registrado" puede existir en
+    # mwtuser (perfil/rol/legal_entity_ids) SIN fila en core.users — p.ej. si
+    # se creó SIN password (invitación) o está inactivo y nunca se sincronizó
+    # a la tabla de login. Sin esto, un usuario inactivo se veía como
+    # "no registrado" en vez de "inactivo" (le mandaba el link de registro).
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text, email_plain, full_name, is_active,
+                       role_default, contact_email
+                  FROM users.mwtuser
+                 WHERE lower(trim(email_plain)) = %s
+                 ORDER BY (CASE WHEN is_active THEN 0 ELSE 1 END),
+                          updated_at DESC NULLS LAST
+                 LIMIT 1
+                """,
+                [email],
+            )
+            mw = cur.fetchone()
+            if mw:
+                mid, email_plain, full_name, is_active, role_default, _ = mw
+                leis = _user_legal_ids(email_plain or email)
+                return {
+                    "user_uuid": str(mid),
+                    "email": (email_plain or email).lower(),
+                    "full_name": full_name or "",
+                    "role": role_default or "client_b2b",
+                    "is_active": bool(is_active),
+                    "is_staff": bool(is_active),
+                    "role_slug": role_default or "client_b2b",
+                    "role_name": role_default or "client_b2b",
+                    "legal_entity_ids": [str(x).lower() for x in leis if x],
+                }
+    except Exception:  # noqa: BLE001
+        pass
     return None
 
 
