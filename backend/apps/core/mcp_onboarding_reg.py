@@ -195,7 +195,7 @@ def _pending_existe(email: str) -> bool:
         return cur.fetchone() is not None
 
 
-# ── Email genérico (Django mail + adjuntos en memoria) ─────────────────
+# ── Email genérico (vía buzón mcp@mwt.one — SMTP 587, robusto) ────────
 
 def send_mail_tpl(to: str, subject: str, template_key: str, context: dict,
                   attachments: list[dict] | None = None) -> dict:
@@ -209,23 +209,10 @@ def send_mail_tpl(to: str, subject: str, template_key: str, context: dict,
         txt = render_to_string(f"emails/{template_key}.txt", ctx)
     except Exception:  # noqa: BLE001
         txt = str(context.get("texto_plano") or "")
-    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "info@mwt.one")
-    try:
-        msg = EmailMultiAlternatives(subject, txt, from_email, [to],
-                                     headers={
-                                         "Date": formatdate(localtime=True),
-                                         "Message-ID": make_msgid(domain="mwt.one"),
-                                     },
-                                     reply_to=[_reply_to()])
-        if html:
-            msg.attach_alternative(html, "text/html")
-        for att in attachments or []:
-            msg.attach(att["filename"], att["data"], att.get("mime", "application/octet-stream"))
-        msg.send(fail_silently=False)
-        return {"ok": True, "to": to}
-    except Exception as exc:  # noqa: BLE001
-        log.exception("send_mail_tpl %s a %s falló", template_key, to)
-        return {"ok": False, "to": to, "error": str(exc)}
+    from .mcp_mailbox import send_raw  # noqa: PLC0415
+
+    return send_raw(to, subject=subject, text_body=txt, html_body=html or None,
+                    attachments=attachments)
 
 
 # ── Notificación a admins (activity_feed + email) ──────────────────────
@@ -281,7 +268,9 @@ def notify_admins(req_id: str, solicitante: dict, empresa: str) -> None:
         "empresa": empresa or "",
         "fecha": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     }
-    # Email: envío simple para la lista completa de admins.
+    # Email: uno por admin, vía el buzón mcp@mwt.one (SMTP robusto).
+    from .mcp_mailbox import send_raw  # noqa: PLC0415
+
     try:
         html = render_to_string("emails/mcp_admin_notificacion.html", {**ctx, "consola_url": _consola_url()})
     except Exception:  # noqa: BLE001
@@ -290,22 +279,9 @@ def notify_admins(req_id: str, solicitante: dict, empresa: str) -> None:
         txt = render_to_string("emails/mcp_admin_notificacion.txt", ctx)
     except Exception:  # noqa: BLE001
         txt = f"Nueva solicitud MCP de {ctx['solicitante_email']} ({ctx['empresa']})"
-    try:
-        msg = EmailMultiAlternatives(
-            "Nueva solicitud de acceso MCP",
-            txt,
-            getattr(settings, "DEFAULT_FROM_EMAIL", "info@mwt.one"),
-            [a["email"] for a in admins],
-            headers={
-                "Date": formatdate(localtime=True),
-                "Message-ID": make_msgid(domain="mwt.one"),
-            },
-        )
-        if html:
-            msg.attach_alternative(html, "text/html")
-        msg.send(fail_silently=True)
-    except Exception:  # noqa: BLE001
-        log.exception("email a admins falló")
+    for a in admins:
+        send_raw(a["email"], subject="Nueva solicitud de acceso MCP",
+                 text_body=txt, html_body=html or None)
 
 
 # ── Alta de solicitud (registro público) ───────────────────────────────

@@ -35,6 +35,7 @@ export default function Users() {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [drawer, setDrawer] = useState({ open: false, user: null });
   const [toast, setToast] = useState(null);
+  const [pendingMcp, setPendingMcp] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,6 +56,13 @@ export default function Users() {
   }, [q, roleFilter, includeInactive]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Contador de solicitudes MCP pendientes (para el badge/banner).
+  useEffect(() => {
+    apiFetch("/onboarding/solicitudes?estado=PENDIENTE", { token: getToken() })
+      .then((d) => setPendingMcp(Array.isArray(d) ? d.length : (d?.results || []).length))
+      .catch(() => setPendingMcp(0));
+  }, []);
 
   const showToast = (msg, kind = "ok") => {
     setToast({ msg, kind });
@@ -135,6 +143,12 @@ export default function Users() {
         <button onClick={() => navigate("/registro-solicitudes")} className="btn btn-secondary"
                 style={{ padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>
           Solicitudes MCP
+          {pendingMcp > 0 && (
+            <span style={{ marginLeft: 6, background: "var(--critical)", color: "#fff",
+                           borderRadius: 999, padding: "1px 7px", fontSize: 11, fontWeight: 700 }}>
+              {pendingMcp}
+            </span>
+          )}
         </button>
         <button onClick={openCreate} className="btn btn-primary"
                 style={{ background: "var(--mint, #00B286)", color: "#fff", border: "none",
@@ -142,6 +156,23 @@ export default function Users() {
           <IconPlus size={13}/> {lang === "es" ? "Nuevo usuario" : "New user"}
         </button>
       </div>
+
+      {/* Banner de solicitudes MCP pendientes */}
+      {pendingMcp > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 12, padding: "10px 14px",
+          borderRadius: 8, background: "color-mix(in oklab, var(--warning) 14%, transparent)",
+          border: "1px solid color-mix(in oklab, var(--warning) 40%, transparent)",
+          fontSize: 13, color: "var(--text-primary)",
+        }}>
+          <span style={{ flex: 1 }}>
+            Hay <b>{pendingMcp}</b> solicitud{pendingMcp > 1 ? "es" : ""} de acceso MCP pendiente{pendingMcp > 1 ? "s" : ""} de aprobación.
+          </span>
+          <button onClick={() => navigate("/registro-solicitudes")} className="btn btn-primary btn-sm">
+            Revisar
+          </button>
+        </div>
+      )}
 
       {/* Filtros */}
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>

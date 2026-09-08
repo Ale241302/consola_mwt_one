@@ -233,6 +233,57 @@ def send_reply(
         return {"ok": False, "to": to_email, "error": str(exc)}
 
 
+def send_raw(to_email: str, *, subject: str, text_body: str, html_body: str | None = None,
+             attachments: list[dict] | None = None) -> dict:
+    """Envía un correo como mcp@mwt.one (SMTP 587 STARTTLS) con MIME correcto.
+
+    Ruta robusta: a diferencia del EMAIL_BACKEND de Django (info@mwt.one, que
+    está fallando auth), el buzón mcp@mwt.one autentica bien. Usado por los
+    emails del onboarding (registro recibido, notificación a admins, activación).
+    """
+    from_email = _cfg("MCP_MAILBOX_FROM", "mcp@mwt.one")
+    host = _cfg("MCP_SMTP_HOST", "mail.mwt.one")
+    port = int(_cfg("MCP_SMTP_PORT", "587"))
+    starttls = _cfg("MCP_SMTP_STARTTLS", "1").lower() in ("1", "true", "yes")
+    user = _cfg("MCP_MAILBOX_USER", "")
+    password = _cfg("MCP_MAILBOX_PASSWORD", "")
+
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(text_body or "", "plain", "utf-8"))
+    if html_body:
+        alt.attach(MIMEText(html_body, "html", "utf-8"))
+
+    if attachments:
+        root = MIMEMultipart("mixed")
+        root.attach(alt)
+        for att in attachments:
+            part = MIMEApplication(att["data"])
+            part.add_header("Content-Disposition", "attachment", filename=att["filename"])
+            part.set_type(att.get("mime", "application/octet-stream"))
+            root.attach(part)
+    else:
+        root = alt
+
+    root["From"] = formataddr(("MWT.ONE · MCP", from_email))
+    root["To"] = to_email
+    root["Subject"] = subject
+    root["Reply-To"] = from_email
+    root["Date"] = formatdate(localtime=True)
+    root["Message-ID"] = make_msgid(domain="mwt.one")
+
+    try:
+        with smtplib.SMTP(host=host, port=port, timeout=30) as smtp:
+            if starttls:
+                smtp.starttls(context=ssl.create_default_context())
+            if user:
+                smtp.login(user, password)
+            smtp.sendmail(from_email, [to_email], root.as_string())
+        return {"ok": True, "to": to_email}
+    except Exception as exc:  # noqa: BLE001
+        log.error("send_raw a %s falló: %s", to_email, exc)
+        return {"ok": False, "to": to_email, "error": str(exc)}
+
+
 # ── Procesamiento de un mensaje ────────────────────────────────────────
 
 _SUBJECTS = {
