@@ -244,15 +244,37 @@ _SUBJECTS = {
 }
 
 
+def _leading_text(body: str) -> str:
+    """Texto 'nuevo' del correo: corta en la primera línea citada/forwarded.
+
+    Evita que al responder (Gmail/Outlook citan el mensaje anterior) el parser
+    lea la lista de empresas o la frase 'a más de una empresa' de la cita y
+    vuelva a preguntar (loop).
+    """
+    out: list[str] = []
+    for ln in (body or "").splitlines():
+        s = ln.strip()
+        low = s.lower()
+        if s.startswith(">") or s.startswith("|"):
+            break
+        if re.search(r"(?i)(escribi|wrote:|from:|sent:|de: .*<.*?>|para: .*<.*?>|el d[ií]a .{3,}escrib|enviado (el|desde)|respondiendo a)", low):
+            break
+        if re.search(r"^[-=_\s]{6,}$", s):
+            break
+        out.append(s)
+    return "\n".join(out)
+
+
 def _extract_empresa_hint(body: str) -> str | None:
     """Extrae una pista de empresa del cuerpo (línea con 'Empresa:'/'Compania:').
 
     Devuelve el texto de la empresa, la marca 'ALL' (todas/varias), o None si
-    no hay pista. Sirve para elegir la empresa correcta o enviar varias.
+    no hay pista. Si no hay palabra clave, toma la 1ª línea no citada (para
+    respuestas simples tipo 'SONEPAR COLOMBIA S.A.S.') como candidata.
     """
     if re.search(r"(?i)\b(todas|varias|todos|ambas|todas las empresas?)\b", body):
         return "ALL"
-    for ln in (body or "").splitlines():
+    for ln in body.splitlines():
         ln = ln.strip()
         m = re.search(r"(?i)\b(empresa|compania|razon social|cliente)\b\s*[:=]?\s*(.+)", ln)
         if m:
@@ -260,6 +282,18 @@ def _extract_empresa_hint(body: str) -> str | None:
             val = re.sub(r"\s+", " ", val)
             if val:
                 return val
+    # fallback: primera línea no vacía que no sea email ni saludo genérico
+    for ln in body.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        if re.match(r"^[\w.+-]+@[\w-]+(?:\.[\w-]+)+$", ln):
+            continue
+        if re.match(r"(?i)^(hola|buenas|buenos dias|gracias|saludos)[\s,.:]*$", ln):
+            continue
+        if len(ln) <= 2:
+            continue
+        return ln
     return None
 
 
@@ -296,7 +330,8 @@ def process_message(msg: Message, sender: str, from_name: str = "", dry_run: boo
     """
     body_plain, body_html = _body_texts(msg)
     body = f"{body_plain}\n{_strip_html(body_html)}"
-    target_email = _extract_target_email(body, sender, from_name)
+    lead = _leading_text(body)          # solo texto nuevo (sin citas)
+    target_email = _extract_target_email(lead, sender, from_name)
     if not target_email:
         return {"ok": False, "error": "sin email objetivo", "from": sender}
 
@@ -308,7 +343,7 @@ def process_message(msg: Message, sender: str, from_name: str = "", dry_run: boo
         "nombre": target.get("full_name") or "",
         "texto_plano": "",
     }
-    empresa_hint = _extract_empresa_hint(body)
+    empresa_hint = _extract_empresa_hint(lead)
 
     if dry_run:
         return {
