@@ -40,4 +40,7 @@ echo "Applying ContextForge MWT DeviceToken bypass patch v13 (Ola 7)..."
 echo "Applying ContextForge MWT DeviceToken CSRF-exempt patch v13b (Ola 7)..."
 /app/.venv/bin/python3 /patch/contextforge_patch_v13b.py
 
+echo "Applying ContextForge MWT DeviceToken transport+upstream patch v13c (Ola 7)..."
+/app/.venv/bin/python3 /patch/contextforge_patch_v13c.py
+
 exec /app/docker-entrypoint.sh "$@"
