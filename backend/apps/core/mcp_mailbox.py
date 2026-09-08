@@ -244,6 +244,50 @@ _SUBJECTS = {
 }
 
 
+def _extract_empresa_hint(body: str) -> str | None:
+    """Extrae una pista de empresa del cuerpo (línea con 'Empresa:'/'Compania:').
+
+    Devuelve el texto de la empresa, la marca 'ALL' (todas/varias), o None si
+    no hay pista. Sirve para elegir la empresa correcta o enviar varias.
+    """
+    if re.search(r"(?i)\b(todas|varias|todos|ambas|todas las empresas?)\b", body):
+        return "ALL"
+    for ln in (body or "").splitlines():
+        ln = ln.strip()
+        m = re.search(r"(?i)\b(empresa|compania|razon social|cliente)\b\s*[:=]?\s*(.+)", ln)
+        if m:
+            val = m.group(2).strip().rstrip(".:-")
+            val = re.sub(r"\s+", " ", val)
+            if val:
+                return val
+    return None
+
+
+def _send_credenciales(to_email: str, target: dict, client: dict,
+                       base_ctx: dict) -> dict:
+    """Emite el grant de una empresa y envía el paquete .json/.md."""
+    grant = mcp_onboarding.emit_grant(target, client["cliente_id"], creado_via="email")
+    package = mcp_onboarding.build_package(client, target, grant)
+    ctx = dict(base_ctx, empresa=package["razon_social"], **package)
+    ctx["texto_plano"] = (
+        f"Tus credenciales MCP de {package['razon_social']} van adjuntas "
+        f"({package['fname_json']} y {package['fname_md']}). Un solo uso por equipo."
+    )
+    subject = _SUBJECTS["ok"].format(empresa=package["razon_social"])
+    return send_reply(
+        to_email,
+        subject=subject,
+        template_key="mcp_credenciales",
+        context=ctx,
+        attachments=[
+            {"filename": package["fname_json"], "data": package["json_text"].encode("utf-8"),
+             "mime": package["mime_json"]},
+            {"filename": package["fname_md"], "data": package["md_text"].encode("utf-8"),
+             "mime": package["mime_md"]},
+        ],
+    )
+
+
 def process_message(msg: Message, sender: str, from_name: str = "", dry_run: bool = False) -> dict:
     """Ruta un mensaje: decide escenario, emite grant y responde.
 
@@ -264,42 +308,47 @@ def process_message(msg: Message, sender: str, from_name: str = "", dry_run: boo
         "nombre": target.get("full_name") or "",
         "texto_plano": "",
     }
+    empresa_hint = _extract_empresa_hint(body)
 
     if dry_run:
         return {
             "ok": True, "scenario": scenario, "target": target_email,
-            "dry_run": True,
+            "dry_run": True, "empresa_hint": empresa_hint,
             "clients": decision.get("clients") or [],
         }
 
-    if scenario == "ok":
-        client = decision["client"]
-        grant = mcp_onboarding.emit_grant(target, client["cliente_id"], creado_via="email")
-        package = mcp_onboarding.build_package(client, target, grant)
-        ctx = dict(base_ctx, empresa=package["razon_social"], **package)
-        ctx["texto_plano"] = (
-            f"Tus credenciales MCP de {package['razon_social']} van adjuntas "
-            f"({package['fname_json']} y {package['fname_md']}). Un solo uso por equipo."
-        )
-        subject = _SUBJECTS["ok"].format(empresa=package["razon_social"])
-        res = send_reply(
-            target_email,
-            subject=subject,
-            template_key="mcp_credenciales",
-            context=ctx,
-            attachments=[
-                {"filename": package["fname_json"], "data": package["json_text"].encode("utf-8"),
-                 "mime": package["mime_json"]},
-                {"filename": package["fname_md"], "data": package["md_text"].encode("utf-8"),
-                 "mime": package["mime_md"]},
-            ],
-        )
-    elif scenario == "elegir_empresa":
+    def _elegir_reply():
         clients = decision.get("clients") or []
         ctx = dict(base_ctx, empresas=[{"razon_social": c.get("razon_social") or c.get("nombre"),
                                         "slug": c.get("slug")} for c in clients])
-        res = send_reply(target_email, subject=_SUBJECTS["elegir_empresa"],
-                         template_key="mcp_elegir_empresa", context=ctx)
+        return send_reply(target_email, subject=_SUBJECTS["elegir_empresa"],
+                          template_key="mcp_elegir_empresa", context=ctx)
+
+    if scenario == "ok":
+        res = _send_credenciales(target_email, target, decision["client"], base_ctx)
+    elif scenario == "elegir_empresa":
+        clients = decision.get("clients") or []
+        if empresa_hint == "ALL":
+            # Pedir varias/todas → un paquete por empresa.
+            sent, failed = 0, 0
+            for c in clients:
+                r = _send_credenciales(target_email, target, c, base_ctx)
+                if r.get("ok"):
+                    sent += 1
+                else:
+                    failed += 1
+            res = {"ok": sent > 0, "to": target_email,
+                   "sent": sent, "failed": failed}
+        else:
+            matched = mcp_onboarding.match_clients_by_hint(clients, empresa_hint or "")
+            if len(matched) == 1:
+                res = _send_credenciales(target_email, target, matched[0], base_ctx)
+                scenario = "ok"
+            elif len(matched) > 1 or (empresa_hint and not matched):
+                # Ambiguo o sin coincidencia → pedir que elija.
+                res = _elegir_reply()
+            else:
+                res = _elegir_reply()
     else:
         ctx = dict(base_ctx, empresa=(decision.get("client") or {}).get("razon_social") or "")
         res = send_reply(target_email, subject=_SUBJECTS.get(scenario, "Respuesta MWT.ONE"),

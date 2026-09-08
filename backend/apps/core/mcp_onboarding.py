@@ -25,7 +25,9 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -172,6 +174,30 @@ def mcp_clients_for_target(target: dict) -> list[dict]:
     except Exception:  # noqa: BLE001
         log.exception("mcp_clients_for_target falló para %s", target.get("email"))
     return rows
+
+
+# ── Coincidencia difusa de empresa (para el cuerpo del correo) ─────────
+
+def _norm_name(s: str) -> str:
+    """Normaliza texto: minúsculas, sin acentos, sin puntuación."""
+    n = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", " ", n.lower()).strip()
+
+
+def match_clients_by_hint(clients: list[dict], hint: str) -> list[dict]:
+    """Empareja un texto de empresa (posiblemente parcial) contra los MCP
+    clients del usuario. Devuelve las coincidencias (substring en cualquier
+    dirección, sin acentos/mayúsculas)."""
+    nh = _norm_name(hint or "")
+    if not nh:
+        return []
+    out = []
+    for c in clients:
+        cand = " ".join(x for x in [c.get("razon_social"), c.get("nombre"), c.get("slug")] if x)
+        nc = _norm_name(cand)
+        if nh and nc and (nh in nc or nc in nh):
+            out.append(c)
+    return out
 
 
 def decide_scenario(email: str) -> dict:
