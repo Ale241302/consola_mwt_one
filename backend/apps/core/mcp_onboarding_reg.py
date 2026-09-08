@@ -327,6 +327,11 @@ def create_registration(payload: dict, ip: str | None = None,
         if _email_registrado(email):
             return {"ok": False, "detail": "Ese correo ya está registrado en la consola.",
                     "code": "EMAIL_EXISTE"}
+        # Un usuario INACTIVO no debe re-registrarse: debe pasar por reactivación.
+        if _user_active_state(email) == "INACTIVE":
+            return {"ok": False,
+                    "detail": "Tu cuenta existe pero está inactiva. Usa el formulario de reactivación.",
+                    "code": "CUENTA_INACTIVA"}
 
     if _pending_existe(email):
         return {"ok": False, "detail": "Ya existe una solicitud pendiente para ese correo.",
