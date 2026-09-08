@@ -25,7 +25,7 @@ const PAISES = [
 const nid = () => `addr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const newAddress = (defaultAll = false) => ({
   key: nid(), label: "Nueva dirección", kind: "BOTH",
-  address_line_1: "", city: "", country: "PE", zip_code: "", is_default: defaultAll,
+  address_line_1: "", city: "", country: "CR", zip_code: "", is_default: defaultAll,
 });
 
 // Reutiliza la estética del login (clases) pero amplía el ancho de la tarjeta.
