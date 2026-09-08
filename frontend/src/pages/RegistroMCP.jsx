@@ -34,6 +34,44 @@ const newAddress = (defaultAll = false) => ({
   is_default: defaultAll,
 });
 
+// Estilos base del formulario (ancho, claro, responsive en 2 columnas).
+const F = {
+  wrap: {
+    minHeight: "100vh", background: "var(--bg, #F2F4F8)",
+    padding: "32px 16px", display: "flex", justifyContent: "center",
+  },
+  container: { width: "100%", maxWidth: 1000, display: "flex", flexDirection: "column", gap: 18 },
+  header: {
+    display: "flex", alignItems: "center", gap: 14, marginBottom: 6,
+  },
+  logo: { height: 44, objectFit: "contain" },
+  title: { fontSize: 24, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-.01em" },
+  subtitle: { fontSize: 13.5, color: "var(--text-tertiary)", marginTop: 2 },
+  card: {
+    background: "var(--surface-raised, #fff)", border: "1px solid var(--border)",
+    borderRadius: 14, padding: "26px 30px", boxShadow: "0 8px 28px rgba(15,27,61,0.06)",
+  },
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 },
+  full: { gridColumn: "1 / -1" },
+  label: { display: "block", fontWeight: 600, fontSize: 13, color: "var(--text-secondary)", marginBottom: 5 },
+  err: { background: "#FCE7E7", color: "#B83227", border: "1px solid #F5C6C6", borderRadius: 8, padding: "10px 12px", fontSize: 13, marginBottom: 12 },
+  btn: {
+    background: "var(--mint, #00B286)", color: "#fff", border: "none",
+    padding: "12px 22px", borderRadius: 9, fontSize: 14, fontWeight: 700,
+    cursor: "pointer", width: "100%",
+  },
+  btnDisabled: { opacity: 0.6, cursor: "default" },
+};
+
+function Field({ label, children, full }) {
+  return (
+    <div style={full ? F.full : undefined}>
+      <label style={F.label}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
 export default function RegistroMCP() {
   const [form, setForm] = useState({
     email: "", full_name: "", phone: "", password: "", confirm: "",
@@ -135,188 +173,182 @@ export default function RegistroMCP() {
     }
   };
 
+  const logo = (
+    <img src={LOGO_URL} alt="MWT ONE" style={F.logo}
+         onError={(ev) => { ev.currentTarget.style.display = "none"; }} />
+  );
+
   if (done) {
     return (
-      <div className="login-page">
-        <div className="login-card" style={{ maxWidth: 560 }}>
-          <div className="login-brand">
-            <img src={LOGO_URL} alt="MWT ONE" className="login-logo"
-                 onError={(ev) => { ev.currentTarget.style.display = "none"; }} />
+      <div style={F.wrap}>
+        <div style={F.container}>
+          <div style={F.header}>{logo}
+            <div>
+              <div style={F.title}>MWT ONE</div>
+              <div style={F.subtitle}>Solicitud enviada</div>
+            </div>
           </div>
-          <div className="login-tagline">Solicitud enviada</div>
-          <div className="login-form" style={{ textAlign: "center" }}>
-            <p style={{ fontSize: 14, lineHeight: 1.6, color: "var(--text-secondary)" }}>
+          <div style={F.card}>
+            <p style={{ fontSize: 14.5, lineHeight: 1.6, color: "var(--text-secondary)", margin: "0 0 8px" }}>
               Gracias, <b>{form.full_name.trim()}</b>. Tu solicitud de acceso MCP para
-              {empresa ? <> <b>{empresa.razon_social}</b></> : null} quedó <b>pendiente de aprobación</b>.
+              {empresa ? <> <b>{empresa.razon_social}</b></> : null} quedó
+              <b> pendiente de aprobación</b>.
             </p>
-            <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--text-tertiary)", marginTop: 8 }}>
+            <p style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--text-tertiary)" }}>
               Un administrador revisará la solicitud. Cuando la active, recibirás un correo con tus
               credenciales para conectar tu IA.
             </p>
-            <Link className="login-submit" style={{ textDecoration: "none", display: "inline-block", marginTop: 12 }}
-                  to="/login">Ir a la consola</Link>
+            <Link to="/login" className="btn btn-primary" style={{ marginTop: 14, textDecoration: "none" }}>
+              Ir a la consola
+            </Link>
           </div>
-          <div className="login-foot"><b>MWT.ONE</b> · Control Center</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="login-page">
-      <div className="login-card" style={{ maxWidth: 620, maxHeight: "100vh", overflowY: "auto" }}>
-        <div className="login-brand">
-          <img src={LOGO_URL} alt="MWT ONE" className="login-logo"
-               onError={(ev) => { ev.currentTarget.style.display = "none"; }} />
+    <div style={F.wrap}>
+      <div style={F.container}>
+        {/* Header */}
+        <div style={F.header}>
+          {logo}
+          <div>
+            <div style={F.title}>Registro MCP</div>
+            <div style={F.subtitle}>
+              Registrate para conectar tu IA al MCP de tu empresa. Queda pendiente hasta la aprobación.
+            </div>
+          </div>
         </div>
-        <div className="login-tagline">Regístrate para conectar tu IA al MCP de tu empresa</div>
 
-        <form className="login-form" onSubmit={onSubmit} noValidate style={{ gap: 12 }}>
-          {/* Email */}
-          <div className="login-field">
-            <label className="login-label" htmlFor="rmc-email">Correo electrónico *</label>
-            <input id="rmc-email" className="login-input" type="email" required
-                   value={form.email} onChange={set("email")}
-                   placeholder="tu.correo@empresa.com" autoComplete="email" />
-          </div>
+        {/* Formulario */}
+        <form onSubmit={onSubmit} noValidate>
+          <div style={F.card}>
+            <div style={F.grid}>
+              <Field label="Correo electrónico *">
+                <input className="input" type="email" required value={form.email}
+                       onChange={set("email")} placeholder="tu.correo@empresa.com" autoComplete="email" />
+              </Field>
+              <Field label="Nombre completo *">
+                <input className="input" type="text" required value={form.full_name}
+                       onChange={set("full_name")} placeholder="Nombre y apellido" autoComplete="name" />
+              </Field>
 
-          {/* Nombre */}
-          <div className="login-field">
-            <label className="login-label" htmlFor="rmc-name">Nombre completo *</label>
-            <input id="rmc-name" className="login-input" type="text" required
-                   value={form.full_name} onChange={set("full_name")}
-                   placeholder="Nombre y apellido" autoComplete="name" />
-          </div>
+              <Field label="Teléfono">
+                <input className="input" type="tel" value={form.phone}
+                       onChange={set("phone")} placeholder="+506 …" autoComplete="tel" />
+              </Field>
+              <Field label="&nbsp;">
+                <span style={{ display: "block", height: 38 }} />
+              </Field>
 
-          {/* Teléfono */}
-          <div className="login-field">
-            <label className="login-label" htmlFor="rmc-phone">Teléfono</label>
-            <input id="rmc-phone" className="login-input" type="tel"
-                   value={form.phone} onChange={set("phone")}
-                   placeholder="+506 …" autoComplete="tel" />
-          </div>
+              <Field label="Contraseña *">
+                <input className="input" type="password" required minLength={8} value={form.password}
+                       onChange={set("password")} placeholder="Mínimo 8 caracteres" autoComplete="new-password" />
+              </Field>
+              <Field label="Confirmar contraseña *">
+                <input className="input" type="password" required minLength={8} value={form.confirm}
+                       onChange={set("confirm")} placeholder="Repite la contraseña" autoComplete="new-password" />
+              </Field>
 
-          {/* Contraseña + confirmación */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div className="login-field">
-              <label className="login-label" htmlFor="rmc-pass">Contraseña *</label>
-              <input id="rmc-pass" className="login-input" type="password" required minLength={8}
-                     value={form.password} onChange={set("password")}
-                     placeholder="Mínimo 8 caracteres" autoComplete="new-password" />
-            </div>
-            <div className="login-field">
-              <label className="login-label" htmlFor="rmc-pass2">Confirmar contraseña *</label>
-              <input id="rmc-pass2" className="login-input" type="password" required minLength={8}
-                     value={form.confirm} onChange={set("confirm")}
-                     placeholder="Repite la contraseña" autoComplete="new-password" />
-            </div>
-          </div>
-
-          {/* Empresa */}
-          <div className="login-field">
-            <label className="login-label" htmlFor="rmc-empresa">Empresa *</label>
-            {!empresa ? (
-              <>
-                <input id="rmc-empresa" className="login-input" type="text" required
-                       value={q} onChange={(e) => { setQ(e.target.value); setOpenList(true); }}
-                       placeholder="Escribe el nombre (ej. Sondel)…" autoComplete="off"
-                       style={{ marginBottom: 0 }} />
-                {openList && q.trim().length >= 2 && (
-                  <div style={{
-                    background: "var(--surface-raised)", border: "1px solid var(--border-strong)",
-                    borderRadius: 10, marginTop: 6, maxHeight: 180, overflowY: "auto", boxShadow: "0 8px 24px rgba(15,27,61,.1)",
-                  }}>
-                    {searching && <div className="login-tagline" style={{ padding: "10px 14px", margin: 0 }}>Buscando…</div>}
-                    {!searching && options.length === 0 && (
-                      <div style={{ padding: "10px 14px", fontSize: 13, color: "var(--text-tertiary)" }}>
-                        Sin coincidencias con acceso MCP.
+              {/* Empresa — full width */}
+              <Field label="Empresa *" full>
+                {!empresa ? (
+                  <>
+                    <input className="input" type="text" required value={q}
+                           onChange={(e) => { setQ(e.target.value); setOpenList(true); }}
+                           placeholder="Escribe el nombre (ej. Sondel)…" autoComplete="off" />
+                    {openList && q.trim().length >= 2 && (
+                      <div style={{
+                        background: "var(--surface-raised)", border: "1px solid var(--border-strong)",
+                        borderRadius: 10, marginTop: 6, maxHeight: 190, overflowY: "auto",
+                        boxShadow: "0 8px 24px rgba(15,27,61,0.10)",
+                      }}>
+                        {searching && <div style={{ padding: "10px 14px", fontSize: 13, color: "var(--text-tertiary)" }}>Buscando…</div>}
+                        {!searching && options.length === 0 && (
+                          <div style={{ padding: "10px 14px", fontSize: 13, color: "var(--text-tertiary)" }}>
+                            Sin coincidencias con acceso MCP.
+                          </div>
+                        )}
+                        {options.map((c) => (
+                          <button key={c.id} type="button" onClick={() => pickEmpresa(c)}
+                                  style={{ display: "block", width: "100%", textAlign: "left", padding: "11px 14px",
+                                           border: "none", background: "transparent", cursor: "pointer",
+                                           fontSize: 13.5, color: "var(--text-primary)" }}>
+                            {c.razon_social}{c.is_subsidiary ? "  (subsidiaria)" : ""}
+                          </button>
+                        ))}
                       </div>
                     )}
-                    {options.map((c) => (
-                      <button key={c.id} type="button"
-                              onClick={() => pickEmpresa(c)}
-                              style={{ display: "block", width: "100%", textAlign: "left", padding: "10px 14px",
-                                       border: "none", background: "transparent", cursor: "pointer",
-                                       fontSize: 13.5, color: "var(--text-primary)" }}>
-                        {c.razon_social}{c.is_subsidiary ? "  (subsidiaria)" : ""}
-                      </button>
-                    ))}
+                  </>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span className="badge badge-navy" style={{ fontSize: 13, padding: "7px 12px" }}>{empresa.razon_social}</span>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEmpresa(null)}>Cambiar</button>
                   </div>
                 )}
-              </>
-            ) : (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="badge badge-navy" style={{ fontSize: 12.5 }}>{empresa.razon_social}</span>
-                <button type="button" className="btn btn-ghost btn-sm"
-                        onClick={() => setEmpresa(null)}>Cambiar</button>
-              </div>
-            )}
-          </div>
+              </Field>
 
-          {/* Direcciones */}
-          <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <label className="login-label" style={{ margin: 0 }}>Direcciones</label>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={addAddress}>+ Nueva dirección</button>
+              {/* Direcciones — full width */}
+              <Field label="Direcciones" full>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={addAddress}>+ Nueva dirección</button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12 }}>
+                  {addresses.map((a, i) => (
+                    <div key={a.key} style={{
+                      border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px",
+                      background: "var(--surface)",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
+                          Dirección {i + 1}{a.is_default ? " · DEFAULT" : ""}
+                        </span>
+                        <span style={{ flex: 1 }} />
+                        {!a.is_default && (
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => markDefault(a.key)}>Marcar default</button>
+                        )}
+                        {addresses.length > 1 && (
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => rmAddr(a.key)}>Quitar</button>
+                        )}
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <input className="input" placeholder="Etiqueta (Oficina, Bodega…)" value={a.label}
+                               onChange={(e) => updAddr(a.key, { label: e.target.value })} />
+                        <input className="input" placeholder="Calle y número" value={a.address_line_1}
+                               onChange={(e) => updAddr(a.key, { address_line_1: e.target.value })} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, marginTop: 8 }}>
+                        <input className="input" placeholder="Ciudad" value={a.city}
+                               onChange={(e) => updAddr(a.key, { city: e.target.value })} />
+                        <select className="select" value={a.country}
+                                onChange={(e) => updAddr(a.key, { country: e.target.value })}>
+                          {PAISES.map(([iso, nom]) => <option key={iso} value={iso}>{nom}</option>)}
+                        </select>
+                        <input className="input" placeholder="Código postal" value={a.zip_code}
+                               style={{ minWidth: 120 }}
+                               onChange={(e) => updAddr(a.key, { zip_code: e.target.value })} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Field>
             </div>
-            {addresses.map((a, i) => (
-              <div key={a.key} style={{
-                border: "1px solid var(--border)", borderRadius: 12, padding: "10px 12px",
-                marginBottom: 8, background: "var(--surface)",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-                    Dirección {i + 1}{a.is_default ? " · DEFAULT" : ""}
-                  </span>
-                  <span style={{ flex: 1 }} />
-                  {!a.is_default && (
-                    <button type="button" className="btn btn-ghost btn-sm"
-                            onClick={() => markDefault(a.key)}>Marcar default</button>
-                  )}
-                  {addresses.length > 1 && (
-                    <button type="button" className="btn btn-ghost btn-sm"
-                            onClick={() => rmAddr(a.key)}>Quitar</button>
-                  )}
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <input className="input" placeholder="Etiqueta (Oficina, Bodega…)"
-                         value={a.label} onChange={(e) => updAddr(a.key, { label: e.target.value })} />
-                  <input className="input" placeholder="Calle y número"
-                         value={a.address_line_1} onChange={(e) => updAddr(a.key, { address_line_1: e.target.value })} />
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, marginTop: 8 }}>
-                  <input className="input" placeholder="Ciudad"
-                         value={a.city} onChange={(e) => updAddr(a.key, { city: e.target.value })} />
-                  <select className="select" value={a.country}
-                          onChange={(e) => updAddr(a.key, { country: e.target.value })}>
-                    {PAISES.map(([iso, nom]) => <option key={iso} value={iso}>{nom}</option>)}
-                  </select>
-                  <input className="input" placeholder="Código postal" style={{ width: 130 }}
-                         value={a.zip_code} onChange={(e) => updAddr(a.key, { zip_code: e.target.value })} />
-                </div>
-              </div>
-            ))}
-          </div>
 
-          {error && (
-            <div className="login-error" role="alert" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span>{error}</span>
-            </div>
-          )}
+            {error && <div style={{ ...F.err, marginTop: 14 }}>{error}</div>}
 
-          <button className="login-submit" type="submit" disabled={submitting}>
-            {submitting && <span className="login-spinner" />}
-            Enviar solicitud
-          </button>
-
-          <div style={{ textAlign: "center", marginTop: 4 }}>
-            <Link to="/login" style={{ fontSize: 13, color: "var(--brand-accent)" }}>
-              ¿Ya tienes cuenta? Inicia sesión
-            </Link>
+            <button className="btn btn-primary" type="submit" disabled={submitting}
+                    style={{ ...F.btn, marginTop: 18, opacity: submitting ? 0.6 : 1 }}>
+              {submitting ? "Enviando…" : "Enviar solicitud"}
+            </button>
           </div>
         </form>
 
-        <div className="login-foot"><b>MWT.ONE</b> · Control Center</div>
+        <div style={{ textAlign: "center", marginTop: 10 }}>
+          <Link to="/login" style={{ fontSize: 13.5, color: "var(--brand-accent)" }}>
+            ¿Ya tienes cuenta? Inicia sesión
+          </Link>
+        </div>
       </div>
     </div>
   );
