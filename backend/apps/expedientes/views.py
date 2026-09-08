@@ -5409,6 +5409,28 @@ class DocumentoViewSet(viewsets.ViewSet):
                         # etc. está OK. No usamos el HTML — solo verificamos.
                         from .proforma_renderer import render_proforma_html
                         codigo_pf = (codigo or "").strip() or None
+                        # Ola 7 · defecto 9: si ya existe la PROFORMA REAL
+                        # (binario) para este expediente+codigo, NO creamos el
+                        # `.html` dinámico de 0 bytes (gemelo). El PDF es la
+                        # fuente de verdad.
+                        with connection.cursor() as _cc:
+                            _cc.execute(
+                                """
+                                SELECT 1 FROM expedientes.documento
+                                 WHERE expediente_id = %s::uuid
+                                   AND kind = 'PROFORMA'
+                                   AND codigo = %s
+                                   AND is_active = TRUE
+                                   AND file_ext <> 'html'
+                                   AND file_size_bytes > 0
+                                 LIMIT 1
+                                """,
+                                [exp_id, codigo_pf or ""],
+                            )
+                            if _cc.fetchone():
+                                log.info("[documento.create] PROFORMA PDF real ya existe → "
+                                         "omite auto-HTML dinámico (defecto 9)")
+                                return Response(DocumentoSerializer(d).data, status=201)
                         _html_str, meta = render_proforma_html(
                             expediente_id=exp_id,
                             request_user=request.user,
