@@ -240,6 +240,13 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    # Ola 7 · Staging de documentos: los file_path de documento_subir /
+    # storage_subir_archivo / sap_upsert abren archivos DENTRO del contenedor.
+    # Se monta la carpeta del host para que el operador pueda scp/rsync los
+    # PDFs de cada expediente y el MCP los vea en /staging/... (sin pasar
+    # los binarios por el contexto del agente).
+    volumes:
+      - /srv/mwt/staging:/staging
     environment:
       MWT_MCP_TRANSPORT: http
       MWT_MCP_HOST: 0.0.0.0
