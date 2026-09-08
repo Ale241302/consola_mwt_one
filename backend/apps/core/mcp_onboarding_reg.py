@@ -30,6 +30,7 @@ import logging
 import secrets
 import uuid
 from datetime import datetime, timezone
+from email.utils import formatdate, make_msgid
 from typing import Any
 
 from django.conf import settings
@@ -205,6 +206,10 @@ def send_mail_tpl(to: str, subject: str, template_key: str, context: dict,
     from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "info@mwt.one")
     try:
         msg = EmailMultiAlternatives(subject, txt, from_email, [to],
+                                     headers={
+                                         "Date": formatdate(localtime=True),
+                                         "Message-ID": make_msgid(domain="mwt.one"),
+                                     },
                                      reply_to=[_reply_to()])
         if html:
             msg.attach_alternative(html, "text/html")
@@ -285,6 +290,10 @@ def notify_admins(req_id: str, solicitante: dict, empresa: str) -> None:
             txt,
             getattr(settings, "DEFAULT_FROM_EMAIL", "info@mwt.one"),
             [a["email"] for a in admins],
+            headers={
+                "Date": formatdate(localtime=True),
+                "Message-ID": make_msgid(domain="mwt.one"),
+            },
         )
         if html:
             msg.attach_alternative(html, "text/html")

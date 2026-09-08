@@ -28,7 +28,7 @@ import smtplib
 import ssl
 from email.header import decode_header
 from email.message import Message
-from email.utils import formataddr, parseaddr
+from email.utils import formataddr, formatdate, make_msgid, parseaddr
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
@@ -217,6 +217,11 @@ def send_reply(
             part.set_type(att.get("mime", "application/octet-stream"))
             mixed.attach(part)
         root = mixed
+
+    # Cabeceras de higiene de correo (faltaban → señales spam MISSING_MID/DATE):
+    # Date y Message-ID siempre presentes, como esperan los filtros (Gmail…).
+    root["Date"] = formatdate(localtime=True)
+    root["Message-ID"] = make_msgid(domain="mwt.one")
 
     try:
         with smtplib.SMTP(host=host, port=port, timeout=30) as smtp:
