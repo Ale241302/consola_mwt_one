@@ -1,0 +1,10 @@
+Hola{% if nombre %} {{ nombre }}{% endif %},
+
+Tu cuenta ({{ email }}) existe en MWT.ONE pero aun no esta activa.
+
+Un administrador debe validar y activar tu acceso antes de emitir credenciales MCP.
+Te avisaremos por correo en cuanto este listo.
+
+Si crees que es un error, contacta al equipo de MWT indicando tu correo.
+
+— MWT.ONE

@@ -1,0 +1,11 @@
+Hola{% if nombre %} {{ nombre }}{% endif %},
+
+Tu cuenta ({{ email }}) tiene acceso MCP a MAS DE UNA empresa.
+Indicanos a cual quieres conectar tu IA:
+
+{% for e in empresas %}  - {{ e.razon_social }}
+{% endfor %}
+
+Responde este correo con el nombre de la empresa y te enviaremos tus credenciales.
+
+— MWT.ONE

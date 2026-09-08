@@ -1,0 +1,15 @@
+Hola{% if nombre %} {{ nombre }}{% endif %},
+
+Adjuntamos tu paquete de conexion al MCP de {{ empresa }}.
+
+- {{ fname_json }}  -> configuracion del servidor MCP (contiene tu token secreto).
+- {{ fname_md }}    -> instrucciones de uso y advertencias.
+
+IMPORTANTE - UN SOLO USO POR EQUIPO
+Estas credenciales se vinculan al PRIMER equipo desde el que se conecten.
+Si las usas desde otro computador, el servidor las rechaza. Generar un
+paquete nuevo para tu cuenta revoca este automaticamente.
+
+Para regenerar, escribe a mcp@mwt.one desde tu correo registrado indicando tu empresa.
+
+— MWT.ONE

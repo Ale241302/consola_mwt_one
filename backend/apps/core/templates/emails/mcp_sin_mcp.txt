@@ -1,0 +1,9 @@
+Hola{% if nombre %} {{ nombre }}{% endif %},
+
+Tu cuenta ({{ email }}) esta registrada, pero ninguna de tus empresas
+{% if empresa %}(incluida {{ empresa }}){% endif %} tiene el acceso MCP habilitado.
+
+El equipo de MWT configura el acceso por empresa. Escribenos a mcp@mwt.one
+indicando el correo y la empresa para revisar tu caso.
+
+— MWT.ONE

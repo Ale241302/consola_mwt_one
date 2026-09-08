@@ -1,0 +1,61 @@
+{% load static %}<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Credenciales MCP · {{ empresa }} — MWT ONE</title>
+<style>
+  body,table,td,a{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;}
+  table,td{mso-table-lspace:0pt;mso-table-rspace:0pt;}
+  body{margin:0!important;padding:0!important;width:100%!important;background-color:#F2F4F8;
+       font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}
+  .container{width:100%;max-width:600px;margin:0 auto;}
+  .card{background:#FFFFFF;border-radius:16px;overflow:hidden;
+        box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 24px rgba(15,27,61,.06);}
+  .band{background:linear-gradient(135deg,#0F1B3D 0%,#1A2A5C 60%,#10B981 140%);padding:28px 32px;}
+  .eyebrow{font-size:12px;font-weight:600;color:rgba(255,255,255,.7);letter-spacing:.12em;
+           text-transform:uppercase;margin:0 0 8px;}
+  .title{font-size:20px;font-weight:700;color:#fff;margin:0;line-height:1.3;}
+  .content{padding:28px 32px;}
+  h2{font-size:15px;color:#0F1B3D;margin:0 0 10px;}
+  p{font-size:14px;line-height:1.6;color:#3D4A6B;margin:0 0 14px;}
+  .box{background:#F0FDF7;border:1px solid #A7F3D0;border-radius:10px;padding:14px 16px;margin:0 0 16px;}
+  .warn{background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;padding:14px 16px;margin:0 0 16px;}
+  .small{font-size:12px;line-height:1.5;color:#6B7894;margin:0;}
+  .btn{display:inline-block;background:#0F1B3D;color:#fff!important;text-decoration:none;
+       padding:12px 20px;border-radius:10px;font-weight:600;font-size:14px;}
+  ul{margin:0 0 14px 18px;padding:0;}
+  li{font-size:14px;line-height:1.6;color:#3D4A6B;margin-bottom:6px;}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+        background:#F1F5F9;border-radius:6px;padding:2px 6px;color:#0F1B3D;}
+</style>
+</head><body>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="container"><tr><td>
+<div class="card">
+  <div class="band"><p class="eyebrow">MWT.ONE · MCP</p><p class="title">Tus credenciales MCP están listas</p></div>
+  <div class="content">
+    {% if nombre %}<p>Hola <strong>{{ nombre }}</strong>,</p>{% else %}<p>Hola,</p>{% endif %}
+    <p>Adjuntamos tu paquete de conexión al MCP de <strong>{{ empresa }}</strong>
+       para que tu IA opere sobre la Consola MWT.ONE:</p>
+    <ul>
+      <li><span class="mono">{{ fname_json }}</span> — configuración del servidor MCP (contiene tu token secreto).</li>
+      <li><span class="mono">{{ fname_md }}</span> — instrucciones de uso y advertencias.</li>
+    </ul>
+
+    <div class="box"><p style="margin:0;"><strong>Qué hacer:</strong> abre la configuración de tu cliente de IA
+      (Claude, opencode, Antigravity, Cursor…) y agrega el servidor remoto con los datos del
+      <span class="mono">.json</span>.</p></div>
+
+    <div class="warn">
+      <p style="margin:0 0 4px;"><strong>IMPORTANTE · UN SOLO USO POR EQUIPO</strong></p>
+      <p style="margin:0 0 8px;">Estas credenciales se vinculan al <strong>primer equipo</strong> desde el que se
+         conecten. Si intentas usarlas desde otro computador, el servidor las rechaza.</p>
+      <p style="margin:0;">Si generas un paquete nuevo para tu cuenta, este deja de funcionar
+         automáticamente. Guárdalas en un lugar seguro y no las compartas.</p>
+    </div>
+
+    <p class="small">¿Perdiste el archivo o necesitas regenerarlo? Escríbenos a
+      <strong>mcp@mwt.one</strong> desde tu correo registrado indicando tu empresa.</p>
+  </div>
+</div>
+</td></tr></table>
+</body></html>

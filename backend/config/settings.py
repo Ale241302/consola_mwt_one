@@ -327,6 +327,16 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": _crontab(hour=7, minute=0),
         "options":  {"queue": "default", "expires": 3600},
     },
+    # Onboarding MCP por correo (Fase 1): procesa el INBOX de mcp@mwt.one
+    # cada 2 minutos. Sin MCP_MAILBOX_USER/PASSWORD el task no hace nada.
+    # [APAGADO hasta Fase 3] — el DeviceToken aún no conecta; enciéndelo con
+    # la Fase 3 descomentando esta entrada. El pipeline corre a mano vía:
+    #   python manage.py mcp_poll_inbox
+    # "mcp_poll_inbox": {
+    #     "task":     "core.mcp_poll_inbox",
+    #     "schedule": 120.0,
+    #     "options":  {"queue": "default", "expires": 300},
+    # },
     # Archival a S3 Glacier — Fase 5C (placeholder; el task se crea
     # en una sub-fase posterior. Comentado hasta que esté implementado).
     # "archive_old_payments": {
@@ -465,6 +475,22 @@ EMAIL_TIMEOUT      = int(os.environ.get("EMAIL_TIMEOUT",   "20"))
 EMAIL_DOC_USER     = os.environ.get("EMAIL_DOC_USER",     "mw_doc@mwt.one")
 EMAIL_DOC_PASSWORD = os.environ.get("EMAIL_DOC_PASSWORD", "")
 DEFAULT_REPLY_TO   = os.environ.get("DEFAULT_REPLY_TO",   "trade@mwt.one")
+
+# --------------------------------------------------------------------
+# Onboarding MCP por correo · buzón mcp@mwt.one (Fase 1)
+# --------------------------------------------------------------------
+# El poller (core.mcp_poll_inbox) lee este buzón por IMAP y responde como
+# mcp@mwt.one por SMTP. Si MCP_MAILBOX_USER/PASSWORD están vacíos el poller
+# se desactiva (dev/local sin correo).
+MCP_MAILBOX_USER       = os.environ.get("MCP_MAILBOX_USER", "")
+MCP_MAILBOX_PASSWORD   = os.environ.get("MCP_MAILBOX_PASSWORD", "")
+MCP_MAILBOX_IMAP_HOST  = os.environ.get("MCP_MAILBOX_IMAP_HOST", "mail.mwt.one")
+MCP_MAILBOX_IMAP_PORT  = int(os.environ.get("MCP_MAILBOX_IMAP_PORT", "993"))
+MCP_MAILBOX_IMAP_SSL   = os.environ.get("MCP_MAILBOX_IMAP_SSL", "1")
+MCP_SMTP_HOST          = os.environ.get("MCP_SMTP_HOST", "mail.mwt.one")
+MCP_SMTP_PORT          = int(os.environ.get("MCP_SMTP_PORT", "587"))
+MCP_SMTP_STARTTLS      = os.environ.get("MCP_SMTP_STARTTLS", "1")
+MCP_MAILBOX_FROM       = os.environ.get("MCP_MAILBOX_FROM", "mcp@mwt.one")
 
 # --------------------------------------------------------------------
 # Tickets / soporte interno (LOTE_SM_TICKETS)

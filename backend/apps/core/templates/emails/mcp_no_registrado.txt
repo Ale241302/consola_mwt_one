@@ -1,0 +1,12 @@
+Hola,
+
+Recibimos tu solicitud de credenciales MCP para {% if email %}{{ email }}{% else %}el correo desde el que escribes{% endif %},
+pero ese correo NO esta registrado en la Consola MWT.ONE.
+
+Para que tu equipo pueda conectar su IA al MCP, completa el formulario de registro:
+
+  {{ consola_url }}/registro-mcp
+
+Un administrador revisara la solicitud y, al activarla, te enviaremos tus credenciales.
+
+— MWT.ONE
