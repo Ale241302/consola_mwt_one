@@ -301,15 +301,17 @@ credenciales en el `.env` de consola como variables (Fase 1).
   `mcp_registro_recibido/mcp_admin_notificacion/mcp_cuenta_activada`, páginas frontend
   **`/registro-mcp`** (pública) y **`/registro-solicitudes`** (admin, con link desde /usuarios).
   Throttles públicos `mcp_registro`/`mcp_registro_q`.
-- **Fase 3 ⚠️ parcial**: backend `mcp_device_grant_auth` + `McpTokenView` con `grant_secret+ip`
-  (bind IP al primer uso, `DEVICE_MISMATCH`/`REVOKED`/`EXPIRED`) **validado end-to-end contra
-  producción** (200 mismo equipo / 401 otro equipo). MCP server soporta
-  `Authorization: DeviceToken <secret>` (identity/asgi/jwt_minter, caché atada a secret+IP) —
-  suite **148 tests verdes**. Gateway: patches **v13** (bypass OAuth en `require_auth`) y **v13b**
-  (exime CSRF) aplicados, pero ContextForge aún responde `401 requires OAuth` en la capa de
-  enrutado del server virtual → **falta cerrar el direct-proxy del server para DeviceToken**
-  (enrutar por payload `device-token` a `consola-mwt-one-mcp:8765`). Por eso el beat
-  `mcp_poll_inbox` está **APAGADO** hasta completar ese tramo del gateway.
+- **Fase 3 ✅ resuelta (2026-09-08)**: backend `mcp_device_grant_auth` + `McpTokenView` con
+  `grant_secret+ip` (bind IP al primer uso, `DEVICE_MISMATCH`/`REVOKED`/`EXPIRED`) validado
+  end-to-end. MCP server soporta `Authorization: DeviceToken <secret>`
+  (identity/asgi/jwt_minter, caché atada a secret+IP) — suite **148 tests verdes**. El gateway
+  ContextForge demostró tener varias capas (require_auth → CSRF → transporte → RBAC) que cortan el
+  dispositivo, así que el **DeviceToken conecta por una ruta nginx directa y verificada**:
+  `location ~ ^/device/?$` en `/opt/mwt/nginx/consola.conf` → proxy al contenedor
+  `consola-mwt-one-mcp:8765/mcp` reenviando `Authorization` + IP real (`CF-Connecting-IP`). Los
+  parches de gateway v13/v13b/v13c quedan aplicados e idempotentes (no interfieren). E2E real con
+  SDK MCP: `initialize + tools/list` → **45 tools filtradas por rol client_b2b (Sondel)** y el
+  grant queda `ACTIVE` vinculado a la IP del equipo. **Beat `mcp_poll_inbox` ACTIVO** (cada 2 min).
 - Pruebas manuales listas: `docker exec consola-mwt-one-django python manage.py mcp_poll_inbox`
   (pipeline correo) y el flujo de registro→aprobación en la consola.
 
