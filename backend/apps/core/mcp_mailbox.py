@@ -265,12 +265,57 @@ def _leading_text(body: str) -> str:
     return "\n".join(out)
 
 
-def _extract_empresa_hint(body: str) -> str | None:
-    """Extrae una pista de empresa del cuerpo (línea con 'Empresa:'/'Compania:').
+def _empresa_candidates(lead: str) -> list[str]:
+    """Líneas del texto 'nuevo' que podrían ser una empresa.
 
-    Devuelve el texto de la empresa, la marca 'ALL' (todas/varias), o None si
-    no hay pista. Si no hay palabra clave, toma la 1ª línea no citada (para
-    respuestas simples tipo 'SONEPAR COLOMBIA S.A.S.') como candidata.
+    Acepta cualquier forma: 'Empresa: X', 'Cliente: X', 'Razón social: X',
+    o simplemente el nombre ('Sondel'). Excluye emails sueltos y saludos.
+    """
+    cands: list[str] = []
+    seen: set[str] = set()
+
+    def _add(v: str) -> None:
+        v = re.sub(r"\s+", " ", v).strip().rstrip(".:-")
+        if not v or v in seen or len(v) <= 2:
+            return
+        if re.match(r"^[\w.+-]+@[\w-]+(?:\.[\w-]+)+$", v):
+            return
+        seen.add(v)
+        cands.append(v)
+
+    for ln in (lead or "").splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        m = re.search(r"(?i)\b(empresa|compania|razon social|cliente)\b\s*[:=]?\s*(.+)", ln)
+        if m:
+            _add(m.group(2))
+            continue
+        if re.match(r"(?i)^(hola|buenas|buenos dias|gracias|saludos|por favor|necesito|quisiera|solicito|requiero)[\s,.:!]*$", ln):
+            continue
+        _add(ln)
+    return cands
+
+
+def _resolve_empresa(clients: list[dict], lead: str) -> dict | None:
+    """Resuelve la empresa del texto 'nuevo' (cualquier forma de escribirla).
+
+    Devuelve el cliente si hay exactamente UNA coincidencia entre todas las
+    líneas candidatas; None si es ambiguo o no hay coincidencia (se pregunta).
+    """
+    matched_by_id: dict[str, dict] = {}
+    for cand in _empresa_candidates(lead):
+        for c in mcp_onboarding.match_clients_by_hint(clients, cand):
+            matched_by_id.setdefault(c["cliente_id"], c)
+    if len(matched_by_id) == 1:
+        return next(iter(matched_by_id.values()))
+    return None
+
+
+def _extract_empresa_hint(body: str) -> str | None:
+    """Pista de empresa (para el dry_run). 'ALL' si pide varias/todas,
+    o la 1ª línea con 'Empresa:'/'Compania:'/'Cliente:'. El matching real de
+    nombres pelados lo hace _empresa_candidates en el flujo de decisión.
     """
     if re.search(r"(?i)\b(todas|varias|todos|ambas|todas las empresas?)\b", body):
         return "ALL"
@@ -282,18 +327,6 @@ def _extract_empresa_hint(body: str) -> str | None:
             val = re.sub(r"\s+", " ", val)
             if val:
                 return val
-    # fallback: primera línea no vacía que no sea email ni saludo genérico
-    for ln in body.splitlines():
-        ln = ln.strip()
-        if not ln:
-            continue
-        if re.match(r"^[\w.+-]+@[\w-]+(?:\.[\w-]+)+$", ln):
-            continue
-        if re.match(r"(?i)^(hola|buenas|buenos dias|gracias|saludos)[\s,.:]*$", ln):
-            continue
-        if len(ln) <= 2:
-            continue
-        return ln
     return None
 
 
@@ -375,13 +408,13 @@ def process_message(msg: Message, sender: str, from_name: str = "", dry_run: boo
             res = {"ok": sent > 0, "to": target_email,
                    "sent": sent, "failed": failed}
         else:
-            matched = mcp_onboarding.match_clients_by_hint(clients, empresa_hint or "")
-            if len(matched) == 1:
-                res = _send_credenciales(target_email, target, matched[0], base_ctx)
+            # Matchear TODAS las líneas candidatas contra los clientes del
+            # usuario (acepta 'Empresa:'/'Cliente:' o el nombre pelado). Si
+            # exactamente una empresa coincide → esa; si varias → pedir elegir.
+            resolved = _resolve_empresa(clients, lead)
+            if resolved:
+                res = _send_credenciales(target_email, target, resolved, base_ctx)
                 scenario = "ok"
-            elif len(matched) > 1 or (empresa_hint and not matched):
-                # Ambiguo o sin coincidencia → pedir que elija.
-                res = _elegir_reply()
             else:
                 res = _elegir_reply()
     else:
