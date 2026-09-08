@@ -170,25 +170,31 @@ def test_middleware_captura_devicetoken_y_ip():
     set_tenant(Tenant())
 
 
-def test_middleware_devicetoken_sin_gateway_key_no_se_confia():
+def test_middleware_devicetoken_sin_gateway_key_se_confia():
+    """El secret X-Forwarded-User-* se descarta si la gateway key no coincide,
+    pero el DeviceToken SÍ se confía (el backend valida secret+IP; el acceso
+    público al contenedor es vía nginx /device, no por gateway key)."""
     import asyncio
     from mwt_mcp.identity import current_identity as _ci
+    import mwt_mcp.identity as _id
 
     settings.gateway_key = "super-secreto"
     seen = {}
 
     async def fake_app(scope, receive, send):
-        ident = _ci()
-        seen["device_secret"] = ident.device_secret
+        seen["device_secret"] = _ci().device_secret
+        seen["email"] = _ci().email
         return None
 
     mw = IdentityPropagationMiddleware(fake_app)
     asyncio.run(mw(scope_with_headers({
         "authorization": f"DeviceToken {SECRET}",
         "x-mwt-gateway-key": "incorrecto",
+        "x-forwarded-user-email": "cliente@x.com",  # identidad OAuth NO se confía
         "x-forwarded-for": "200.10.20.30",
     }), None, None))
-    assert seen["device_secret"] is None  # fail-closed
+    assert seen["device_secret"] == SECRET   # DeviceToken se confía
+    assert seen["email"] is None             # OAuth identity se descarta
     settings.gateway_key = ""
     set_tenant(Tenant())
 
