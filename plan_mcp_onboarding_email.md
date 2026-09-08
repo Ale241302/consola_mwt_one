@@ -287,5 +287,31 @@ credenciales en el `.env` de consola como variables (Fase 1).
 1. ¿Resolver D4 con "primaria → única → preguntar"? (recomendado)
 2. Credenciales de `mcp@mwt.one`: ¿las guardo en `/opt/consola-mwt-one/.env` del VPS (+ copia en
    `.env.example`) para que el poller las use? (recomendado)
+
+---
+
+## 9. Estado de implementación (2026-09-08)
+
+- **Fase 0 ✅** buzón `mcp@mwt.one` operativo.
+- **Fase 1 ✅ desplegada**: tabla `core.mcp_device_grant`, `mcp_onboarding` + `mcp_mailbox`,
+  templates reply, command `manage.py mcp_poll_inbox`. E2E real validado.
+- **Fase 2 ✅ desplegada**: `users.registration_request` (SQL I2), endpoints
+  `/api/onboarding/{clientes,registro,solicitudes,<id>/aprobar,<id>/rechazar}`, servicio de
+  activación (mwtuser + core.users + Authentik + grant + email con .json/.md), templates
+  `mcp_registro_recibido/mcp_admin_notificacion/mcp_cuenta_activada`, páginas frontend
+  **`/registro-mcp`** (pública) y **`/registro-solicitudes`** (admin, con link desde /usuarios).
+  Throttles públicos `mcp_registro`/`mcp_registro_q`.
+- **Fase 3 ⚠️ parcial**: backend `mcp_device_grant_auth` + `McpTokenView` con `grant_secret+ip`
+  (bind IP al primer uso, `DEVICE_MISMATCH`/`REVOKED`/`EXPIRED`) **validado end-to-end contra
+  producción** (200 mismo equipo / 401 otro equipo). MCP server soporta
+  `Authorization: DeviceToken <secret>` (identity/asgi/jwt_minter, caché atada a secret+IP) —
+  suite **148 tests verdes**. Gateway: patches **v13** (bypass OAuth en `require_auth`) y **v13b**
+  (exime CSRF) aplicados, pero ContextForge aún responde `401 requires OAuth` en la capa de
+  enrutado del server virtual → **falta cerrar el direct-proxy del server para DeviceToken**
+  (enrutar por payload `device-token` a `consola-mwt-one-mcp:8765`). Por eso el beat
+  `mcp_poll_inbox` está **APAGADO** hasta completar ese tramo del gateway.
+- Pruebas manuales listas: `docker exec consola-mwt-one-django python manage.py mcp_poll_inbox`
+  (pipeline correo) y el flujo de registro→aprobación en la consola.
+
 3. Formato del **cuerpo** del correo que esperamos (¿solo `email` en el body basta?, ¿nombre
    opcional?). Mientras tanto el parser acepta "email: x@y.z" o el email suelto.
