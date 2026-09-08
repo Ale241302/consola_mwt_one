@@ -610,6 +610,18 @@ class ExpedienteSerializer(serializers.ModelSerializer):
     lines           = serializers.ListField(child=serializers.DictField(),
                                             required=False, write_only=True)
 
+    # ── Ola 7 · dominio de dispatch_mode (FCL/LCL/CONSOLIDADO) ──
+    def validate_dispatch_mode(self, value):
+        """Solo FCL/LCL/CONSOLIDADO. Evita el 500 por longitud/valor inválido."""
+        if value in (None, ""):
+            return value
+        v = str(value).strip().upper()
+        if v not in ("FCL", "LCL", "CONSOLIDADO"):
+            raise serializers.ValidationError(
+                "dispatch_mode debe ser FCL, LCL o CONSOLIDADO."
+            )
+        return v
+
     # ── Sprint 2026-05-26 (CEO) · totales computados ──────────
     def _safe_uuid(self, val):
         try:

@@ -115,7 +115,7 @@ class Expediente(models.Model):
     modo_operacion      = models.CharField(max_length=16, default="FULL")
     incoterm            = models.CharField(max_length=8, null=True, blank=True)
     freight_mode        = models.CharField(max_length=8, null=True, blank=True)
-    dispatch_mode       = models.CharField(max_length=8, null=True, blank=True)
+    dispatch_mode       = models.CharField(max_length=12, null=True, blank=True)
     origin              = models.CharField(max_length=128, null=True, blank=True)
     destination         = models.CharField(max_length=128, null=True, blank=True)
     origin_country      = models.CharField(max_length=2,   null=True, blank=True)

@@ -5344,6 +5344,48 @@ class DocumentoViewSet(viewsets.ViewSet):
                 # (mismo patron que productos).
                 storage_url = key
 
+                # Ola 7 · reutilizar registro OC vacío con oc_id.
+                # Si subimos un documento kind=OC y ya existe un registro OC
+                # vacío (0 bytes, sin binario) con el MISMO código y con `oc_id`
+                # (el que la UI enlaza a la OC), rellenamos ESE registro con el
+                # binario recién subido en vez de crear un OC nuevo suelto.
+                # Evita el duplicado "OC pendiente + OC nuevo" de la Fase 3.
+                if kind == "OC":
+                    try:
+                        _cod_norm = (codigo or "").strip().upper()
+                        if _cod_norm.startswith("PO "):
+                            _cod_norm = _cod_norm[3:].strip()
+                        with connection.cursor() as _cc:
+                            _cc.execute(
+                                """
+                                SELECT id FROM expedientes.documento
+                                 WHERE kind = 'OC' AND is_active = TRUE
+                                   AND file_size_bytes = 0
+                                   AND (storage_url IS NULL OR storage_url = '')
+                                   AND oc_id IS NOT NULL
+                                   AND upper(regexp_replace(codigo, '^PO[ ]*', '')) = %s
+                                 ORDER BY created_at DESC, id
+                                 LIMIT 1
+                                """,
+                                [_cod_norm],
+                            )
+                            _row = _cc.fetchone()
+                            if _row:
+                                _cc.execute(
+                                    """
+                                    UPDATE expedientes.documento
+                                       SET storage_url=%s, file_ext=%s, file_size_bytes=%s,
+                                           audience=%s, updated_at=now()
+                                     WHERE id=%s
+                                    """,
+                                    [storage_url, file_ext, file_size, audience, str(_row[0])],
+                                )
+                                _d = Documento.objects.get(pk=_row[0])
+                                log.info("[documento.create] OC reutilizada (anexado binario a oc_id): %s", codigo)
+                                return Response(DocumentoSerializer(_d).data, status=201)
+                    except Exception as _oc_e:
+                        log.warning("[documento.create] reutilizar OC fallo (sigue insercion): %s", _oc_e)
+
                 # Paperless ingest opcional (best-effort, no bloquea)
                 paperless_doc_id = None
                 try:

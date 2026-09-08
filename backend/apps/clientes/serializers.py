@@ -178,13 +178,23 @@ class ClienteSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
 
     # ── Validaciones de campos ─────────────────────────────────
     def validate_codigo_marluvas(self, value):
-        """Exactamente 10 dígitos numéricos si se envía."""
+        """Exactamente 10 dígitos numéricos y único entre clientes ACTIVOS.
+        Evita el IntegrityError 500 del índice UNIQUE parcial
+        idx_cliente_marluvas_unique (codigo_marluvas IS NOT NULL AND is_active)."""
         if value in (None, "", 0):
             return None
         value = str(value).strip()
         if not re.fullmatch(r"\d{10}", value):
             raise serializers.ValidationError(
                 "codigo_marluvas debe tener exactamente 10 dígitos numéricos."
+            )
+        inst_id = getattr(self.instance, "pk", None)
+        qs = Cliente.objects.filter(codigo_marluvas=value, is_active=True)
+        if inst_id is not None:
+            qs = qs.exclude(pk=inst_id)
+        if qs.exists():
+            raise serializers.ValidationError(
+                "Ya existe un cliente ACTIVO con ese codigo_marluvas."
             )
         return value
 
