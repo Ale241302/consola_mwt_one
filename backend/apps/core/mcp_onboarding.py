@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -312,7 +313,9 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
     """Construye el contenido de los adjuntos .json y .md del correo."""
     slug = client.get("slug") or "mcp"
     razon = client.get("razon_social") or client.get("nombre") or slug
-    mcp_url = client.get("mcp_url") or ""
+    # Endpoint de conexión del DeviceToken: nginx /device proxya directo al
+    # MCP (sin ContextForge/OAuth). Sobrescribible con MWT_MCP_DEVICE_URL.
+    mcp_url = (os.environ.get("MWT_MCP_DEVICE_URL") or "").strip() or "https://mcp.mwt.one/device"
     secret = grant["secret"]
     email = target["email"]
     full_name = target.get("full_name") or ""

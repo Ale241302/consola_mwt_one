@@ -77,14 +77,13 @@ class IdentityPropagationMiddleware:
             # ── Fase 3 · DeviceToken (Authorization: DeviceToken <secret>) ──
             # Credencial directa del onboarding por correo: el MCP la resuelve
             # contra el backend (POST /api/auth/mcp-token/ con grant_secret+ip)
-            # que vincula el equipo (IP) al primer uso. Fail-closed: sin
-            # gateway key válido no se confía el token.
+            # que vincula el equipo (IP) al primer uso. El acceso público al
+            # contenedor es SOLO vía nginx (location /device/) que reenvía la IP
+            # real (CF-Connecting-IP); el backend valida secret+IP fail-closed.
             device_secret = None
             authz = (headers.get("authorization") or "").strip()
             if authz.lower().startswith("devicetoken "):
                 device_secret = authz.split(None, 1)[1].strip() or None
-            if device_secret and settings.gateway_key and not gateway_ok:
-                device_secret = None
             if device_secret:
                 effective_headers["x-mwt-device-secret"] = device_secret
                 client_ip = (
