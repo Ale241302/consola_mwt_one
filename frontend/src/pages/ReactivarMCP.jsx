@@ -154,10 +154,9 @@ export default function ReactivarMCP() {
               <input className="login-input" style={INPUT} type="tel" value={form.phone}
                      onChange={set("phone")} placeholder="+506 …" autoComplete="tel" />
             </Field>
-            <Field label="&nbsp;"><span style={{ display: "block", height: 46 }} /></Field>
 
-            {/* Empresa — con listado flotante */}
-            <Field label="Empresa *" full>
+            {/* Empresa — misma fila que teléfono, listado flotante */}
+            <Field label="Empresa *">
               <div style={{ position: "relative" }}>
                 {!empresa ? (
                   <>
