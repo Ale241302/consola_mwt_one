@@ -1356,8 +1356,10 @@ export default function ScreenFusionDetail() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="flex ai-center gap-2" style={{minWidth: 0}}>
                     <IconFolder size={12} style={{ color: "var(--text-tertiary)" }}/>
-                    <span className="body-sm" style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{badgeOf(m)}</span>
-                    <span className="caption" style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}>{m.exp.codigo}</span>
+                    <span className="body-sm" style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                          title={badgeOf(m)}>{badgeOf(m)}</span>
+                    <span className="caption" style={{ fontFamily: "var(--font-mono)", whiteSpace: "nowrap" }}
+                          title={m.exp.codigo}>{m.exp.codigo}</span>
                   </div>
                   <div className="caption" style={{ marginTop: 2 }}>
                     {m.lineas.length} {tr(lang, "lines_count").toLowerCase()} · {m.lineas.reduce((a, l) => a + Number(l.qty || 0), 0).toLocaleString()} u

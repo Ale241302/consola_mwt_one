@@ -2656,7 +2656,8 @@ export default function ScreenOCDetail() {
                   <div style={{flex: 1, minWidth: 0}}>
                     <div className="flex ai-center gap-2" style={{minWidth: 0}}>
                       <IconFolder size={12} style={{color:'var(--text-tertiary)'}}/>
-                      <span className="body-sm" style={{fontWeight: 600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{e.codigo || eid}</span>
+                      <span className="body-sm" style={{fontWeight: 600, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}
+                            title={e.codigo || eid}>{e.codigo || eid}</span>
                       {sap && <span className="caption" style={{fontFamily:'var(--font-mono)'}}>{sap}</span>}
                     </div>
                     <div className="caption tabular-nums" style={{marginTop: 2}}>
