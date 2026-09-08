@@ -192,32 +192,29 @@ def send_reply(
     except Exception as exc:  # noqa: BLE001
         text_body = (ctx.get("texto_plano") or "").strip() or f"Revisa el HTML de este correo. ({exc})"
 
-    root = MIMEMultipart("alternative")
-    root["From"] = formataddr(("MWT.ONE · MCP", from_email))
-    root["To"] = to_email
-    root["Subject"] = subject
-    root["Reply-To"] = from_email
-
-    root.attach(MIMEText(text_body, "plain", "utf-8"))
+    # multipart/alternative con text/plain + text/html. Con adjuntos se anida
+    # DENTRO de un multipart/mixed (así Gmail NO muestra el texto plano y el
+    # HTML duplicados; el cliente elige uno).
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(text_body, "plain", "utf-8"))
     if html_body:
-        root.attach(MIMEText(html_body, "html", "utf-8"))
+        alt.attach(MIMEText(html_body, "html", "utf-8"))
 
     if attachments:
-        mixed = MIMEMultipart("mixed")
-        mixed["From"] = root["From"]
-        mixed["To"] = root["To"]
-        mixed["Subject"] = root["Subject"]
-        mixed["Reply-To"] = root["Reply-To"]
-        # movemos el cuerpo alternativo dentro del mixto
-        for part in list(root.get_payload()):
-            mixed.attach(part)
+        root = MIMEMultipart("mixed")
+        root.attach(alt)
         for att in attachments:
             part = MIMEApplication(att["data"])
             part.add_header("Content-Disposition", "attachment", filename=att["filename"])
             part.set_type(att.get("mime", "application/octet-stream"))
-            mixed.attach(part)
-        root = mixed
+            root.attach(part)
+    else:
+        root = alt
 
+    root["From"] = formataddr(("MWT.ONE · MCP", from_email))
+    root["To"] = to_email
+    root["Subject"] = subject
+    root["Reply-To"] = from_email
     # Cabeceras de higiene de correo (faltaban → señales spam MISSING_MID/DATE):
     # Date y Message-ID siempre presentes, como esperan los filtros (Gmail…).
     root["Date"] = formatdate(localtime=True)
