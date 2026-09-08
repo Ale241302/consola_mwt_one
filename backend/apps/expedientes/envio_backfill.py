@@ -27,6 +27,68 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
+def _digits(s: str) -> str:
+    return re.sub(r"\D", "", s or "")
+
+
+def resolve_pf(pf: str) -> tuple[str | None, str]:
+    """Best-effort PF (proforma/customer ref) → expediente_id.
+
+    La relación PF→expediente NO vive en una columna consultable; se intenta
+    por (a) expediente.codigo, (b) sap, (c) artifact_instances.codigo,
+    (d) data de artefactos builder en el nodo (si el nodo tiene exactamente un
+    expediente). Devuelve (expediente_id | None, motivo). Si no se resuelve,
+    Alvaro debe aportar el expediente_id (ya lo conoce de su carga de eventos).
+    """
+    if not pf:
+        return None, "sin pf"
+    dn = _digits(pf)
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT id::text, codigo FROM expedientes.expediente WHERE codigo ILIKE %s LIMIT 2",
+            ["%" + pf.strip() + "%"],
+        )
+        rows = cur.fetchall()
+        if rows:
+            return rows[0][0], f"expediente.codigo={rows[0][1]}"
+        if dn:
+            cur.execute(
+                "SELECT id::text, codigo, sap FROM expedientes.expediente "
+                "WHERE regexp_replace(sap,'\\D','','g') = %s LIMIT 2",
+                [dn],
+            )
+            rows = cur.fetchall()
+            if rows:
+                return rows[0][0], f"expediente.sap"
+            cur.execute(
+                "SELECT expediente_id::text, codigo FROM expedientes.artifact_instances "
+                "WHERE regexp_replace(codigo,'\\D','','g') = %s AND expediente_id IS NOT NULL LIMIT 2",
+                [dn],
+            )
+            rows = cur.fetchall()
+            if rows:
+                return rows[0][0], f"artifact codigo={rows[0][1]}"
+        # (d) artefacto builder cuyo data contenga el PF → nodo → expedientes
+        cur.execute(
+            "SELECT DISTINCT nodo_id::text FROM nodos.builder_artifact_instance "
+            "WHERE data::text ILIKE %s AND is_active=TRUE LIMIT 5",
+            ["%" + pf.strip() + "%"],
+        )
+        nodos = [r[0] for r in cur.fetchall()]
+        if nodos:
+            cur.execute(
+                "SELECT DISTINCT expediente_id::text, count(*) FROM inventario.expediente_nodo_assignment "
+                "WHERE nodo_id::text = ANY(%s) AND is_active=TRUE GROUP BY expediente_id",
+                [nodos],
+            )
+            exps = cur.fetchall()
+            if len(exps) == 1:
+                return exps[0][0], "artefacto builder (nodo único)"
+            if len(exps) > 1:
+                return None, f"ambiguo: {len(exps)} expedientes en el nodo"
+    return None, "no resuelto (PF no enlazado a expediente en DB)"
+
+
 def _find_envio_artifact(expediente_id: str) -> tuple[dict | None, str | None]:
     """Devuelve el artefacto de envío (AWB/BL) del nodo del expediente."""
     with connection.cursor() as cur:

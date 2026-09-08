@@ -20,28 +20,36 @@ import sys
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.expedientes.envio_backfill import backfill_envio
+from apps.expedientes.envio_backfill import backfill_envio, resolve_pf
 
 
 class Command(BaseCommand):
     help = "Backfill del artefacto de envío (AWB/BL) desde un CSV."
 
     def add_arguments(self, parser):
-        parser.add_argument("--csv", required=True, help="Ruta del CSV (expediente_id,tracking,carrier,etd,eta,origen,destino)")
+        parser.add_argument("--csv", required=True, help="Ruta del CSV (expediente_id o pf, tracking,carrier,etd,eta,origen,destino)")
         parser.add_argument("--dry-run", action="store_true", help="Solo reporta; no escribe.")
+        parser.add_argument("--emit-map", action="store_true", help="Imprime pf,expediente_id resueltos (para completar el mapeo).")
 
     def handle(self, *args, **opts):
         path = opts["csv"]
         ok = 0
         errors: list[str] = []
+        unresolved: list[str] = []
         try:
             with open(path, encoding="utf-8-sig", newline="") as f:
                 reader = csv.DictReader(f)
                 for i, row in enumerate(reader, start=2):
+                    pf = (row.get("pf") or "").strip()
                     eid = (row.get("expediente_id") or "").strip()
                     if not eid:
-                        errors.append(f"fila {i}: sin expediente_id; se omite")
-                        continue
+                        eid, why = resolve_pf(pf)
+                        if not eid:
+                            unresolved.append(f"{pf or '?'} (fila {i}): {why}")
+                            continue
+                        if opts["emit_map"]:
+                            self.stdout.write(f"{pf},{eid}   # {why}")
+                            continue
                     if opts["dry_run"]:
                         self.stdout.write(f"[dry] {eid} → { {k: row.get(k) for k in ('tracking','carrier','etd','eta','origen','destino') if (row.get(k) or '').strip()} }")
                         ok += 1
@@ -66,7 +74,14 @@ class Command(BaseCommand):
         except Exception as e:
             raise CommandError(f"Error leyendo CSV: {e}") from e
 
-        self.stdout.write(f"\n== Resumen ==\n  OK: {ok}\n  Con errores: {len(errors)}")
+        if opts["emit_map"]:
+            if unresolved:
+                self.stdout.write("\n== NO resueltos (completá expediente_id) ==")
+                for u in unresolved:
+                    self.stdout.write("  " + u)
+            self.stdout.write("\n== Fin del mapa ==")
+            return
+        self.stdout.write(f"\n== Resumen ==\n  OK: {ok}\n  Con errores: {len(errors)}\n  No resueltos (sin expediente_id): {len(unresolved)}")
         for e in errors:
             self.stderr.write("  - " + e)
         if errors:
