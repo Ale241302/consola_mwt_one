@@ -424,7 +424,7 @@ export default function ScreenExpedienteDetail() {
 
   if (loading) {
     return (
-      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
+      <div className="page" style={{ padding: 24 }}>
         <div className="caption" style={{ color: "var(--text-tertiary)" }}>
           {lang === "es" ? "Cargando expediente…" : "Loading file…"}
         </div>
@@ -433,7 +433,7 @@ export default function ScreenExpedienteDetail() {
   }
   if (notFound) {
     return (
-      <div className="page" style={{ maxWidth: 1500, padding: 32 }}>
+      <div className="page" style={{ padding: 24 }}>
         <button className="btn btn-ghost btn-sm" onClick={onBack}
                 style={{ marginBottom: 14 }}>
           <IconChevLeft size={14}/> {lang === "es" ? "Volver" : "Back"}
@@ -472,7 +472,7 @@ export default function ScreenExpedienteDetail() {
   } : {};
 
   return (
-    <div className="page" style={{ maxWidth: 1500 }} data-screen-label={`Expediente · ${exp.ref}`}>
+    <div className="page" style={{ padding: 24 }} data-screen-label={`Expediente · ${exp.ref}`}>
       {/* Back + breadcrumb */}
       <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: 14, padding: '0 8px 0 4px' }}>
         <IconChevLeft size={14}/> {tr(lang,'back_to_oc')}
