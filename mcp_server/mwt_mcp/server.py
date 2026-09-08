@@ -650,9 +650,14 @@ def _project(campos: str | None, data: Any) -> Any:
     if not keep:
         return data
 
+    # Identidad siempre presente aunque `campos` no la pida: el agente necesita
+    # poder navegar/resolver (id → UUID, codigo/codigos_presentacion → PF).
+    _IDENTITY = ("id", "codigo", "codigos_presentacion")
+
     def _pick(row):
         if isinstance(row, dict):
-            return {k: row[k] for k in keep if k in row}
+            keep_set = set(keep) | set(_IDENTITY)
+            return {k: row[k] for k in keep_set if k in row}
         return row
 
     # Wrapper paginado DRF: {results:[...], count, next, previous}

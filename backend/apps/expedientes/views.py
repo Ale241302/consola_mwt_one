@@ -1847,7 +1847,12 @@ class ExpedienteViewSet(viewsets.ViewSet):
             return Response({"detail": "fase_to requerido"}, status=400)
 
         try:
-            exp = Expediente.objects.get(pk=pk, is_active=True)
+            pk_uuid = uuid.UUID(str(pk))
+        except (ValueError, AttributeError):
+            return Response({"detail": "Expediente no existe"}, status=404)
+
+        try:
+            exp = Expediente.objects.get(pk=pk_uuid, is_active=True)
         except Expediente.DoesNotExist:
             return Response({"detail": "Expediente no existe"}, status=404)
 
@@ -2044,7 +2049,11 @@ class ExpedienteViewSet(viewsets.ViewSet):
 
         # ── Validaciones de negocio ─────────────────────
         try:
-            exp = Expediente.objects.get(pk=pk, is_active=True)
+            pk_uuid = uuid.UUID(str(pk))
+        except (ValueError, AttributeError):
+            return Response({"detail": "Expediente no existe"}, status=404)
+        try:
+            exp = Expediente.objects.get(pk=pk_uuid, is_active=True)
         except Expediente.DoesNotExist:
             return Response({"detail": "Expediente no existe"}, status=404)
 
@@ -2063,6 +2072,41 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # dropeado en 98_drop_commercial_constraint.sql. La transición
         # T2 (REGISTRO→PRODUCCION) procede aunque brand_id/modo/moneda
         # queden en NULL. Se completarán después si el operador lo decide.
+
+        # Ola 7 · defecto 2: `lineas_confirmadas` puede venir por `sku`+`size`
+        # SIN `linea_id`. Antes se salteaba en silencio y el expediente pasaba
+        # a PRODUCCION sin adjuntar líneas (sap_obtener → "No existen líneas
+        # activas"). Resolvemos el id por (expediente, sku, size); si no
+        # existe → 400 (no transicionamos a medias).
+        _resolved_lines = []
+        for _item in (lineas_confirmadas or []):
+            _lid = _item.get("linea_id") or _item.get("id")
+            if _lid:
+                _resolved_lines.append(_item)
+                continue
+            _sku = _item.get("sku")
+            _size = _item.get("size")
+            if not _sku and not _size:
+                return Response(
+                    {"detail": "Cada línea de lineas_confirmadas necesita linea_id o sku+size"},
+                    status=400)
+            with connection.cursor() as _c:
+                _c.execute(
+                    """
+                    SELECT id::text FROM expedientes.linea
+                     WHERE expediente_id = %s AND sku = %s
+                       AND (size IS NOT DISTINCT FROM %s) AND is_active = TRUE
+                     LIMIT 1
+                    """,
+                    [str(exp.id), _sku, _size],
+                )
+                _lr = _c.fetchone()
+            if not _lr:
+                return Response(
+                    {"detail": f"No existe línea sku={_sku} size={_size} en el expediente"},
+                    status=400)
+            _resolved_lines.append({**_item, "linea_id": _lr[0]})
+        lineas_confirmadas = _resolved_lines
 
         correlation_id = uuid.uuid4()
         artifact_id    = uuid.uuid4()
