@@ -223,6 +223,43 @@ export default function UserFormView() {
   const askToggleActive  = () => { setActionError(null); setPendingAction({ kind: user.is_active ? 'toggleOff' : 'toggleOn' }); };
   const askDelete        = () => { setActionError(null); setPendingAction({ kind: 'delete' }); };
 
+  // ── Enviar credenciales MCP (modal) ───────────────────────────────────
+  const [mcpModal, setMcpModal] = useState(false);
+  const [mcpEmpresas, setMcpEmpresas] = useState([]);
+  const [mcpBusy, setMcpBusy] = useState(false);
+  const [mcpSendIds, setMcpSendIds] = useState({});   // cliente_id -> true (enviando)
+  const [mcpMsg, setMcpMsg] = useState(null);
+
+  const openMcpModal = async () => {
+    setMcpMsg(null);
+    setMcpModal(true);
+    setMcpBusy(true);
+    try {
+      const data = await apiFetch(`/onboarding/usuarios/${userId}/empresas`, { token: getToken() });
+      setMcpEmpresas(Array.isArray(data) ? data : (data?.results || []));
+    } catch (e) {
+      setMcpMsg({ ok: false, text: e?.payload?.detail || e?.message || "No se pudo cargar" });
+      setMcpEmpresas([]);
+    } finally {
+      setMcpBusy(false);
+    }
+  };
+
+  const sendMcpCredenciales = async (cliente_id) => {
+    setMcpSendIds((s) => ({ ...s, [cliente_id]: true }));
+    setMcpMsg(null);
+    try {
+      const resp = await apiFetch(`/onboarding/usuarios/${userId}/enviar-credenciales`, {
+        method: "POST", body: { cliente_id }, token: getToken(),
+      });
+      setMcpMsg({ ok: true, text: `✓ Credenciales enviadas a ${resp?.email} · ${resp?.empresa}` });
+    } catch (e) {
+      setMcpMsg({ ok: false, text: e?.payload?.detail || e?.message || "Envío falló" });
+    } finally {
+      setMcpSendIds((s) => ({ ...s, [cliente_id]: false }));
+    }
+  };
+
   const executeAction = async () => {
     if (!pendingAction) return;
     const { kind } = pendingAction;
@@ -414,6 +451,13 @@ export default function UserFormView() {
           <>
             <button onClick={askResetPassword} className="btn btn-ghost">
               <IconLock size={13}/> Reset password
+            </button>
+            <button
+              onClick={openMcpModal}
+              className="btn btn-ghost"
+              title="Enviar credenciales MCP (device-bound) a este usuario"
+            >
+              Enviar credenciales MCP
             </button>
             <button
               onClick={askToggleActive}
@@ -753,6 +797,82 @@ export default function UserFormView() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {mcpModal && createPortal(
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(15,27,61,0.45)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000,
+        }} onClick={() => { if (!mcpBusy) setMcpModal(false); }}>
+          <div style={{
+            background: "#fff", borderRadius: 14, width: "min(560px, 92vw)",
+            maxHeight: "80vh", overflowY: "auto", padding: 22,
+            boxShadow: "0 24px 60px rgba(15,27,61,0.25)",
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text-primary)" }}>
+                Enviar credenciales MCP
+              </div>
+              <button onClick={() => setMcpModal(false)} className="btn btn-ghost btn-sm"
+                      disabled={mcpBusy}>✕</button>
+            </div>
+            <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 14 }}>
+              Elige la empresa del usuario <b>{user.email_plain}</b> a la que enviarle el paquete
+              <b> (.json + .md)</b>. Se envía un correo desde mcp@mwt.one con el token device-bound.
+            </div>
+
+            {mcpBusy && <div style={{ padding: 24, textAlign: "center", color: "var(--text-tertiary)" }}>Cargando empresas…</div>}
+
+            {!mcpBusy && mcpEmpresas.length === 0 && (
+              <div style={{ padding: 18, textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+                Este usuario no tiene empresas asignadas con acceso MCP.
+              </div>
+            )}
+
+            {!mcpBusy && mcpEmpresas.map((emp) => {
+              const sending = mcpSendIds[emp.cliente_id];
+              return (
+                <div key={emp.cliente_id} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  gap: 10, border: "1px solid var(--border)", borderRadius: 10,
+                  padding: "12px 14px", marginBottom: 8,
+                }}>
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>
+                      {emp.razon_social}
+                    </div>
+                    {emp.has_mcp ? (
+                      <span className="badge badge-mint" style={{ fontSize: 11 }}>MCP disponible</span>
+                    ) : (
+                      <span className="badge badge-neutral" style={{ fontSize: 11 }}>Sin MCP</span>
+                    )}
+                  </div>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={!emp.has_mcp || sending}
+                    onClick={() => sendMcpCredenciales(emp.cliente_id)}
+                  >
+                    {sending ? "Enviando…" : "Enviar credenciales"}
+                  </button>
+                </div>
+              );
+            })}
+
+            {mcpMsg && (
+              <div style={{
+                marginTop: 10, padding: "10px 12px", borderRadius: 8, fontSize: 13,
+                background: mcpMsg.ok ? "#EAF8F1" : "#FCE7E7",
+                color: mcpMsg.ok ? "#0E8A6D" : "#B83227",
+              }}>{mcpMsg.text}</div>
+            )}
+
+            <div style={{ textAlign: "right", marginTop: 14 }}>
+              <button onClick={() => setMcpModal(false)} className="btn btn-ghost"
+                      disabled={mcpBusy}>Cerrar</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {/* Modal de confirmación unificado — vía portal a body */}
       {pendingAction && createPortal(

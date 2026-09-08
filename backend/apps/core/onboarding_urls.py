@@ -2,12 +2,14 @@
 from django.urls import path
 
 from .onboarding_views import (
+    EnviarCredencialesMCPView,
     OnboardingEmitGrantView,
     OnboardingValidateView,
     RegistrableClientsView,
     RegistroMCPView,
     SolicitudesView,
     SolicitudResolverView,
+    UsuarioEmpresasMCPView,
 )
 
 urlpatterns = [
@@ -21,4 +23,9 @@ urlpatterns = [
          SolicitudResolverView.as_view(action="aprobar"), name="onboarding-aprobar"),
     path("solicitudes/<uuid:pk>/rechazar",
          SolicitudResolverView.as_view(action="rechazar"), name="onboarding-rechazar"),
+    # Admin · envío manual de credenciales desde /usuarios/<id>.
+    path("usuarios/<uuid:user_id>/empresas",
+         UsuarioEmpresasMCPView.as_view(), name="onboarding-usuario-empresas"),
+    path("usuarios/<uuid:user_id>/enviar-credenciales",
+         EnviarCredencialesMCPView.as_view(), name="onboarding-enviar-credenciales"),
 ]

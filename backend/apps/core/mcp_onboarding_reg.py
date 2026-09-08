@@ -587,3 +587,96 @@ def listar_solicitudes(estado: str = "PENDIENTE", limit: int = 100) -> list[dict
             d["legal_entity_ids"] = [str(x) for x in (d["legal_entity_ids"] or [])]
             rows.append(d)
     return rows
+
+
+# ── Envío manual de credenciales MCP (admin, desde /usuarios/<id>) ─────
+
+def _email_by_user_id(user_id: str) -> str | None:
+    """Email del usuario por su UUID (users.mwtuser primario, core.users fallback)."""
+    with connection.cursor() as cur:
+        cur.execute("SELECT email_plain FROM users.mwtuser WHERE id = %s", [user_id])
+        r = cur.fetchone()
+        if r and r[0]:
+            return r[0]
+        cur.execute("SELECT email_plain FROM core.users WHERE id = %s", [user_id])
+        r = cur.fetchone()
+        return r[0] if r else None
+
+
+def listar_empresas_mcp(user_id: str) -> list[dict]:
+    """Empresas asignadas al usuario, con flag de si tienen MCP provisionado.
+
+    El modal de la consola muestra todas las asignadas y habilita solo las
+    que se pueden enviar (has_mcp).
+    """
+    email = _email_by_user_id(user_id)
+    if not email:
+        return []
+    target = mcp_onboarding.fetch_target(email)
+    if not target:
+        return []
+    leids = target.get("legal_entity_ids") or []
+    out: list[dict] = []
+    if not leids:
+        return out
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id::text, razon_social, nombre_comercial
+              FROM clientes.cliente
+             WHERE id::text = ANY(%s) AND is_active = TRUE
+             ORDER BY razon_social ASC
+            """,
+            [leids],
+        )
+        for cid, razon, nombre in cur.fetchall():
+            out.append({
+                "cliente_id": cid,
+                "razon_social": razon or nombre or "",
+                "has_mcp": _mcp_cliente_provisionado(cid),
+            })
+    return out
+
+
+def emitir_y_enviar_credenciales(user_id: str, cliente_id: str) -> dict:
+    """Emite el grant de la empresa elegida y envía el paquete .json/.md al usuario."""
+    email = _email_by_user_id(user_id)
+    if not email:
+        return {"ok": False, "detail": "Usuario no encontrado.", "code": "USUARIO"}
+    target = mcp_onboarding.fetch_target(email)
+    if not target:
+        return {"ok": False, "detail": "Usuario no encontrado.", "code": "USUARIO"}
+    clients = mcp_onboarding.mcp_clients_for_target(target)
+    client = next((c for c in clients
+                   if str(c.get("cliente_id")) == str(cliente_id)), None)
+    if not client:
+        return {"ok": False,
+                "detail": "El usuario no tiene acceso MCP a esa empresa.",
+                "code": "SIN_ACCESO"}
+    grant = mcp_onboarding.emit_grant(target, str(cliente_id), creado_via="external")
+    package = mcp_onboarding.build_package(client, target, grant)
+    from .mcp_mailbox import send_reply  # noqa: PLC0415
+
+    res = send_reply(
+        email,
+        subject=f"Tus credenciales MCP · {package['razon_social']}",
+        template_key="mcp_credenciales",
+        context={"email": email, "nombre": target.get("full_name") or "",
+                 "empresa": package["razon_social"],
+                 "fname_json": package["fname_json"],
+                 "fname_md": package["fname_md"],
+                 "texto_plano": (f"Credenciales MCP de {package['razon_social']} adjuntas.")},
+        attachments=[
+            {"filename": package["fname_json"], "data": package["json_text"].encode("utf-8"),
+             "mime": package["mime_json"]},
+            {"filename": package["fname_md"], "data": package["md_text"].encode("utf-8"),
+             "mime": package["mime_md"]},
+        ],
+    )
+    return {
+        "ok": bool(res.get("ok")),
+        "email": email,
+        "empresa": package["razon_social"],
+        "secret_prefix": grant["secret_prefix"],
+        "send": res,
+    }

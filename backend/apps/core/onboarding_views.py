@@ -265,3 +265,38 @@ class SolicitudResolverView(APIView):
             st = 404 if code in ("NOT_FOUND", "ESTADO") else 400
             return Response({"detail": result.get("detail"), "code": code}, status=st)
         return Response(result)
+
+
+class UsuarioEmpresasMCPView(APIView):
+    """GET /api/onboarding/usuarios/<uuid>/empresas — empresas del usuario
+    para el modal de envío de credenciales (admin)."""
+    permission_classes = [IsAuthenticated, IsCeoOrAdmin]
+
+    def get(self, request, user_id=None):
+        try:
+            uid = str(_uuid.UUID(str(user_id)))
+        except Exception:  # noqa: BLE001
+            return Response({"detail": "id inválido"}, status=400)
+        rows = reg.listar_empresas_mcp(uid)
+        return Response({"results": rows})
+
+
+class EnviarCredencialesMCPView(APIView):
+    """POST /api/onboarding/usuarios/<uuid>/enviar-credenciales  {cliente_id}
+    → emite el grant de esa empresa y envía el correo con .json/.md (admin)."""
+    permission_classes = [IsAuthenticated, IsCeoOrAdmin]
+
+    def post(self, request, user_id=None):
+        try:
+            uid = str(_uuid.UUID(str(user_id)))
+        except Exception:  # noqa: BLE001
+            return Response({"detail": "id inválido"}, status=400)
+        cliente_id = str((request.data or {}).get("cliente_id") or "").strip()
+        if not cliente_id:
+            return Response({"detail": "Falta cliente_id."}, status=400)
+        result = reg.emitir_y_enviar_credenciales(uid, cliente_id)
+        if not result.get("ok"):
+            code = result.get("code", "ERROR")
+            return Response({"detail": result.get("detail"), "code": code},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response(result)
