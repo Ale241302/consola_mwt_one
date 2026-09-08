@@ -74,6 +74,32 @@ class IdentityPropagationMiddleware:
                     if k.startswith("x-forwarded-user"):
                         del effective_headers[k]
 
+            # ── Fase 3 · DeviceToken (Authorization: DeviceToken <secret>) ──
+            # Credencial directa del onboarding por correo: el MCP la resuelve
+            # contra el backend (POST /api/auth/mcp-token/ con grant_secret+ip)
+            # que vincula el equipo (IP) al primer uso. Fail-closed: sin
+            # gateway key válido no se confía el token.
+            device_secret = None
+            authz = (headers.get("authorization") or "").strip()
+            if authz.lower().startswith("devicetoken "):
+                device_secret = authz.split(None, 1)[1].strip() or None
+            if device_secret and settings.gateway_key and not gateway_ok:
+                device_secret = None
+            if device_secret:
+                effective_headers["x-mwt-device-secret"] = device_secret
+                client_ip = (
+                    (headers.get("x-forwarded-for") or "").split(",")[0].strip()
+                    or (headers.get("x-real-ip") or "").strip()
+                    or None
+                )
+                if not client_ip and scope.get("client"):
+                    try:
+                        client_ip = str(scope["client"][0])
+                    except Exception:  # noqa: BLE001
+                        client_ip = None
+                if client_ip:
+                    effective_headers["x-mwt-client-ip"] = client_ip
+
             set_identity(effective_headers)
             set_tenant(Tenant(
                 client_id=resolved_client,

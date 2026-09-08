@@ -85,7 +85,14 @@ def current_tenant() -> Tenant:
 
 
 class Identity:
-    """Snapshot de la identidad propagada para la request MCP actual."""
+    """Snapshot de la identidad propagada para la request MCP actual.
+
+    Dos vías:
+      1. OAuth (gateway ContextForge) → headers X-Forwarded-User-*.
+      2. DeviceToken (Fase 3, onboarding por correo) → `Authorization:
+         DeviceToken <secret>`. El middleware guarda el secret en
+         `device_secret` y la IP real del cliente en `device_ip`.
+    """
 
     def __init__(self, headers: dict[str, str] | None = None) -> None:
         h = {k.lower(): v for k, v in (headers or {}).items()}
@@ -94,10 +101,12 @@ class Identity:
         self.name: str | None = (h.get("x-forwarded-user-name") or "").strip() or None
         self.roles: str | None = (h.get("x-forwarded-user-roles") or "").strip() or None
         self.sub: str | None = (h.get("x-forwarded-user-sub") or "").strip() or None
+        self.device_secret: str | None = (h.get("x-mwt-device-secret") or "").strip() or None
+        self.device_ip: str | None = (h.get("x-mwt-client-ip") or "").strip() or None
 
     @property
     def is_present(self) -> bool:
-        return bool(self.email or self.user_id or self.sub)
+        return bool(self.email or self.user_id or self.sub or self.device_secret)
 
     def to_backend_headers(self) -> dict[str, str]:
         """Devuelve los headers para reenviar al backend cuando minteamos."""

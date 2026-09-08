@@ -132,6 +132,10 @@ export default function Users() {
         <button onClick={load} className="btn btn-ghost" title="Recargar">
           <IconRefresh size={14}/>
         </button>
+        <button onClick={() => navigate("/registro-solicitudes")} className="btn btn-secondary"
+                style={{ padding: "9px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>
+          Solicitudes MCP
+        </button>
         <button onClick={openCreate} className="btn btn-primary"
                 style={{ background: "var(--mint, #00B286)", color: "#fff", border: "none",
                          padding: "9px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>

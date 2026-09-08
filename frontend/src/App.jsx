@@ -53,6 +53,8 @@ const ScreenAIChat = lazy(() => import("./pages/AIChat.jsx"));
 const ScreenAIGovernance = lazy(() => import("./pages/AIGovernance.jsx"));
 const ScreenUsers = lazy(() => import("./pages/Users.jsx"));
 const ScreenUserFormView = lazy(() => import("./pages/UserFormView.jsx"));
+const RegistroMCP = lazy(() => import("./pages/RegistroMCP.jsx"));
+const ScreenRegistroSolicitudes = lazy(() => import("./pages/RegistroSolicitudes.jsx"));
 const ScreenRolesPermissions = lazy(() => import("./pages/RolesPermissions.jsx"));
 const ScreenPriceHistory = lazy(() => import("./pages/PriceHistory.jsx"));
 const ScreenMesaTrabajo = lazy(() => import("./pages/MesaTrabajo.jsx"));
@@ -106,6 +108,8 @@ export default function App() {
       {/* Públicas */}
       <Route path="/login" element={<Login />} />
       <Route path="/reset" element={<ScreenPasswordReset />} />
+      {/* Fase 2 · Registro público para acceder al MCP de una empresa */}
+      <Route path="/registro-mcp" element={<RegistroMCP />} />
 
       {/* Protegidas — todas pasan por <ProtectedRoute/> y comparten AppLayout */}
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
@@ -187,6 +191,9 @@ export default function App() {
         <Route path="/usuarios"          element={<CeoAdminOnlyRoute><ScreenUsers /></CeoAdminOnlyRoute>} />
         <Route path="/usuarios/nuevo"    element={<CeoAdminOnlyRoute><ScreenUserFormView /></CeoAdminOnlyRoute>} />
         <Route path="/usuarios/:userId"  element={<CeoAdminOnlyRoute><ScreenUserFormView /></CeoAdminOnlyRoute>} />
+        {/* Fase 2 · Cola de aprobación del onboarding MCP (registro público) */}
+        <Route path="/registro-solicitudes"
+               element={<CeoAdminOnlyRoute><ScreenRegistroSolicitudes /></CeoAdminOnlyRoute>} />
         <Route path="/roles"             element={<CeoAdminOnlyRoute><ScreenRolesPermissions /></CeoAdminOnlyRoute>} />
         {/* F6 · Historial de precios — bitácora CEO-ONLY de cambios del motor de precios. */}
         {/* F6 · Historial de precios — bitácora CEO-ONLY de cambios del motor de precios. */}

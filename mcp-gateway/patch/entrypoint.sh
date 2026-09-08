@@ -34,4 +34,7 @@ echo "Applying ContextForge MWT multi-server direct_proxy patch v11 (Ola 5)..."
 echo "Applying ContextForge MWT jwks_uri fallback patch v12 (Ola 6)..."
 /app/.venv/bin/python3 /patch/contextforge_patch_v12.py
 
+echo "Applying ContextForge MWT DeviceToken bypass patch v13 (Ola 7)..."
+/app/.venv/bin/python3 /patch/contextforge_patch_v13.py
+
 exec /app/docker-entrypoint.sh "$@"

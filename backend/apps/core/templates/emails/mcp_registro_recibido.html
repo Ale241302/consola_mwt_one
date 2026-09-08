@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solicitud recibida — MWT ONE · MCP</title>
+<style>
+  body,table,td,a{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;}table,td{mso-table-lspace:0pt;mso-table-rspace:0pt;}
+  body{margin:0!important;padding:0!important;width:100%!important;background-color:#F2F4F8;
+       font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}
+  .container{width:100%;max-width:600px;margin:0 auto;}
+  .card{background:#FFFFFF;border-radius:16px;overflow:hidden;
+        box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 24px rgba(15,27,61,.06);}
+  .band{background:linear-gradient(135deg,#0F1B3D 0%,#1A2A5C 60%,#10B981 140%);padding:28px 32px;}
+  .eyebrow{font-size:12px;font-weight:600;color:rgba(255,255,255,.7);letter-spacing:.12em;text-transform:uppercase;margin:0 0 8px;}
+  .title{font-size:20px;font-weight:700;color:#fff;margin:0;}
+  .content{padding:28px 32px;}
+  p{font-size:14px;line-height:1.6;color:#3D4A6B;margin:0 0 14px;}
+  .box{background:#F0FDF7;border:1px solid #A7F3D0;border-radius:10px;padding:14px 16px;margin:0 0 16px;}
+  .small{font-size:12px;line-height:1.5;color:#6B7894;margin:0;}
+</style>
+</head><body>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="container"><tr><td>
+<div class="card">
+  <div class="band"><p class="eyebrow">MWT.ONE · MCP</p><p class="title">Solicitud recibida</p></div>
+  <div class="content">
+    <p>Hola{% if nombre %} {{ nombre }}{% endif %},</p>
+    <p>Recibimos tu solicitud de acceso al MCP de <strong>{{ empresa }}</strong>
+       para <strong>{{ email }}</strong>.</p>
+    <div class="box">
+      <p style="margin:0;">Tu cuenta <strong>se creará al ser aprobada</strong> por nuestro equipo.
+         Te avisaremos por correo con tus credenciales cuando esté lista.</p>
+    </div>
+    <p class="small">Si no fuiste tú quien solicitó este acceso, ignora este correo.
+       ¿Dudas? Escríbenos a <strong>mcp@mwt.one</strong>.</p>
+  </div>
+</div>
+</td></tr></table>
+</body></html>

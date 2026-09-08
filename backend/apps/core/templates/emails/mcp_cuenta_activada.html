@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cuenta activada · credenciales MCP — MWT ONE</title>
+<style>
+  body,table,td,a{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;}table,td{mso-table-lspace:0pt;mso-table-rspace:0pt;}
+  body{margin:0!important;padding:0!important;width:100%!important;background-color:#F2F4F8;
+       font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;}
+  .container{width:100%;max-width:600px;margin:0 auto;}
+  .card{background:#FFFFFF;border-radius:16px;overflow:hidden;
+        box-shadow:0 1px 2px rgba(15,27,61,.04),0 8px 24px rgba(15,27,61,.06);}
+  .band{background:linear-gradient(135deg,#0F1B3D 0%,#1A2A5C 60%,#10B981 140%);padding:28px 32px;}
+  .eyebrow{font-size:12px;font-weight:600;color:rgba(255,255,255,.7);letter-spacing:.12em;text-transform:uppercase;margin:0 0 8px;}
+  .title{font-size:20px;font-weight:700;color:#fff;margin:0;}
+  .content{padding:28px 32px;}
+  p{font-size:14px;line-height:1.6;color:#3D4A6B;margin:0 0 14px;}
+  .box{background:#F0FDF7;border:1px solid #A7F3D0;border-radius:10px;padding:14px 16px;margin:0 0 16px;}
+  .warn{background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;padding:14px 16px;margin:0 0 16px;}
+  ul{margin:0 0 14px 18px;padding:0;}
+  li{font-size:14px;line-height:1.6;color:#3D4A6B;margin-bottom:6px;}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+        background:#F1F5F9;border-radius:6px;padding:2px 6px;color:#0F1B3D;}
+  .small{font-size:12px;line-height:1.5;color:#6B7894;margin:0;}
+</style>
+</head><body>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="container"><tr><td>
+<div class="card">
+  <div class="band"><p class="eyebrow">MWT.ONE · MCP</p><p class="title">Tu cuenta fue activada</p></div>
+  <div class="content">
+    <p>Hola{% if nombre %} {{ nombre }}{% endif %},</p>
+    <p>Tu cuenta (<strong>{{ email }}</strong>) fue <strong>activada</strong> y ya puedes
+       acceder a la Consola MWT.ONE con el correo y la contraseña que elegiste.</p>
+    {% if fname_json %}
+    <div class="box">
+      <p style="margin:0 0 6px;"><strong>Además, adjuntamos tus credenciales MCP de
+        {% if empresa %}{{ empresa }}{% endif %}:</strong></p>
+      <ul>
+        <li><span class="mono">{{ fname_json }}</span> — configuración del servidor MCP.</li>
+        <li><span class="mono">{{ fname_md }}</span> — instrucciones de uso.</li>
+      </ul>
+    </div>
+    <div class="warn">
+      <p style="margin:0;"><strong>UN SOLO USO POR EQUIPO:</strong> las credenciales se vinculan
+         al primer equipo desde el que se conecten. Usarlas desde otro computador las invalida
+         (deberás generar un paquete nuevo).</p>
+    </div>
+    {% else %}
+    <p>Las credenciales MCP se enviarán en cuanto tu empresa tenga el servicio listo.</p>
+    {% endif %}
+    <p class="small">¿Problemas? Escribe a <strong>mcp@mwt.one</strong>.</p>
+  </div>
+</div>
+</td></tr></table>
+</body></html>

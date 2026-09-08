@@ -1,0 +1,14 @@
+Nueva solicitud de acceso MCP (pendiente de aprobacion)
+
+  Correo   : {{ solicitante_email }}
+  Nombre   : {{ nombre }}
+  Telefono : {{ phone|default:"-" }}
+  Empresa  : {{ empresa }}
+  Recibida : {{ fecha }}
+
+Revisa y aprueba/rechaza en: {{ consola_url }}/registro-solicitudes
+
+Al aprobar se crea la cuenta del solicitante y se le envian sus
+credenciales MCP automaticamente.
+
+— MWT.ONE

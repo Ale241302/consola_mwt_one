@@ -1,0 +1,17 @@
+Hola{% if nombre %} {{ nombre }}{% endif %},
+
+Tu cuenta ({{ email }}) fue ACTIVADA y ya puedes acceder a la Consola
+MWT.ONE con el correo y la contrasena que elegiste.
+
+{% if fname_json %}Ademas, adjuntamos tus credenciales MCP:
+  - {{ fname_json }}  (configuracion del servidor MCP)
+  - {{ fname_md }}    (instrucciones)
+
+IMPORTANTE - UN SOLO USO POR EQUIPO: las credenciales se vinculan al
+primer equipo desde el que se conecten; usarlas desde otro computador las
+invalida (deberas generar un paquete nuevo).{% else %}Las credenciales MCP se
+enviaran en cuanto tu empresa tenga el servicio listo.{% endif %}
+
+Problemas? Escribe a mcp@mwt.one.
+
+— MWT.ONE

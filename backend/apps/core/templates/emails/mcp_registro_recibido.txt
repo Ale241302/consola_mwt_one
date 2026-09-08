@@ -1,0 +1,10 @@
+Hola{% if nombre %} {{ nombre }}{% endif %},
+
+Recibimos tu solicitud de acceso al MCP de {{ empresa }} para {{ email }}.
+
+Tu cuenta se creara al ser aprobada por nuestro equipo. Te avisaremos por
+correo con tus credenciales cuando este lista.
+
+Si no fuiste tu quien solicito este acceso, ignora este correo.
+
+— MWT.ONE

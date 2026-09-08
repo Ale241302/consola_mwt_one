@@ -26,6 +26,7 @@ rol del usuario conectado sin pegar al backend por cada listado.
 """
 from __future__ import annotations
 
+import hashlib
 import sys
 import threading
 import time
@@ -72,6 +73,20 @@ class IdentityMintingError(Exception):
 
 
 def _cache_key(identity) -> str | None:
+    """Clave de caché del JWT.
+
+    DeviceToken (Fase 3): la caché se ata a (hash del secret + IP) para que
+    NO se reutilice el JWT desde un equipo distinto (el bind lo hace el
+    backend por IP; sin IP en la clave, una segunda IP usaría el JWT en
+    caché y saltaría el control device-bound).
+    """
+    device_secret = getattr(identity, "device_secret", None)
+    device_ip = getattr(identity, "device_ip", None)
+    if device_secret:
+        key = "dev:" + hashlib.sha256(device_secret.encode("utf-8")).hexdigest()
+        if device_ip:
+            key += ":" + device_ip
+        return key
     if identity.email:
         return identity.email.lower()
     if identity.user_id:
@@ -132,24 +147,33 @@ def _service_auth_header() -> dict[str, str]:
 
 
 def _mint_from_backend(identity) -> dict | None:
-    """Pide al backend un JWT firmado para el usuario propagado.
+    """Pide al backend un JWT firmado para la identidad.
 
-    Devuelve el dict completo `{"access": ..., "user": {...}}` o None.
+    DeviceToken (Fase 3): envía {grant_secret, ip}; el backend resuelve el
+    grant (core.mcp_device_grant), vincula el equipo y emite el JWT scopeado
+    al cliente del grant. Devuelve el dict completo o None.
     """
     if not identity.is_present:
         return None
 
     body: dict[str, Any] = {}
-    if identity.email:
-        body["email"] = identity.email
-    if identity.user_id:
-        body["user_id"] = identity.user_id
-    # Ola 2 · 2.6 — si hay cliente resuelto (X-MWT-Client-ID o env), el mint lo
-    # envía al backend para que la intersección con el ServiceToken y el
-    # tenant_id del JWT sean reales (activa la Ola 1 backend).
     tenant = current_tenant()
-    if tenant.is_scoped:
-        body["client_id"] = tenant.client_id
+    device_secret = getattr(identity, "device_secret", None)
+    device_ip = getattr(identity, "device_ip", None)
+    if device_secret:
+        body["grant_secret"] = device_secret
+        if device_ip:
+            body["ip"] = device_ip
+    else:
+        if identity.email:
+            body["email"] = identity.email
+        if identity.user_id:
+            body["user_id"] = identity.user_id
+        # Ola 2 · 2.6 — si hay cliente resuelto (X-MWT-Client-ID o env), el mint lo
+        # envía al backend para que la intersección con el ServiceToken y el
+        # tenant_id del JWT sean reales (activa la Ola 1 backend).
+        if tenant.is_scoped:
+            body["client_id"] = tenant.client_id
 
     url = f"{settings.api_base}/auth/mcp-token/"
     try:

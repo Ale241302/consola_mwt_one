@@ -201,6 +201,10 @@ REST_FRAMEWORK = {
         "mcp_diag": "10/minute",
         "mcp_health": "30/minute",
         "chart_render": "20/minute",
+        # Onboarding MCP público (Fase 2): registro → 10/h por IP; autocomplete
+        # de clientes del formulario → 120/min por IP.
+        "mcp_registro": "10/hour",
+        "mcp_registro_q": "120/minute",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
@@ -329,14 +333,12 @@ CELERY_BEAT_SCHEDULE = {
     },
     # Onboarding MCP por correo (Fase 1): procesa el INBOX de mcp@mwt.one
     # cada 2 minutos. Sin MCP_MAILBOX_USER/PASSWORD el task no hace nada.
-    # [APAGADO hasta Fase 3] — el DeviceToken aún no conecta; enciéndelo con
-    # la Fase 3 descomentando esta entrada. El pipeline corre a mano vía:
-    #   python manage.py mcp_poll_inbox
-    # "mcp_poll_inbox": {
-    #     "task":     "core.mcp_poll_inbox",
-    #     "schedule": 120.0,
-    #     "options":  {"queue": "default", "expires": 300},
-    # },
+    # [ACTIVO · Fase 3] — el DeviceToken ya autentica (MCP + gateway).
+    "mcp_poll_inbox": {
+        "task":     "core.mcp_poll_inbox",
+        "schedule": 120.0,
+        "options":  {"queue": "default", "expires": 300},
+    },
     # Archival a S3 Glacier — Fase 5C (placeholder; el task se crea
     # en una sub-fase posterior. Comentado hasta que esté implementado).
     # "archive_old_payments": {

@@ -810,13 +810,37 @@ class McpTokenView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        email = self._target_email(request)
-        uid = self._target_id(request)
-        if not email and not uid:
-            return Response(
-                {"detail": "Falta X-Forwarded-User-Email o user_id"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # ── Fase 3 · DeviceToken (onboarding por correo): el MCP envía
+        # {grant_secret, ip} en lugar de la identidad X-Forwarded-User-*.
+        # La credencial resuelve usuario + empresa en core.mcp_device_grant
+        # y vincula el equipo (IP) en el primer uso.
+        grant_secret = str((request.data or {}).get("grant_secret") or "").strip()
+        grant_ip = str((request.data or {}).get("ip") or "").strip() or None
+        grant_restrict: str | None = None
+        if grant_secret:
+            from .mcp_device_grant_auth import authenticate_grant  # noqa: PLC0415
+
+            ga = authenticate_grant(grant_secret, grant_ip)
+            if not ga.get("ok"):
+                code = ga.get("code", "GRANT_INVALID")
+                return Response(
+                    {"detail": ga.get("detail"), "code": code},
+                    status=status.HTTP_401_UNAUTHORIZED
+                    if code in ("GRANT_INVALID", "GRANT_REVOKED",
+                                "GRANT_EXPIRED", "DEVICE_MISMATCH", "IP_REQUIRED")
+                    else status.HTTP_400_BAD_REQUEST,
+                )
+            email = ga["email"]
+            uid = ga["user_uuid"]
+            grant_restrict = ga["cliente_id"]
+        else:
+            email = self._target_email(request)
+            uid = self._target_id(request)
+            if not email and not uid:
+                return Response(
+                    {"detail": "Falta X-Forwarded-User-Email, user_id o grant_secret"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         row = self._fetch_target(email, uid)
         if not row:
@@ -855,6 +879,10 @@ class McpTokenView(APIView):
         service_legal_ids = set(st.client_ids or [])
         if service_legal_ids:
             user_legal_ids = user_legal_ids & service_legal_ids
+        # DeviceToken (Fase 3): el scope queda fijado al cliente del grant,
+        # nunca se amplía a otras empresas del usuario.
+        if grant_restrict:
+            user_legal_ids = user_legal_ids & {grant_restrict}
 
         # ── Ola 1 · 1.3 — kill-switch: verificar que los clientes del scope
         # estén ACTIVOS (is_active=True AND estado='ACTIVO'). Un cliente
