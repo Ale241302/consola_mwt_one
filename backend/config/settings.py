@@ -205,6 +205,8 @@ REST_FRAMEWORK = {
         # de clientes del formulario → 120/min por IP.
         "mcp_registro": "10/hour",
         "mcp_registro_q": "120/minute",
+        # Endpoints de servicio del onboarding (validate / emit-grant).
+        "mcp_onboarding": "60/minute",
     },
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
