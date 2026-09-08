@@ -1955,6 +1955,38 @@ class ExpedienteViewSet(viewsets.ViewSet):
         }, status=200)
 
     # ══════════════════════════════════════════════════════
+    # Ola 7 · Backfill del artefacto de envío (AWB/BL) — fuente de verdad.
+    #   POST /api/expedientes/{id}/envio-backfill/
+    #   Body: {tracking?, carrier?, etd?, eta?, origen?, destino?}
+    #   Actualiza el field-XXXX correspondiente en el data del artefacto de
+    #   envío del nodo del expediente. NO toca la cabecera del expediente.
+    # ══════════════════════════════════════════════════════
+    @action(detail=True, methods=["post"], url_path="envio-backfill")
+    def envio_backfill(self, request, pk=None):
+        denied = _deny_client_mutation(request, action_label="expediente.envio_backfill")
+        if denied is not None:
+            return denied
+        try:
+            exp = Expediente.objects.get(pk=pk, is_active=True)
+        except Expediente.DoesNotExist:
+            return Response({"detail": "Expediente no existe"}, status=404)
+        from .envio_backfill import backfill_envio  # noqa: PLC0415
+
+        res = backfill_envio(
+            str(exp.id),
+            tracking=(request.data.get("tracking") or "").strip() or None,
+            carrier=(request.data.get("carrier") or "").strip() or None,
+            etd=(request.data.get("etd") or "").strip() or None,
+            eta=(request.data.get("eta") or "").strip() or None,
+            origen=(request.data.get("origen") or "").strip() or None,
+            destino=(request.data.get("destino") or "").strip() or None,
+        )
+        if not res.get("ok"):
+            code = res.get("code", "ERROR")
+            return Response({"detail": res.get("detail"), "code": code}, status=400)
+        return Response(res, status=200)
+
+    # ══════════════════════════════════════════════════════
     # COMANDO C5 · RegisterSAPConfirmation
     #   POST /api/expedientes/{id}/confirm-sap/
     #

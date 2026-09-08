@@ -97,6 +97,7 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "expediente_edit_full_get": ("expedientes", "view"),
     "expediente_edit_full_patch": ("expedientes", "update"),
     "expediente_avanzar_estado": ("expedientes", "update"),
+    "expediente_envio_backfill": ("expedientes", "update"),
     "expediente_phase_durations_get": ("expedientes", "view"),
     "expediente_tiempos": ("expedientes", "view"),
     "expediente_phase_durations_set": ("expedientes", "update"),

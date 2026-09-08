@@ -2122,6 +2122,23 @@ def expediente_avanzar_estado(expediente_id: str, fase_to: str, note: str | None
 
 
 @mcp.tool()
+@write_tool
+def expediente_envio_backfill(expediente_id: str, tracking: str | None = None, carrier: str | None = None, etd: str | None = None, eta: str | None = None, origen: str | None = None, destino: str | None = None) -> Any:
+    """Backfill del ARTEFACTO DE ENVÍO (AWB/BL) del expediente — fuente de verdad.
+
+    Actualiza el campo `field-XXXX` correspondiente (por etiqueta) en el `data`
+    del artefacto de envío del nodo del expediente: tracking, carrier, fecha de
+    despacho (etd), fecha de arrivo (eta), origen/destino. NO toca la cabecera
+    del expediente. Usa esto para cargar las fechas/tracking de los expedientes."""
+    g = _wguard()
+    if g:
+        return g
+    body = _params(tracking=tracking, carrier=carrier, etd=etd, eta=eta,
+                   origen=origen, destino=destino)
+    return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/envio-backfill/", body))
+
+
+@mcp.tool()
 def expediente_tiempos(expediente_id: str | None = None, freight_mode: str | None = None) -> Any:
     """Tiempos/duraciones de los expedientes.
 
