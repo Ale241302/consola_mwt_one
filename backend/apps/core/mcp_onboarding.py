@@ -371,8 +371,7 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "",
         "> IMPORTANTE · UN SOLO USO POR EQUIPO",
         ">",
-        f"> Esta credencial se vincula al primer equipo/IP desde el que se "
-        "conecte (token `{grant['secret_prefix']}…`).",
+        f"> Esta credencial se vincula al primer equipo/IP desde el que se conecte (token `{grant['secret_prefix']}…`).",
         "> Si intentas usarla desde OTRO computador, el servidor la rechaza "
         "y debes generar una nueva.",
         "> Generar un paquete nuevo para tu cuenta REVOCA automáticamente "
