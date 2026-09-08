@@ -171,6 +171,7 @@ export default function RegistroMCP() {
 
   return (
     <div style={PAGE}>
+      <style>{`.login-input option { color:#111; background:#fff; } .registro-select option { color:#111; background:#fff; }`}</style>
       <div style={CARD}>
         <div className="login-brand">{logo}</div>
         <div className="login-tagline">Regístrate para conectar tu IA al MCP</div>
@@ -190,7 +191,6 @@ export default function RegistroMCP() {
               <input className="login-input" style={INPUT} type="tel" value={form.phone}
                      onChange={set("phone")} placeholder="+506 …" autoComplete="tel" />
             </Field>
-            <Field label="&nbsp;"><span style={{ display: "block", height: 46 }} /></Field>
 
             <Field label="Contraseña *">
               <input className="login-input" style={{ ...INPUT, letterSpacing: "0.18em" }} type="password"
@@ -203,86 +203,67 @@ export default function RegistroMCP() {
                      placeholder="Repite la contraseña" autoComplete="new-password" />
             </Field>
 
-            {/* Empresa */}
-            <Field label="Empresa *" full>
-              {!empresa ? (
-                <>
-                  <input className="login-input" style={INPUT} type="text" required value={q}
-                         onChange={(e) => { setQ(e.target.value); setOpenList(true); }}
-                         placeholder="Escribe el nombre (ej. Sondel)…" autoComplete="off" />
-                  {openList && q.trim().length >= 2 && (
-                    <div style={{
-                      background: "rgba(8,22,35,0.96)", border: "1px solid rgba(255,255,255,0.10)",
-                      borderRadius: 10, marginTop: 6, maxHeight: 190, overflowY: "auto",
-                    }}>
-                      {searching && <div style={{ padding: "11px 14px", fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Buscando…</div>}
-                      {!searching && options.length === 0 && (
-                        <div style={{ padding: "11px 14px", fontSize: 13, color: "rgba(255,255,255,0.5)" }}>
-                          Sin coincidencias con acceso MCP.
-                        </div>
-                      )}
-                      {options.map((c) => (
-                        <button key={c.id} type="button" onClick={() => pickEmpresa(c)}
-                                style={{ display: "block", width: "100%", textAlign: "left", padding: "11px 14px",
-                                         border: "none", background: "transparent", cursor: "pointer",
-                                         fontSize: 13.5, color: "#F5F8FC" }}>
-                          {c.razon_social}{c.is_subsidiary ? "  (subsidiaria)" : ""}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ padding: "8px 14px", borderRadius: 8, background: "rgba(0,178,134,0.18)",
-                                color: "#1DE394", fontWeight: 600, fontSize: 13.5 }}>{empresa.razon_social}</span>
-                  <button type="button" className="btn btn-ghost btn-sm"
-                          style={{ color: "#E8EEF5" }} onClick={() => setEmpresa(null)}>Cambiar</button>
-                </div>
-              )}
+            {/* Empresa — misma fila que contraseña/confirmar, listado flotante */}
+            <Field label="Empresa *">
+              <div style={{ position: "relative" }}>
+                {!empresa ? (
+                  <>
+                    <input className="login-input" style={INPUT} type="text" required value={q}
+                           onChange={(e) => { setQ(e.target.value); setOpenList(true); }}
+                           placeholder="Escribe el nombre (ej. Sondel)…" autoComplete="off" />
+                    {openList && q.trim().length >= 2 && (
+                      <div style={{
+                        position: "absolute", top: "100%", left: 0, right: 0, zIndex: 60, marginTop: 4,
+                        background: "rgba(8,22,35,0.97)", border: "1px solid rgba(255,255,255,0.12)",
+                        borderRadius: 10, maxHeight: 190, overflowY: "auto", boxShadow: "0 14px 34px rgba(0,0,0,0.5)",
+                      }}>
+                        {searching && <div style={{ padding: "11px 14px", fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Buscando…</div>}
+                        {!searching && options.length === 0 && (
+                          <div style={{ padding: "11px 14px", fontSize: 13, color: "rgba(255,255,255,0.5)" }}>
+                            Sin coincidencias con acceso MCP.
+                          </div>
+                        )}
+                        {options.map((c) => (
+                          <button key={c.id} type="button" onClick={() => pickEmpresa(c)}
+                                  style={{ display: "block", width: "100%", textAlign: "left", padding: "11px 14px",
+                                           border: "none", background: "transparent", cursor: "pointer",
+                                           fontSize: 13.5, color: "#F5F8FC" }}>
+                            {c.razon_social}{c.is_subsidiary ? "  (subsidiaria)" : ""}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ padding: "8px 14px", borderRadius: 8, background: "rgba(0,178,134,0.18)",
+                                  color: "#1DE394", fontWeight: 600, fontSize: 13.5 }}>{empresa.razon_social}</span>
+                    <button type="button" className="btn btn-ghost btn-sm"
+                            style={{ color: "#E8EEF5" }} onClick={() => setEmpresa(null)}>Cambiar</button>
+                  </div>
+                )}
+              </div>
             </Field>
 
-            {/* Direcciones */}
-            <Field label="Direcciones" full>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                <button type="button" className="btn btn-secondary btn-sm"
-                        style={{ color: "#E8EEF5" }} onClick={addAddress}>+ Nueva dirección</button>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 12 }}>
-                {addresses.map((a, i) => (
-                  <div key={a.key} style={DARK_CARD}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#F5F8FC" }}>
-                        Dirección {i + 1}{a.is_default ? " · DEFAULT" : ""}
-                      </span>
-                      <span style={{ flex: 1 }} />
-                      {!a.is_default && (
-                        <button type="button" className="btn btn-ghost btn-sm" style={{ color: "#E8EEF5" }}
-                                onClick={() => markDefault(a.key)}>Marcar default</button>
-                      )}
-                      {addresses.length > 1 && (
-                        <button type="button" className="btn btn-ghost btn-sm" style={{ color: "#E8EEF5" }}
-                                onClick={() => rmAddr(a.key)}>Quitar</button>
-                      )}
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                      <input className="login-input" style={INPUT} placeholder="Etiqueta (Oficina, Bodega…)" value={a.label}
-                             onChange={(e) => updAddr(a.key, { label: e.target.value })} />
-                      <input className="login-input" style={INPUT} placeholder="Calle y número" value={a.address_line_1}
-                             onChange={(e) => updAddr(a.key, { address_line_1: e.target.value })} />
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, marginTop: 8 }}>
-                      <input className="login-input" style={INPUT} placeholder="Ciudad" value={a.city}
-                             onChange={(e) => updAddr(a.key, { city: e.target.value })} />
-                      <select className="login-input" style={{ ...SELECT, cursor: "pointer" }} value={a.country}
-                              onChange={(e) => updAddr(a.key, { country: e.target.value })}>
-                        {PAISES.map(([iso, nom]) => <option key={iso} value={iso}>{nom}</option>)}
-                      </select>
-                      <input className="login-input" style={{ ...INPUT, minWidth: 120 }} placeholder="Código postal"
-                             value={a.zip_code} onChange={(e) => updAddr(a.key, { zip_code: e.target.value })} />
-                    </div>
-                  </div>
-                ))}
+            {/* Direcciones — una sola (las demás se agregan luego en la consola) */}
+            <Field label="Dirección" full>
+              <div style={DARK_CARD}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <input className="login-input" style={INPUT} placeholder="Etiqueta (Oficina, Bodega…)" value={addresses[0].label}
+                         onChange={(e) => updAddr(addresses[0].key, { label: e.target.value })} />
+                  <input className="login-input" style={INPUT} placeholder="Calle y número" value={addresses[0].address_line_1}
+                         onChange={(e) => updAddr(addresses[0].key, { address_line_1: e.target.value })} />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, marginTop: 8 }}>
+                  <input className="login-input" style={INPUT} placeholder="Ciudad" value={addresses[0].city}
+                         onChange={(e) => updAddr(addresses[0].key, { city: e.target.value })} />
+                  <select className="registro-select login-input" style={{ ...SELECT, cursor: "pointer" }} value={addresses[0].country}
+                          onChange={(e) => updAddr(addresses[0].key, { country: e.target.value })}>
+                    {PAISES.map(([iso, nom]) => <option key={iso} value={iso}>{nom}</option>)}
+                  </select>
+                  <input className="login-input" style={{ ...INPUT, minWidth: 120 }} placeholder="Código postal"
+                         value={addresses[0].zip_code} onChange={(e) => updAddr(addresses[0].key, { zip_code: e.target.value })} />
+                </div>
               </div>
             </Field>
           </div>
