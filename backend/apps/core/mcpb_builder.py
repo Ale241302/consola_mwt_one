@@ -66,4 +66,4 @@ def build_mcpb(*, slug: str, razon: str, mcp_url: str, token: str,
         )
         zf.writestr("skills/.keep", "")
     buf.seek(0)
-    return f"{slug}.MCPB", buf.getvalue()
+    return f"{slug}.dxt", buf.getvalue()
