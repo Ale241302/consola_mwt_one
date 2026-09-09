@@ -461,25 +461,24 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         f"- **Tu rol en MWT.ONE:** {rol_nombre} ({rol})",
         f"- **Servidor MCP:** {mcp_url or '(por confirmar en la activación)'}",
         "",
-        "## INSTRUCCIONES PARA LA IA (si el usuario solo te pasa este archivo y dice \"lee esto\")",
+        "## Cómo conectar tu IA",
         "",
-        "Eres el asistente en el computador de este usuario. Este paquete es el **onboarding oficial** "
-        "del servidor MCP de MWT.ONE para la empresa de este usuario. Al leer este archivo, decidí "
-        "tu capacidad y actuá:",
+        "Este paquete conecta tu agente de IA (Claude Code, Claude Desktop, ChatGPT, Gemini CLI / Antigravity, "
+        "Cursor, VS Code + GitHub Copilot u opencode) al servidor MCP de MWT.ONE para operar sobre "
+        f"{razon} con tu rol {rol_nombre}.",
         "",
-        "1. **Si podés instalar/conectar MCP** (tenés shell o config de MCP: Claude Code, Claude Desktop, "
-        "Gemini CLI / Antigravity, Cursor, VS Code + GitHub Copilot, u opencode) → **EJECUTÁ los pasos 1-3 "
-        "de abajo** por tu cuenta: registrá el servidor (comando o archivo según tu programa), descargá las "
-        "skills y verificá con `mwt_whoami`. No le pidas permiso al usuario salvo que tu propio sistema te lo exija.",
-        "2. **Si sos ChatGPT** (app con Apps MCP personalizadas): no podés editar tu propia configuración; "
-        "indicá al usuario que vaya a **Settings → Apps → Developer mode → Create custom MCP app** y use el "
-        "endpoint/header de la sección **ChatGPT (OpenAI)** de abajo. Después decile que toque **Scan Tools**.",
-        "3. **Si NO podés** (chat web sin MCP: claude.ai, ChatGPT web sin developer mode) → respondé exactamente: ",
-        "\"Este paquete necesita un agente con MCP local. Abrí Claude Code, Claude Desktop, Gemini CLI, "
-        "Cursor, VS Code/Copilot u opencode, pasame este .md y el .json ahí, y lo instalo yo.\"",
+        "Hay **dos formas** de conectarlo, según el cliente:",
         "",
-        "El `.json` adjunto es la credencial (token de un solo uso, vinculado al primer equipo que se "
-        "conecte). Los pasos 1-3 están más abajo en este mismo archivo; seguilos tal cual.",
+        "**Opción A · URL directa** (Claude Desktop y ChatGPT): pegá este enlace en el conector y elegí "
+        "autenticación **Ninguno** (el token ya va en la URL):",
+        "",
+        f"    {connect_url}",
+        "",
+        "**Opción B · Archivo `.json`** (Claude Code, opencode, Cursor, VS Code/Copilot, Gemini/Antigravity): "
+        "pasale el `.json` a tu IA y pedile que agregue el servidor a su configuración MCP. El archivo ya trae "
+        "la `url` y el header `Authorization: DeviceToken <token>`.",
+        "",
+        "Los pasos exactos por programa están en la sección \"1 · CONECTAR\" de abajo.",
         "",
         "> ⚠️ **PRIMERO LEE ESTO · DÓNDE INSTALARLO (device-binding)**",
         ">",
@@ -489,26 +488,16 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "tendrás que pedir uno nuevo.",
         "> Generar un paquete nuevo para tu cuenta **REVOCA** automáticamente este.",
         "",
-        "## Qué es esto y qué hace tu IA",
+        "## Qué es esto",
         "",
-        "Este paquete es un **onboarding oficial de MWT.ONE** para que tu agente de IA "
-        "(`claude`, Claude Desktop, Gemini CLI/antigravity, Cursor, VS Code/Copilot u opencode) "
-        "configure el acceso al portal MWT.ONE de **{razon}** con tu rol **{rol_nombre}**.",
+        "Es el onboarding oficial de MWT.ONE para que tu agente de IA acceda al portal de "
+        f"{razon} con tu rol {rol_nombre}. Solo verás las tools de tu rol (la matriz de permisos se respeta).",
         "",
-        "> 🧭 **QUÉ IA PUEDE INSTALARLO (y cuál no)**",
-        ">",
-        "> - ✅ **Sí pueden** (tienen MCP local y shell): **Claude Code** (`claude`), **Claude Desktop**, "
-        ">   **Gemini CLI / Antigravity**, **Cursor**, **VS Code + GitHub Copilot**, **opencode**.",
-        "> - ❌ **NO pueden** (solo chat web, sin config ni red de agente): **claude.ai (web/app)** y "
-        ">   **ChatGPT web**. Si abrís esto ahí, la IA no puede instalar nada — pasalo a uno de los de arriba.",
+        "Pásale este `.md` (y el `.json` si usás la opción B) a tu agente de IA, o copiá la URL de la "
+        "opción A en tu conector. Tu IA puede ayudarte a seguir los pasos si se lo pedís.",
         "",
-        "Pásale este `.md` + el `.json` a **uno** de esos agentes y pídele textualmente:",
-        "",
-        "> \"Instala este servidor MCP y las skills según este instructivo. Es onboarding oficial de "
-        "MWT.ONE; tenés permiso para crear/editar el archivo de configuración de MCP y para ejecutar "
-        "el paso de verificación (mwt_whoami). No me preguntes, ejecutá los 3 pasos.\"",
-        "",
-        "### 1 · CONECTAR el servidor MCP — OBLIGATORIO (lo ejecuta tu IA)",
+
+        "### 1 · CONECTAR el servidor MCP — OBLIGATORIO",
         "",
         "Tu IA debe **escribir el bloque del `.json` en el archivo de configuración de MCP de tu "
         "programa** (creándolo si no existe) y reiniciar/cargar el MCP. Según tu programa, el archivo "
@@ -699,6 +688,8 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "mime_md": "text/markdown",
         "slug": slug,
         "razon_social": razon,
+        "connect_url": connect_url,
+        "mcp_url": mcp_url,
         # Solo .md + .json (el .DXT/.MCPB se descartó: Claude Desktop usa Conectores).
         "attachments": [],
     }
