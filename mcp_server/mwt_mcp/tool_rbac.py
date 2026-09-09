@@ -46,6 +46,7 @@ _GLOBAL_ONLY_TOOLS = frozenset({
 TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Introspección / salud / utilidades (siempre visibles) ──────────────
     "mwt_whoami": _ALWAYS,
+    "mwt_guia_rol": _ALWAYS,
     "mwt_health": _ALWAYS,
     "mwt_audit_write_registry": _ALWAYS,
     "tipo_cambio": _ALWAYS,
@@ -342,7 +343,9 @@ class RbacFastMCP(FastMCP):
         if n_tools is not None:
             lines.append(f"Tools disponibles para tu rol: {n_tools}.")
         lines.append(
-            "Antes de operar, confirmá tu identidad y rol con la tool `mwt_whoami`."
+            "Antes de operar, confirmá tu identidad y rol con `mwt_whoami`. "
+            "Para la guía operativa completa de tu rol (flujos + anti-patrones), "
+            "usá la tool `mwt_guia_rol`."
         )
         return "\n".join(lines)
 

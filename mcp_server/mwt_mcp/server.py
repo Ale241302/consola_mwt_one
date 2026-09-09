@@ -10,9 +10,13 @@ Autenticación: Bearer token de servicio (MWT_MCP_TOKEN). Sin estado local.
 """
 from __future__ import annotations
 
+import io
 import re
 import time
+import zipfile
 from typing import Any
+
+import httpx
 
 from . import client as api
 from . import builder_client
@@ -834,6 +838,57 @@ def mwt_whoami() -> Any:
     except Exception as e:  # noqa: BLE001 - diagnóstico nunca rompe la tool
         data["mwt_rbac"] = {"error": str(e)}
     return data
+
+
+# Ola 4 · guía operativa completa del rol (Skills-MCP embebidas en el server).
+@mcp.tool()
+def mwt_guia_rol() -> Any:
+    """Devuelve la guía operativa COMPLETA de tu rol (flujos correctos +
+    anti-patrones por módulo/permiso), leída de las Skills-MCP del backend.
+
+    Úsala cuando necesites el paso a paso correcto para operar sobre la
+    Consola MWT.ONE (alta de clientes/productos, expedientes/OC, proformas,
+    recepción/inventario, transferencias, liquidación, pagos, documentos, etc.)
+    y para no cometer errores típicos de tu rol. El contenido se devuelve
+    según TU rol resuelto en esta sesión (no acepta otro rol)."""
+    try:
+        user = get_identity_user()
+    except Exception as e:  # noqa: BLE001
+        return {"error": True, "detail": f"No se pudo resolver la identidad: {e}"}
+    if not user:
+        return {
+            "error": True,
+            "detail": "No hay identidad de usuario propagada (solo ServiceToken).",
+        }
+    rol = (user.get("role") or user.get("role_slug") or "").strip().lower()
+    if not rol:
+        return {"error": True, "detail": "Rol no disponible en la identidad."}
+
+    url = f"{settings.api_base}/skills-mcp/{rol}/download"
+    try:
+        with httpx.Client(timeout=settings.http_timeout, follow_redirects=True) as c:
+            r = c.get(url)
+        if r.status_code != 200:
+            return {
+                "error": True,
+                "rol": rol,
+                "detail": f"No se pudo descargar la guía del rol (HTTP {r.status_code}).",
+            }
+        docs: list[str] = []
+        with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+            for name in sorted(zf.namelist()):
+                if name.endswith("SKILL.md"):
+                    txt = zf.read(name).decode("utf-8", errors="replace")
+                    docs.append(f"## {name}\n\n{txt}")
+        if not docs:
+            return {"error": True, "rol": rol, "detail": "No hay skills para este rol aún."}
+        return {
+            "rol": rol,
+            "total_skills": len(docs),
+            "guia": "\n\n".join(docs),
+        }
+    except Exception as e:  # noqa: BLE001 - nunca rompe la tool
+        return {"error": True, "rol": rol, "detail": f"Error al leer la guía del rol: {e}"}
 
 
 # Ola 3.6 · D5 — herramienta de diagnóstico de scope para soporte (CEO-only).
