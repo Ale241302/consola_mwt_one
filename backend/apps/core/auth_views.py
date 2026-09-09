@@ -845,13 +845,19 @@ class McpTokenView(APIView):
                 validate_entra_token,
             )
             from .mcp_onboarding import decide_scenario  # noqa: PLC0415
+            from . import authentik_token, entra_token  # noqa: PLC0415
 
+            token = str((request.data or {}).get("entra_token") or "").strip()
+            # 1) Si el emisor es Authentik (idp.mwt.one) → validar contra Auth.
+            # 2) Si no, intentar Microsoft Entra (M365). Fail-closed si ambos fallan.
             try:
-                entra_claims = validate_entra_token(
-                    str((request.data or {}).get("entra_token") or "").strip())
-            except EntraTokenError as exc:
-                return Response({"detail": exc.detail, "code": exc.code},
-                                status=status.HTTP_401_UNAUTHORIZED)
+                entra_claims = authentik_token.validate_authentik_token(token)
+            except authentik_token.AuthentikTokenError:
+                try:
+                    entra_claims = entra_token.validate_entra_token(token)
+                except entra_token.EntraTokenError as exc:
+                    return Response({"detail": exc.detail, "code": exc.code},
+                                    status=status.HTTP_401_UNAUTHORIZED)
             entra_email = email_from_claims(entra_claims)
             decision = decide_scenario(entra_email)
             if decision.get("scenario") != "ok":

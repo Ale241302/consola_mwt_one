@@ -49,21 +49,26 @@ def entra_validate(request):
 
 
 def oauth_metadata(request):
-    """Metadatos del authorization server (RFC 8414) para el cliente OAuth."""
+    """Metadatos del authorization server (Authentik) para el cliente OAuth.
+
+    El conector de Claude Desktop / agentes deben ir a Authentik (login de la
+    consola MWT), no a Microsoft. Devuelve los endpoints del provider
+    `claude-mcp` de idp.mwt.one.
+    """
     if not enabled():
-        return JsonResponse({"detail": "Canal Entra desactivado."}, status=404)
-    base = request.build_absolute_uri("/api/entra")
+        return JsonResponse({"detail": "Canal OAuth desactivado."}, status=404)
+    from .authentik_token import issuer
+    iss = issuer().rstrip("/")
     return JsonResponse({
-        "issuer": entra_oauth.issuer(),
-        "authorization_endpoint": entra_oauth.authorization_endpoint(),
-        "token_endpoint": entra_oauth.token_endpoint(),
-        "jwks_uri": f"{entra_oauth.issuer().rstrip('/')}/.well-known/openid-configuration",
+        "issuer": iss,
+        "authorization_endpoint": "https://idp.mwt.one/application/o/authorize/",
+        "token_endpoint": "https://idp.mwt.one/application/o/token/",
+        "jwks_uri": f"{iss}/jwks/",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["client_secret_post"],
-        "scopes_supported": ["openid", "profile", "email", "offline_access"],
+        "scopes_supported": ["openid", "profile", "email"],
         "code_challenge_methods_supported": ["S256"],
-        "service_documentation": base,
     })
 
 
