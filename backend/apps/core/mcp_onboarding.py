@@ -679,15 +679,32 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
     ]
     md_text = "\n".join(md_lines)
 
+    # 3er adjunto: bundle `.MCPB` para Claude Desktop (arrastrar y soltar).
+    try:
+        from .mcpb_builder import build_mcpb  # noqa: PLC0415
+        fname_mcpb, mcpb_bytes = build_mcpb(
+            slug=slug, razon=razon, mcp_url=mcp_url, token=secret,
+            rol=rol, role_label=rol_nombre,
+        )
+    except Exception:  # noqa: BLE001 - el bundle nunca debe tumbar el correo
+        fname_mcpb, mcpb_bytes = None, None
+
     return {
         "fname_json": _slug_fname(slug, ".credencial.json"),
         "json_text": json.dumps(json_payload, ensure_ascii=False, indent=2),
         "fname_md": _slug_fname(slug, ".INSTRUCCIONES.md"),
         "md_text": md_text,
+        "fname_mcpb": fname_mcpb,
+        "mcpb_bytes": mcpb_bytes,
         "mime_json": "application/json",
         "mime_md": "text/markdown",
+        "mime_mcpb": "application/octet-stream",
         "slug": slug,
         "razon_social": razon,
+        # Adjuntos listos para send_mail_tpl (json + md + mcpb si aplica).
+        "attachments": [
+            {"filename": fname_mcpb, "data": mcpb_bytes, "mime": "application/octet-stream"},
+        ] if mcpb_bytes else [],
     }
 
 

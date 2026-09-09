@@ -402,7 +402,7 @@ def _send_credenciales(to_email: str, target: dict, client: dict,
              "mime": package["mime_json"]},
             {"filename": package["fname_md"], "data": package["md_text"].encode("utf-8"),
              "mime": package["mime_md"]},
-        ],
+        ] + (package.get("attachments") or []),
     )
 
 
