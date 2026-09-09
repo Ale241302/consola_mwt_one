@@ -383,6 +383,10 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
     # MCP (sin ContextForge/OAuth). Sobrescribible con MWT_MCP_DEVICE_URL.
     mcp_url = (os.environ.get("MWT_MCP_DEVICE_URL") or "").strip() or "https://mcp.mwt.one/device"
     secret = grant["secret"]
+    # Endpoint de conexión por token en URL (sin OAuth) — Claude Desktop.
+    # /connect?mwt=<DeviceToken> → nginx lo traduce a Authorization: DeviceToken.
+    connect_base = (os.environ.get("MWT_MCP_CONNECT_URL") or "").strip() or "https://mcp.mwt.one/connect"
+    connect_url = f"{connect_base}?mwt={secret}"
     email = target["email"]
     full_name = target.get("full_name") or ""
 
@@ -412,6 +416,7 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
             "esquema": "DeviceToken",
             "token": secret,
             "mcp_url": mcp_url,
+            "connect_url": connect_url,
             "emitido_iso": datetime.now(timezone.utc).isoformat(),
             "expira_iso": grant.get("expira_iso"),
             "empresa_id": client.get("cliente_id"),
@@ -463,10 +468,13 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "tu capacidad y actuá:",
         "",
         "1. **Si podés instalar/conectar MCP** (tenés shell o config de MCP: Claude Code, Claude Desktop, "
-        "Gemini CLI, Cursor, VS Code + GitHub Copilot, u opencode) → **EJECUTÁ los pasos 1-3 de abajo** "
-        "por tu cuenta: registrá el servidor (comando o archivo según tu programa), descargá las skills "
-        "y verificá con `mwt_whoami`. No le pidas permiso al usuario salvo que tu propio sistema te lo exija.",
-        "2. **Si NO podés** (chat web sin MCP: claude.ai, ChatGPT web) → respondé exactamente: ",
+        "Gemini CLI / Antigravity, Cursor, VS Code + GitHub Copilot, u opencode) → **EJECUTÁ los pasos 1-3 "
+        "de abajo** por tu cuenta: registrá el servidor (comando o archivo según tu programa), descargá las "
+        "skills y verificá con `mwt_whoami`. No le pidas permiso al usuario salvo que tu propio sistema te lo exija.",
+        "2. **Si sos ChatGPT** (app con Apps MCP personalizadas): no podés editar tu propia configuración; "
+        "indicá al usuario que vaya a **Settings → Apps → Developer mode → Create custom MCP app** y use el "
+        "endpoint/header de la sección **ChatGPT (OpenAI)** de abajo. Después decile que toque **Scan Tools**.",
+        "3. **Si NO podés** (chat web sin MCP: claude.ai, ChatGPT web sin developer mode) → respondé exactamente: ",
         "\"Este paquete necesita un agente con MCP local. Abrí Claude Code, Claude Desktop, Gemini CLI, "
         "Cursor, VS Code/Copilot u opencode, pasame este .md y el .json ahí, y lo instalo yo.\"",
         "",
@@ -589,15 +597,26 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "**Claude Desktop** — usa **Conectores** (los MCP remotos de la app de escritorio): "
         "Ajustes → **Conectores** → **Agregar** → **Agregar conector personalizado**, con:",
         "",
-        "- **Nombre:** `mcp-sondel-s-a`",
-        f"- **URL del servidor MCP remoto:** `{mcp_url}`",
+        f"- **Nombre:** `{slug}`",
+        f"- **URL del servidor MCP remoto:** `{connect_url}`",
+        f"- **Autenticación:** **Ninguno** (sin inicio de sesión — el token ya va en la URL).",
         "",
-        "> ⚠️ El conector de Claude Desktop autentica por **OAuth** (no acepta header `DeviceToken`). "
-        "Para que funcione, el servidor MWT debe exponer OAuth (canal Entra en curso). Mientras tanto, "
-        "el método automático y garantizado es **Claude Code** (`claude mcp add`).",
+        "> El token viaja en la URL (método sin OAuth). No lo compartas ni lo pegues en lugares "
+        "públicos. La primera conexión lo vincula a este equipo/IP.",
         "",
         "> Si tu versión de Claude Desktop no soporta conectores remotos, usá **Claude Code**, "
         "Gemini CLI, Cursor, VS Code/Copilot u opencode, que sí aceptan el header del `.json`.",
+        "",
+        "**ChatGPT (OpenAI)** — usa **Apps MCP personalizadas** (Settings → Apps → Developer mode → "
+        "Create custom MCP app). Requiere plan Business/Enterprise/Edu (Pro: solo lectura). Con:",
+        "",
+        f"- **Endpoint:** `{mcp_url}`",
+        "- **Autenticación:** header personalizado `Authorization: DeviceToken <token>` "
+        "(el `token` está en el `.json`, campo `credencial.token`).",
+        "",
+        f"  Si tu versión solo pide URL (sin header), usá `{connect_url}` con autenticación **Ninguno**.",
+        "",
+        "- Después tocá **Scan Tools** para descubrir las tools de tu rol.",
         "",
         "**Gemini CLI / Antigravity** — `mcp_config.json` del usuario:",
         "",
