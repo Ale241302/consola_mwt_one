@@ -586,26 +586,18 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "}",
         "```",
         "",
-        "**Claude Desktop** — archivo `claude_desktop_config.json` "
-        "(Windows: `%APPDATA%\\Claude\\claude_desktop_config.json`):",
+        "**Claude Desktop** — usa **Conectores** (los MCP remotos de la app de escritorio): "
+        "Ajustes → **Conectores** → **Agregar** → **Agregar conector personalizado**, con:",
         "",
-        "```json",
-        "{",
-        '  "mcpServers": {',
-        f'    "{slug}": {{',
-        '      "type": "http",',
-        f'      "url": "{mcp_url}",',
-        '      "headers": {',
-        f'        "Authorization": "DeviceToken {secret}"',
-        "      }",
-        "    }",
-        "  }",
-        "}",
-        "```",
+        "- **Nombre:** `mcp-sondel-s-a`",
+        f"- **URL del servidor MCP remoto:** `{mcp_url}`",
         "",
-        "> Si tu versión de Claude Desktop no soporta servidores remotos (`type: http`), usá "
-        "cualquiera de los clientes anteriores (opencode, VS Code/Copilot, Cursor, Claude Code) "
-        "que sí soportan MCP remoto nativo.",
+        "> ⚠️ El conector de Claude Desktop autentica por **OAuth** (no acepta header `DeviceToken`). "
+        "Para que funcione, el servidor MWT debe exponer OAuth (canal Entra en curso). Mientras tanto, "
+        "el método automático y garantizado es **Claude Code** (`claude mcp add`).",
+        "",
+        "> Si tu versión de Claude Desktop no soporta conectores remotos, usá **Claude Code**, "
+        "Gemini CLI, Cursor, VS Code/Copilot u opencode, que sí aceptan el header del `.json`.",
         "",
         "**Gemini CLI / Antigravity** — `mcp_config.json` del usuario:",
         "",
@@ -679,32 +671,17 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
     ]
     md_text = "\n".join(md_lines)
 
-    # 3er adjunto: bundle `.MCPB` para Claude Desktop (arrastrar y soltar).
-    try:
-        from .mcpb_builder import build_mcpb  # noqa: PLC0415
-        fname_mcpb, mcpb_bytes = build_mcpb(
-            slug=slug, razon=razon, mcp_url=mcp_url, token=secret,
-            rol=rol, role_label=rol_nombre,
-        )
-    except Exception:  # noqa: BLE001 - el bundle nunca debe tumbar el correo
-        fname_mcpb, mcpb_bytes = None, None
-
     return {
         "fname_json": _slug_fname(slug, ".credencial.json"),
         "json_text": json.dumps(json_payload, ensure_ascii=False, indent=2),
         "fname_md": _slug_fname(slug, ".INSTRUCCIONES.md"),
         "md_text": md_text,
-        "fname_mcpb": fname_mcpb,
-        "mcpb_bytes": mcpb_bytes,
         "mime_json": "application/json",
         "mime_md": "text/markdown",
-        "mime_mcpb": "application/octet-stream",
         "slug": slug,
         "razon_social": razon,
-        # Adjuntos listos para send_mail_tpl (json + md + mcpb si aplica).
-        "attachments": [
-            {"filename": fname_mcpb, "data": mcpb_bytes, "mime": "application/octet-stream"},
-        ] if mcpb_bytes else [],
+        # Solo .md + .json (el .DXT/.MCPB se descartó: Claude Desktop usa Conectores).
+        "attachments": [],
     }
 
 

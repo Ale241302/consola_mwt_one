@@ -647,7 +647,7 @@ def aprobar_solicitud(req_id: str, admin_user_id: str | None = None) -> dict:
                  "mime": package["mime_json"]},
                 {"filename": package["fname_md"], "data": package["md_text"].encode("utf-8"),
                  "mime": package["mime_md"]},
-            ] + (package.get("attachments") or []),
+            ],
         )
     else:
         email_sent = send_mail_tpl(
@@ -793,7 +793,7 @@ def emitir_y_enviar_credenciales(user_id: str, cliente_id: str) -> dict:
              "mime": package["mime_json"]},
             {"filename": package["fname_md"], "data": package["md_text"].encode("utf-8"),
              "mime": package["mime_md"]},
-        ] + (package.get("attachments") or []),
+        ],
     )
     return {
         "ok": bool(res.get("ok")),
