@@ -287,6 +287,65 @@ class RbacFastMCP(FastMCP):
     tools del rol. Fail-closed: identidad inválida → lista vacía.
     """
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Ola 4 · instrucciones dinámicas por rol: se inyectan en el
+        # `initialize` (create_initialization_options) para que el host
+        # (Claude/ChatGPT/Antigravity) las muestre como contexto del sistema.
+        # Así la IA opera según el rol/permisos sin descargar las Skills-MCP.
+        orig = self._mcp_server.create_initialization_options
+
+        def _patched(notification_options=None, experimental_capabilities=None):
+            try:
+                self._mcp_server.instructions = self._role_instructions()
+            except Exception as exc:  # noqa: BLE001 - nunca romper initialize
+                log.warning("role instructions falló: %s", exc)
+            return orig(notification_options, experimental_capabilities)
+
+        self._mcp_server.create_initialization_options = _patched
+
+    def _role_instructions(self) -> str | None:
+        """Construye las instrucciones de operación según el rol resuelto."""
+        try:
+            user = get_identity_user()
+        except IdentityMintingError:
+            return (
+                "Servidor MCP de MWT.ONE. Tu identidad no pudo resolverse; "
+                "no se listarán tools (fail-closed)."
+            )
+        except Exception:  # noqa: BLE001
+            user = None
+
+        if not user:
+            return (
+                "Servidor MCP de MWT.ONE (Consola). Sin usuario autenticado: "
+                "se opera con el token de servicio."
+            )
+
+        role = (user.get("role") or user.get("role_slug") or "?").lower()
+        perms = user.get("permissions") or {}
+        modules = perms.get("modules") or []
+        allowed = allowed_tool_names(user)
+        n_tools = len(allowed) if allowed is not None else None
+
+        lines = [
+            "Servidor MCP de MWT.ONE (Consola).",
+            f"Tu rol de acceso es: **{role}**.",
+        ]
+        if modules and "*" not in modules:
+            lines.append(f"Módulos habilitados: {', '.join(sorted(modules))}.")
+        lines.append(
+            "Solo podés usar las tools visibles en tu listado (ya filtradas por tu rol "
+            "y por la matriz de permisos). No intentes invocar tools fuera de tu rol: "
+            "el backend las rechaza."
+        )
+        if n_tools is not None:
+            lines.append(f"Tools disponibles para tu rol: {n_tools}.")
+        lines.append(
+            "Antes de operar, confirmá tu identidad y rol con la tool `mwt_whoami`."
+        )
+        return "\n".join(lines)
+
     async def list_tools(self) -> list[MCPTool]:
         tools = await super().list_tools()
         if not settings.rbac_filter:
