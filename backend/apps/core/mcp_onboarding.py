@@ -471,9 +471,11 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "paquete (`.md` + `.json`) le dice a tu IA cómo conectarse al portal MWT.ONE de **{razon}** y con "
         f"**qué rol** ({rol_nombre}) opera.",
         "",
-        "Dale ambos archivos a tu IA y pídele que haga estos **3 pasos**:",
+        "Dale ambos archivos a tu IA y pídele que complete estos **3 pasos — son OBLIGATORIOS**: "
+        "la credencial solo se ACTIVA cuando el servidor MCP se conecta por primera vez (paso 3). "
+        "Si no se activa, el token **expira sin uso** y debés pedir uno nuevo a mcp@mwt.one.",
         "",
-        "### 1 · Conectar el servidor MCP",
+        "### 1 · CONECTAR el servidor MCP — OBLIGATORIO",
         "",
         "Registrar el servidor MCP **remoto** usando el contenido del `.json` "
         "(o agregar un servidor con la `url` y el header "
@@ -598,9 +600,10 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         f"rol **{rol_nombre} ({rol})**. Si una tool no aparece, NO es un error: tu rol no tiene ese "
         "permiso (la matriz de permisos se respeta tal cual).",
         "",
-        f"### 2 · Instalar las Skills-MCP de tu rol **{rol_nombre} ({rol})**",
+        f"### 2 · INSTALAR las Skills-MCP de tu rol **{rol_nombre} ({rol})** — RECOMENDADO",
         "",
-        "Descarga el ZIP de skills de tu rol desde esta URL pública:",
+        "Las Skills-MCP son guías de operación (flujos + anti-patrones) para las tools de tu rol. "
+        "Descarga el ZIP desde esta URL pública y extraelo en la carpeta de skills de tu agente:",
         "",
         f"    {skills_url}",
         "",
@@ -614,11 +617,16 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "los flujos correctos y los anti-patrones. Son guías para que la IA opere "
         "con criterio, no a ciegas.",
         "",
-        "### 3 · Verificar",
+        "### 3 · VERIFICAR la activación — PUERTA OBLIGATORIA",
         "",
-        "Pídele a tu IA que ejecute `mwt_whoami` para confirmar que conecta con el "
-        f"rol **{rol}** y que ya ve las tools de su matriz de permisos. "
-        "**Hacé este paso en la máquina definitiva**, no antes.",
+        "Tu IA debe ejecutar `mwt_whoami` y confirmar que conecta con el "
+        f"rol **{rol}** y que ve las tools de su matriz. **Solo cuando `mwt_whoami` responda "
+        "correctamente la credencial queda ACTIVA** (primera conexión = vinculación del token "
+        "a este equipo/IP). Sin esta confirmación, el paquete NO está instalado: repetí el paso 1 "
+        "o pedí ayuda. **Hacé este paso en la máquina definitiva**, no antes.",
+        "",
+        "> 🚨 Si `mwt_whoami` da error (token rechazado, expirado o vinculado a otra IP), "
+        "NO sigas: escribí a mcp@mwt.one para re-emitir antes de intentar arreglos a ciegas.",
         "",
         "## Preguntas frecuentes",
         "",
