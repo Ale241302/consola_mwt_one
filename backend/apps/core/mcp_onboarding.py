@@ -37,7 +37,10 @@ log = logging.getLogger("mwt_mcp.onboarding")
 
 # Estampas de vida del grant. El backend (Fase 3) marcará EXPIRED si la
 # expira_at ya pasó al validar la conexión.
-GRANT_TTL_DAYS = 7
+# Ola 7 · rolling renewal: cada conexión válida DESLIZA la expira_at hacia
+# delante (now + TTL), así el token se renueva solo mientras se use desde el
+# dispositivo vinculado. TTL configurable con MWT_GRANT_TTL_DAYS (default 30).
+GRANT_TTL_DAYS = int(os.environ.get("MWT_GRANT_TTL_DAYS", "30") or "30")
 GRANT_ESTADOS_ACTIVOS = ("ISSUED", "ACTIVE")
 
 # Email que recibe las solicitudes (para no auto-detectar "mcp@mwt.one"

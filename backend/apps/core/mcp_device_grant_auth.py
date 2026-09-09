@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timezone
+import os
+from datetime import datetime, timedelta, timezone
 
 from django.db import connection, transaction
 
@@ -33,6 +34,12 @@ def hash_secret(secret: str) -> str:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _ttl_seconds() -> int:
+    """TTL del grant (deslizante). Mismo origen que mcp_onboarding.GRANT_TTL_DAYS."""
+    days = int(os.environ.get("MWT_GRANT_TTL_DAYS", "30") or "30")
+    return days * 86400
 
 
 def authenticate_grant(secret: str, ip: str | None = None) -> dict:
@@ -100,10 +107,12 @@ def authenticate_grant(secret: str, ip: str | None = None) -> dict:
                     UPDATE core.mcp_device_grant
                        SET estado = 'ACTIVE', ip_vinculada = %s,
                            primera_conexion_at = now(),
-                           ultima_conexion_at = now(), updated_at = now()
+                           ultima_conexion_at = now(),
+                           expira_at = now() + (%s * interval '1 second'),
+                           updated_at = now()
                      WHERE id = %s
                     """,
-                    [ip, gid],
+                    [ip, _ttl_seconds(), gid],
                 )
             log.info("grant %s vinculado a ip %s (user=%s)", gid, ip, user_uuid)
             return {"ok": True, "grant_id": gid, "user_uuid": user_uuid,
@@ -120,10 +129,12 @@ def authenticate_grant(secret: str, ip: str | None = None) -> dict:
             cur2.execute(
                 """
                 UPDATE core.mcp_device_grant
-                   SET ultima_conexion_at = now(), updated_at = now()
+                   SET ultima_conexion_at = now(),
+                       expira_at = now() + (%s * interval '1 second'),
+                       updated_at = now()
                  WHERE id = %s
                 """,
-                [gid],
+                [_ttl_seconds(), gid],
             )
         return {"ok": True, "grant_id": gid, "user_uuid": user_uuid,
                 "email": email, "cliente_id": cliente_id}
