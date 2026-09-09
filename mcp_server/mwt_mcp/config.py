@@ -63,6 +63,15 @@ class Settings:
         self.require_client_header: bool = _truthy(
             os.environ.get("MWT_MCP_REQUIRE_CLIENT_HEADER")
         )
+        # ── OAuth (M365 Copilot / conectores remotos de Claude Desktop) ──
+        # Si se activa (MWT_MCP_OAUTH=1), una request MCP SIN Authorization
+        # responde 401 con los metadatos del authorization server (Entra) para
+        # que el cliente inicie el flujo OAuth. No afecta el flujo DeviceToken.
+        # Los endpoints OAuth viven en el backend: https://consola.mwt.one/api/entra
+        self.mcp_oauth: bool = _truthy(os.environ.get("MWT_MCP_OAUTH"))
+        self.oauth_base: str = os.environ.get(
+            "MWT_OAUTH_BASE", "https://consola.mwt.one/api/entra"
+        ).rstrip("/")
 
     def require_token(self) -> str:
         if not self.token:

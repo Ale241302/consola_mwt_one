@@ -92,6 +92,31 @@ class IdentityPropagationMiddleware:
                 device_secret = authz.split(None, 1)[1].strip() or None
             elif authz.lower().startswith("bearer "):
                 entra_token = authz.split(None, 1)[1].strip() or None
+            # ── OAuth opt-in (MWT_MCP_OAUTH=1) ─────────────────────────────
+            # Una request MCP SIN Authorization (ni DeviceToken ni Bearer)
+            # dispara el challenge OAuth para que el cliente (Claude Desktop
+            # conector / M365 Copilot) sepa a qué authorization server ir.
+            # Solo aplica cuando está activo; no toca el flujo DeviceToken.
+            if (settings.mcp_oauth and not device_secret and not entra_token
+                    and not authz.startswith(("devicetoken ", "bearer "))):
+                metadata = f"{settings.oauth_base}/.well-known/oauth-authorization-server"
+                body = (
+                    '{"error": true, "code": "OAUTH_REQUIRED", '
+                    f'"resource": "{settings.oauth_base}", '
+                    f'"metadata": "{metadata}"}}'
+                ).encode("utf-8")
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"www-authenticate",
+                         f'Bearer resource_metadata="{metadata}"'.encode("ascii")),
+                        (b"content-length", str(len(body)).encode("ascii")),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
             if device_secret:
                 effective_headers["x-mwt-device-secret"] = device_secret
                 client_ip = (
