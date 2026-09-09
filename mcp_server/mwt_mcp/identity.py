@@ -103,10 +103,12 @@ class Identity:
         self.sub: str | None = (h.get("x-forwarded-user-sub") or "").strip() or None
         self.device_secret: str | None = (h.get("x-mwt-device-secret") or "").strip() or None
         self.device_ip: str | None = (h.get("x-mwt-client-ip") or "").strip() or None
+        # Microsoft Entra ID (M365 Copilot MCP): Authorization: Bearer <entra>.
+        self.entra_token: str | None = (h.get("x-mwt-entra-token") or "").strip() or None
 
     @property
     def is_present(self) -> bool:
-        return bool(self.email or self.user_id or self.sub or self.device_secret)
+        return bool(self.email or self.user_id or self.sub or self.device_secret or self.entra_token)
 
     def to_backend_headers(self) -> dict[str, str]:
         """Devuelve los headers para reenviar al backend cuando minteamos."""

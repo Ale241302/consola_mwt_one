@@ -80,10 +80,18 @@ class IdentityPropagationMiddleware:
             # que vincula el equipo (IP) al primer uso. El acceso público al
             # contenedor es SOLO vía nginx (location /device/) que reenvía la IP
             # real (CF-Connecting-IP); el backend valida secret+IP fail-closed.
+            #
+            # M365 Copilot MCP · Microsoft Entra ID: Authorization: Bearer <entra>.
+            # El token Entra (multi-inquilino) viaja como x-mwt-entra-token y el
+            # mint lo manda al backend (POST /api/auth/mcp-token/ con entra_token),
+            # que valida JWKS + mapea por email a la consola MWT.
             device_secret = None
+            entra_token = None
             authz = (headers.get("authorization") or "").strip()
             if authz.lower().startswith("devicetoken "):
                 device_secret = authz.split(None, 1)[1].strip() or None
+            elif authz.lower().startswith("bearer "):
+                entra_token = authz.split(None, 1)[1].strip() or None
             if device_secret:
                 effective_headers["x-mwt-device-secret"] = device_secret
                 client_ip = (
@@ -98,6 +106,8 @@ class IdentityPropagationMiddleware:
                         client_ip = None
                 if client_ip:
                     effective_headers["x-mwt-client-ip"] = client_ip
+            if entra_token:
+                effective_headers["x-mwt-entra-token"] = entra_token
 
             set_identity(effective_headers)
             set_tenant(Tenant(

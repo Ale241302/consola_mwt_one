@@ -160,7 +160,15 @@ def _mint_from_backend(identity) -> dict | None:
     tenant = current_tenant()
     device_secret = getattr(identity, "device_secret", None)
     device_ip = getattr(identity, "device_ip", None)
-    if device_secret:
+    entra_token = getattr(identity, "entra_token", None)
+    if entra_token:
+        # Microsoft Entra ID (M365 Copilot MCP): el backend valida el token y
+        # mapea el email a la consola. Si hay cliente resuelto (app por
+        # cliente), se envía client_id para fijar la empresa.
+        body["entra_token"] = entra_token
+        if tenant.is_scoped:
+            body["client_id"] = tenant.client_id
+    elif device_secret:
         body["grant_secret"] = device_secret
         if device_ip:
             body["ip"] = device_ip
