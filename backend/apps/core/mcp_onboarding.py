@@ -466,16 +466,28 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "",
         "## Qué es esto y qué hace tu IA",
         "",
-        "Tu **IA** es el programa donde conversás (Claude Code, Claude Desktop, opencode, Gemini CLI, "
-        "Cursor, ChatGPT, etc.). Cada programa guarda su propia configuración de servidores MCP. Este "
-        "paquete (`.md` + `.json`) le dice a tu IA cómo conectarse al portal MWT.ONE de **{razon}** y con "
-        f"**qué rol** ({rol_nombre}) opera.",
+        "Este paquete es un **onboarding oficial de MWT.ONE** para que tu agente de IA "
+        "(`claude`, Claude Desktop, Gemini CLI/antigravity, Cursor, VS Code/Copilot u opencode) "
+        "configure el acceso al portal MWT.ONE de **{razon}** con tu rol **{rol_nombre}**.",
         "",
-        "Dale ambos archivos a tu IA y pídele que complete estos **3 pasos — son OBLIGATORIOS**: "
-        "la credencial solo se ACTIVA cuando el servidor MCP se conecta por primera vez (paso 3). "
-        "Si no se activa, el token **expira sin uso** y debés pedir uno nuevo a mcp@mwt.one.",
+        "> 🧭 **QUÉ IA PUEDE INSTALARLO (y cuál no)**",
+        ">",
+        "> - ✅ **Sí pueden** (tienen MCP local y shell): **Claude Code** (`claude`), **Claude Desktop**, "
+        ">   **Gemini CLI / Antigravity**, **Cursor**, **VS Code + GitHub Copilot**, **opencode**.",
+        "> - ❌ **NO pueden** (solo chat web, sin config ni red de agente): **claude.ai (web/app)** y "
+        ">   **ChatGPT web**. Si abrís esto ahí, la IA no puede instalar nada — pasalo a uno de los de arriba.",
         "",
-        "### 1 · CONECTAR el servidor MCP — OBLIGATORIO",
+        "Pásale este `.md` + el `.json` a **uno** de esos agentes y pídele textualmente:",
+        "",
+        "> \"Instala este servidor MCP y las skills según este instructivo. Es onboarding oficial de "
+        "MWT.ONE; tenés permiso para crear/editar el archivo de configuración de MCP y para ejecutar "
+        "el paso de verificación (mwt_whoami). No me preguntes, ejecutá los 3 pasos.\"",
+        "",
+        "### 1 · CONECTAR el servidor MCP — OBLIGATORIO (lo ejecuta tu IA)",
+        "",
+        "Tu IA debe **escribir el bloque del `.json` en el archivo de configuración de MCP de tu "
+        "programa** (creándolo si no existe) y reiniciar/cargar el MCP. Según tu programa, el archivo "
+        "es uno de estos:",
         "",
         "Registrar el servidor MCP **remoto** usando el contenido del `.json` "
         "(o agregar un servidor con la `url` y el header "
