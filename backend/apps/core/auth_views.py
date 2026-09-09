@@ -833,6 +833,52 @@ class McpTokenView(APIView):
             email = ga["email"]
             uid = ga["user_uuid"]
             grant_restrict = ga["cliente_id"]
+        elif str((request.data or {}).get("entra_token") or "").strip():
+            # ── M365 Copilot MCP · token de Microsoft Entra ID (Bearer).
+            # El MCP resuelve la identidad validando el token de Entra y
+            # mapeándola por email a la consola; opcionalmente se fija la
+            # empresa con `cliente_id`.
+            from .entra_token import (  # noqa: PLC0415
+                EntraTokenError,
+                email_from_claims,
+                mwt_identity_from_claims,
+                validate_entra_token,
+            )
+            from .mcp_onboarding import decide_scenario  # noqa: PLC0415
+
+            try:
+                entra_claims = validate_entra_token(
+                    str((request.data or {}).get("entra_token") or "").strip())
+            except EntraTokenError as exc:
+                return Response({"detail": exc.detail, "code": exc.code},
+                                status=status.HTTP_401_UNAUTHORIZED)
+            entra_email = email_from_claims(entra_claims)
+            decision = decide_scenario(entra_email)
+            if decision.get("scenario") != "ok":
+                return Response(
+                    {"detail": decision.get("detail") or decision.get("scenario"),
+                     "code": decision.get("scenario", "NO_OK")},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            target = decision["target"]
+            email = target["email"]
+            uid = target["user_uuid"]
+            req_client = str((request.data or {}).get("cliente_id") or "").strip()
+            clients = decision["clients"]
+            if req_client:
+                match = [c for c in clients
+                         if str(c.get("cliente_id")) == req_client]
+                if not match:
+                    return Response({"detail": "Empresa no asignada al usuario.",
+                                     "code": "CLIENTE_NO_ASIGNADO"},
+                                    status=status.HTTP_403_FORBIDDEN)
+                grant_restrict = req_client
+            elif len(clients) == 1:
+                grant_restrict = str(clients[0].get("cliente_id"))
+            else:
+                return Response({"detail": "El usuario tiene varias empresas; envía cliente_id.",
+                                 "code": "ELEGIR_EMPRESA"},
+                                status=status.HTTP_400_BAD_REQUEST)
         else:
             email = self._target_email(request)
             uid = self._target_id(request)
