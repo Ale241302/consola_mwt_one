@@ -453,19 +453,38 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         f"- **Tu rol en MWT.ONE:** {rol_nombre} ({rol})",
         f"- **Servidor MCP:** {mcp_url or '(por confirmar en la activación)'}",
         "",
-        "## Qué hacer con este paquete (pásalo a tu IA)",
+        "> ⚠️ **PRIMERO LEE ESTO · DÓNDE INSTALARLO (device-binding)**",
+        ">",
+        f"> Este token se **vincula al primer equipo/IP** que se conecte (token `{grant['secret_prefix']}…`).",
+        "> **Instalá este paquete en el computador donde usarás la IA SIEMPRE.** Si lo conectás desde OTRA "
+        "máquina (aunque sea para probar), el token queda fijado a esa IP y deja de servir en la tuya → "
+        "tendrás que pedir uno nuevo.",
+        "> Generar un paquete nuevo para tu cuenta **REVOCA** automáticamente este.",
         "",
-        "Este `.md` + el `.json` adjunto son para que **tu asistente de IA** "
-        "(Claude Code, opencode, Gemini CLI, ChatGPT, Cursor, etc.) configure su "
-        "acceso. Dale ambos archivos y pídele que haga estos 3 pasos:",
+        "## Qué es esto y qué hace tu IA",
+        "",
+        "Tu **IA** es el programa donde conversás (Claude Code, Claude Desktop, opencode, Gemini CLI, "
+        "Cursor, ChatGPT, etc.). Cada programa guarda su propia configuración de servidores MCP. Este "
+        "paquete (`.md` + `.json`) le dice a tu IA cómo conectarse al portal MWT.ONE de **{razon}** y con "
+        f"**qué rol** ({rol_nombre}) opera.",
+        "",
+        "Dale ambos archivos a tu IA y pídele que haga estos **3 pasos**:",
         "",
         "### 1 · Conectar el servidor MCP",
         "",
-        "Registrar el servidor MCP remoto usando el contenido del `.json` "
+        "Registrar el servidor MCP **remoto** usando el contenido del `.json` "
         "(o agregar un servidor con la `url` y el header "
         "`Authorization: DeviceToken <token>` que ahí aparecen).",
-        "Tras conectarlo debería **listar las tools del portal MWT.ONE** "
-        f"correspondientes a tu rol **{rol_nombre} ({rol})**.",
+        "",
+        "Según tu programa, el bloque del `.json` se pega en lugares distintos:",
+        "- **Claude Desktop:** `claude_desktop_config.json` (AppData/Roaming/Claude).",
+        "- **Claude Code / opencode:** archivo `.mcp.json` / `mcpServers` del proyecto.",
+        "- **Gemini CLI / Antigravity:** `mcp_config.json` del usuario.",
+        "- **Cursor:** configuración de MCP del proyecto o global.",
+        "",
+        "Tras conectarlo, tu IA debería **listar las tools del portal MWT.ONE** correspondientes a tu "
+        f"rol **{rol_nombre} ({rol})**. Si una tool no aparece, NO es un error: tu rol no tiene ese "
+        "permiso (la matriz de permisos se respeta tal cual).",
         "",
         f"### 2 · Instalar las Skills-MCP de tu rol **{rol_nombre} ({rol})**",
         "",
@@ -476,33 +495,35 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "Extrae el ZIP en la carpeta de skills de tu agente:",
         "- Claude Code: `~/.claude/skills/` (o `.claude/skills/` en el proyecto).",
         "- opencode: `.opencode/skills/` (o la carpeta que uses para skills).",
-        "- Otros agentes compatibles con SKILL.md: su carpeta de skills.",
+        "- Gemini CLI / Antigravity: su carpeta de skills compatible con SKILL.md.",
         "",
         "Quedará el árbol `{rol}/<módulo>/<permiso>/SKILL.md`. Cada SKILL.md es una "
-        "guía de operación para UNA tool/acción de tu rol: qué tool usar, su firma, "
-        "los flujos correctos y los anti-patrones. Son skills 'avanzadas' para que "
-        "la IA opere con criterio, no a ciegas.",
+        "guía de operación para UNA acción de tu rol: qué tool usar, su firma, "
+        "los flujos correctos y los anti-patrones. Son guías para que la IA opere "
+        "con criterio, no a ciegas.",
         "",
         "### 3 · Verificar",
         "",
         "Pídele a tu IA que ejecute `mwt_whoami` para confirmar que conecta con el "
-        f"rol **{rol}** y que ya ve las tools de su matriz de permisos.",
+        f"rol **{rol}** y que ya ve las tools de su matriz de permisos. "
+        "**Hacé este paso en la máquina definitiva**, no antes.",
         "",
-        "> IMPORTANTE · UN SOLO USO POR EQUIPO",
-        ">",
-        f"> Esta credencial se vincula al primer equipo/IP desde el que se conecte (token `{grant['secret_prefix']}…`).",
-        "> Si intentas usarla desde OTRO computador, el servidor la rechaza "
-        "y debes generar una nueva.",
-        "> Generar un paquete nuevo para tu cuenta REVOCA automáticamente "
-        "este (deja de funcionar en el equipo anterior).",
+        "## Preguntas frecuentes",
+        "",
+        "- **¿Lo instalo aquí o en otro equipo?** En el equipo donde usarás la IA habitualmente. "
+        "La primera conexión fija el token a esa IP.",
+        "- **¿Qué pasa si lo abro/instalo en dos IAs?** Las dos deben correr en el MISMO equipo/IP; "
+        "si una conecta desde otra IP, la primera queda huérfana.",
+        "- **¿Puedo probarlo antes?** Mejor validá el paquete SIN conectar (revisá que el `.json` esté "
+        "bien formado y que `usuario.rol` sea el esperado). Conectar = vincular.",
+        "- **¿Lo rompí / se vinculó a otro equipo?** Pedí uno nuevo a **mcp@mwt.one** desde tu correo "
+        "registrado; re-emitir revoca el anterior.",
         "",
         "## Si algo falla",
         "",
-        "- El paquete expira el " + (grant.get("expira_iso") or "…") +
-        " si no se usa.",
-        "- Si la IA no ve una tool, puede ser que tu rol no tenga ese permiso "
-        "(matriz de /roles). Para regenerar credenciales, escribe a **mcp@mwt.one** "
-        "desde tu correo registrado indicando tu email y empresa.",
+        "- El paquete expira el " + (grant.get("expira_iso") or "…") + " si no se usa.",
+        "- El servidor de correo y el MCP son de MWT.ONE; para regenerar credenciales escribe a "
+        "**mcp@mwt.one** desde tu correo registrado indicando tu email y empresa.",
         "- No compartas este archivo: es tu llave de acceso.",
         "",
         "— MWT.ONE",
