@@ -37,3 +37,6 @@ pillow==10.4.0
 reportlab==4.2.2
 # Motor de Precios COMEX — parseo Excel (Tabela de preços v6+)
 openpyxl==3.1.5
+
+# Validacion de tokens Microsoft Entra ID (M365 Copilot MCP) - RS256 via JWKS
+cryptography>=42.0
