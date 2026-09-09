@@ -1,0 +1,119 @@
+---
+name: mwt-admin-expedientes-ver-documento
+description: Rol Admin (CEO) · módulo Expedientes (expedientes) · permiso ver-documento (ver/listar documentos). Herramientas MCP: documento_listar. Lee el contrato en _contratos/expedientes.md antes de actuar.
+role: admin
+module: expedientes
+action: view_doc
+---
+
+# mwt-admin-expedientes-ver-documento
+
+> Skill MCP enfocado: **Admin (CEO)** · **Expedientes** · permiso **ver-documento** (ver/listar documentos).
+
+## Propósito
+Operar el módulo **Expedientes** (`expedientes`) con la acción **ver-documento** (ver/listar documentos) usando SOLO
+las tools MCP que el rol **Admin (CEO)** tiene permitidas por RBAC.
+
+## Antes de empezar
+- `mwt_whoami` → confirma token/identidad y rol.
+- `mwt_health` → si sospechás lentitud o token expirado.
+- `mwt_diag_scope(email)` (CEO-only) → por qué un rol no ve una tool.
+
+## Contexto del rol
+- Rol: **Admin (CEO)** → Acceso operativo y comercial total. Ve costos y márgenes (finanzas).
+
+## Herramientas MCP para esta acción
+  - `documento_listar` — Revisa `storage_url` y `file_size_bytes`: si `storage_url=null` o `file_size_bytes=0`
+
+## Firmas (cómo invocar)
+  - `documento_listar` → `def documento_listar( expediente: str | None = None, oc: str | None = None, kind: str | None = None, limit: int | None = None, offset: int | None = None, campos: str | None = None, ) -> Any:`
+
+
+## Flujos del módulo
+
+### Crear expediente desde OC (anti-duplicado)
+```
+     expediente_buscar(oc_number|proforma|sap)  ← SIEMPRE primero
+     existe=true → expediente_obtener(match) y EDITAR (no crear)
+     existe=false → expediente_resolve_oc_preview(client_id, lines)
+     expediente_crear(client_id, ocr_payload={lines}, file_path='OC.pdf', operating_company_id, brand_id, forma_pago, credit_days_*, po_number)
+     expediente_apply_pronto_pago(id, plazo_days) [si aplica]
+     expediente_lineas(id) + lineas_actualizar_precios({linea_id, unit_price_mwt, unit_price_client})
+```
+> Anti-patrones:
+     - expediente_crear sin file_path → OC sin binario.
+     - po_number='SIN-PO' se ignora (omitir).
+     - Duplicar expediente sin pasar por expediente_buscar.
+     - dispatch_mode solo FCL/LCL/CONSOLIDADO.
+
+### Documentos, SAP y proformas
+```
+     documento_subir(expediente_id, file_path, kind:'PROFORMA'|'OC'|'SAP', codigo)
+     documento_listar(expediente_id) → documento_descargar(id) [URL firmada]
+     sap_analizar(expediente_id, file_path) → sap_obtener → sap_confirmar (o match_subir → match_resolver)
+     proforma_generar(expediente_id, audience='CLIENT') [DESPUÉS de cargar líneas]
+     proforma_html(expediente_id, codigo) [previsualizar sin persistir]
+```
+> Anti-patrones:
+     - sap_confirmar por sku+size sin linea_id → 400 (no transiciona en vacío).
+     - sap_confirmar sin fecha_fabricacion real → rechazado.
+     - Proforma antes de cargar líneas y precios → sale en 0 pares / $0.
+     - Subir OC nuevo cuando ya hay un registro OC con oc_id → se anexa al existente.
+
+### Fusionar y avanzar estados
+```
+     expediente_fusionar(expediente_ids=[...], label='SAP X + Y')
+     expediente_avanzar_estado(expediente_id, action) [transición válida]
+     expediente_phase_durations_set(id, phase_durations={...})
+     expediente_eventos(id) [historial]
+```
+> Anti-patrones:
+     - Saltarse transiciones ilegales → 409.
+     - expediente_avanzar_estado con UUID abreviado → 404 (resuelve el id completo).
+
+
+## Reglas transversales
+- Anti-duplicados: `expediente_buscar` antes de `expediente_crear`.
+- NUNCA inventes SKUs/tallas: vienen de producto_listar/tallas_listar.
+- `campos` en tools de detalle/listado ahorra contexto.
+- Leer con `_obtener`/`_listar`; escribir con `_crear`/`_editar`/`_avanzar`.
+
+## Anti-patrones y notas del módulo
+- Es el módulo con más tools MCP (expediente_*, oc_*, proforma_*, sap_*, match_*, documento_*).
+- documento_subir/descargar/ver/listar se rigen por upload_doc/download_doc/view_doc.
+- sap_confirmar por sku+size sin linea_id devuelve 400 (defecto 2 corregido).
+- dispatch_mode solo FCL/LCL/CONSOLIDADO (defecto 1 corregido).
+- El tracking/packing list/AWB/BL son ARTEFACTOS del Builder (no `documentos`): solo visibles al cliente si publicado=True (artefacto_publicar).
+
+## Errores comunes (cómo leerlos)
+- 400 → payload inválido (campos/tipos en `detail`).
+- 403 → rol sin permiso para esa tool/acción (matriz /roles).
+- 404 → UUID mal o recurso fuera de scope.
+- 409 → transición ilegal o duplicado.
+- 429 → rate limit; esperá y reintentá.
+- 500 → error interno; revisá logs de django.
+
+## Visibilidad de documentos y artefactos (según rol)
+- Dos capas distintas: **documentos** (`documento_*`: OC, PROFORMA, FACTURA, SAP) y **artefactos del Builder** (tracking/AWB, BL, Packing List, Factura Comercial, Certificado de Origen).
+- `documento_listar` (ver-documento) SOLO trae DOCUMENTOS; NO incluye artefactos.
+- El tracking/packing list/AWB/BL se consulta con `expediente_documentos_completos` (permiso **leer**), `nodo_artefactos_listar` o `inventario_artefactos_expediente`.
+- Restricción de visibilidad: solo el rol `client_b2b` se filtra → ve documentos `audience=CLIENT` (kind OC/PROFORMA/FACTURA) y artefactos SOLO con `publicado=True`. Admin/CEO y roles internos (operator/manager/viewer/finance/compras) ven TODOS los artefactos.
+- Para exponer un artefacto al cliente: `artefacto_publicar(nodo_id, artifact_id, publicado=True)` (nodos.update).
+
+## Restricciones (RBAC)
+- Usa SOLO las tools listadas; cualquier otra tool de otro módulo/acción devuelve 403.
+- El alcance de este skill es **ver-documento** sobre **Expedientes**; para otra operación activá el SKILL.md correspondiente.
+- Contrato completo: `_contratos/expedientes.md`.
+
+## Frontend / Backend (referencia)
+- Frontend:
+  - `frontend/src/pages/Expedientes.jsx`
+  - `frontend/src/pages/ExpedienteDetail.jsx`
+  - `frontend/src/pages/OCDetail.jsx`
+  - `frontend/src/pages/FusionDetail.jsx`
+  - `frontend/src/pages/CreateExpedienteWizardLite.jsx`
+- Backend:
+  - `backend/apps/expedientes/`
+
+## Entrega
+Cuando completes la operación, resume: qué recurso quedó ver/listar documentos (con su id/código), qué tools usaste, y el estado final. Corroborá con las tools de lectura del mismo módulo.

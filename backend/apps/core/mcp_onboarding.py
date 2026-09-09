@@ -383,6 +383,18 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
     email = target["email"]
     full_name = target.get("full_name") or ""
 
+    # Rol del usuario (role_default). El paquete entrega las Skills-MCP de ese rol.
+    from .skills_views import ROLE_LABELS as _SKILL_ROLE_LABELS
+    from .skills_views import SKILL_ROLES as _SKILL_ROLES
+    rol = (target.get("role_slug") or target.get("role") or "client_b2b").lower()
+    if rol not in _SKILL_ROLES:
+        rol = "client_b2b"
+    rol_nombre = _SKILL_ROLE_LABELS.get(rol, rol)
+    # Base pública de descarga de skills (sobrescribible por entorno).
+    skills_base = (os.environ.get("MWT_SKILLS_BASE") or "").strip() \
+        or "https://consola.mwt.one/api/skills-mcp"
+    skills_url = f"{skills_base}/{rol}/download"
+
     json_payload = {
         "tipo": "credencial-mcp-mwt",
         "version": 1,
@@ -390,6 +402,8 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
             "email": email,
             "nombre": full_name,
             "empresa": razon,
+            "rol": rol,
+            "rol_nombre": rol_nombre,
         },
         "credencial": {
             "esquema": "DeviceToken",
@@ -413,6 +427,22 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
                 "headers": {"Authorization": f"DeviceToken {secret}"},
             }
         },
+        # Skills-MCP del rol: la IA del destinatario debe descargar este ZIP
+        # e instalarlo para operar con guías (flujos + anti-patrones) del rol.
+        "skills": {
+            "rol": rol,
+            "rol_nombre": rol_nombre,
+            "carpeta": f"Skills-MCP/{rol}",
+            "descargar": skills_url,
+            "instalar": (
+                "Descarga el ZIP de la URL 'descargar', extráelo en la carpeta "
+                "de skills de tu agente (p. ej. ~/.claude/skills/ o .opencode/skills/ "
+                "del proyecto) y quedará el árbol <modulo>/<permiso>/SKILL.md. "
+                "Cada SKILL.md se detecta por su frontmatter name=... y describe "
+                "las tools MCP permitidas para ese rol/módulo/permiso, sus flujos "
+                "y anti-patrones."
+            ),
+        },
     }
 
     md_lines = [
@@ -420,17 +450,43 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "",
         f"- **Usuario:** {full_name} <{email}>",
         f"- **Empresa:** {razon}",
+        f"- **Tu rol en MWT.ONE:** {rol_nombre} ({rol})",
         f"- **Servidor MCP:** {mcp_url or '(por confirmar en la activación)'}",
         "",
-        "## Cómo conectar tu IA",
+        "## Qué hacer con este paquete (pásalo a tu IA)",
         "",
-        "1. Abre la configuración de tu cliente MCP (Claude, opencode, "
-        "Antigravity, Cursor, etc.).",
-        "2. Pega el contenido del archivo `.json` adjunto como servidor MCP "
-        "remoto (o agrega un servidor con la `url` y el header "
+        "Este `.md` + el `.json` adjunto son para que **tu asistente de IA** "
+        "(Claude Code, opencode, Gemini CLI, ChatGPT, Cursor, etc.) configure su "
+        "acceso. Dale ambos archivos y pídele que haga estos 3 pasos:",
+        "",
+        "### 1 · Conectar el servidor MCP",
+        "",
+        "Registrar el servidor MCP remoto usando el contenido del `.json` "
+        "(o agregar un servidor con la `url` y el header "
         "`Authorization: DeviceToken <token>` que ahí aparecen).",
-        "3. Tu IA debería listar las herramientas del portal MWT.ONE de tu "
-        "empresa y operar con tu rol.",
+        "Tras conectarlo debería **listar las tools del portal MWT.ONE** "
+        f"correspondientes a tu rol **{rol_nombre} ({rol})**.",
+        "",
+        f"### 2 · Instalar las Skills-MCP de tu rol **{rol_nombre} ({rol})**",
+        "",
+        "Descarga el ZIP de skills de tu rol desde esta URL pública:",
+        "",
+        f"    {skills_url}",
+        "",
+        "Extrae el ZIP en la carpeta de skills de tu agente:",
+        "- Claude Code: `~/.claude/skills/` (o `.claude/skills/` en el proyecto).",
+        "- opencode: `.opencode/skills/` (o la carpeta que uses para skills).",
+        "- Otros agentes compatibles con SKILL.md: su carpeta de skills.",
+        "",
+        "Quedará el árbol `{rol}/<módulo>/<permiso>/SKILL.md`. Cada SKILL.md es una "
+        "guía de operación para UNA tool/acción de tu rol: qué tool usar, su firma, "
+        "los flujos correctos y los anti-patrones. Son skills 'avanzadas' para que "
+        "la IA opere con criterio, no a ciegas.",
+        "",
+        "### 3 · Verificar",
+        "",
+        "Pídele a tu IA que ejecute `mwt_whoami` para confirmar que conecta con el "
+        f"rol **{rol}** y que ya ve las tools de su matriz de permisos.",
         "",
         "> IMPORTANTE · UN SOLO USO POR EQUIPO",
         ">",
@@ -444,8 +500,9 @@ def build_package(client: dict, target: dict, grant: dict) -> dict:
         "",
         "- El paquete expira el " + (grant.get("expira_iso") or "…") +
         " si no se usa.",
-        "- Para regenerar credenciales, escribe a **mcp@mwt.one** desde tu "
-        "correo registrado indicando tu email y empresa.",
+        "- Si la IA no ve una tool, puede ser que tu rol no tenga ese permiso "
+        "(matriz de /roles). Para regenerar credenciales, escribe a **mcp@mwt.one** "
+        "desde tu correo registrado indicando tu email y empresa.",
         "- No compartas este archivo: es tu llave de acceso.",
         "",
         "— MWT.ONE",
