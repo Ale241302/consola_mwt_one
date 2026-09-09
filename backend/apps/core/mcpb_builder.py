@@ -31,13 +31,17 @@ def build_mcpb(*, slug: str, razon: str, mcp_url: str, token: str,
     role_label = role_label or ROLE_LABELS.get(rol, rol)
     server_name = slug
     manifest = {
-        "name": slug,
-        "displayName": f"MWT ONE · {razon}",
+        "id": f"mwt-one-{slug}",
+        "name": f"mwt-one-{slug}",
+        "display_name": f"MWT ONE · {razon}",
         "version": "1.0.0",
         "description": f"Acceso MCP de MWT.ONE para {razon} (rol {role_label}).",
-        "author": "MWT.ONE",
-        "homepage": "https://consola.mwt.one",
+        "author": {"name": "MWT.ONE", "url": "https://consola.mwt.one"},
+        "homepage_url": "https://consola.mwt.one",
+        "publisher": "MWT.ONE",
+        "kind": "mcp",
         "type": "mcp",
+        "capabilities": {"mcp_servers": True},
         "mcpServers": {
             server_name: {
                 "type": "http",
@@ -49,7 +53,8 @@ def build_mcpb(*, slug: str, razon: str, mcp_url: str, token: str,
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("extension.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        # Claude Desktop (DXT) requiere manifest.json en la raíz del bundle.
+        zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         zf.writestr(
             "INSTRUCCIONES.md",
             "# Instalación MWT.ONE · " + razon + "\n\n"
