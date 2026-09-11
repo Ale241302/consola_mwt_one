@@ -828,15 +828,18 @@ export default function ScreenExpedientes() {
                     <td>
                       <span style={{ fontWeight: 500 }}>{members[0].client || '—'}</span>
                     </td>
-                    {/* Columna OPERADOR (fusión): solo si todos los miembros
-                        comparten el mismo operador; si difieren, "—".
+                    {/* Columna OPERADOR (fusión): si todos comparten operador,
+                        se muestra; si difieren, se listan separados por " / "
+                        (ej. "Muito Work Limitada / Sondel S.A.").
                         Solo staff (rev2). */}
                     {!isClient && (
                       <td>
                         <span style={{ fontWeight: 400 }}>
                           {(() => {
-                            const ops = Array.from(new Set(members.map(m => m.operator || '')));
-                            return ops.length === 1 && ops[0] ? ops[0] : '—';
+                            const ops = Array.from(new Set(members.map(m => m.operator || ''))).filter(Boolean);
+                            if (ops.length === 0) return '—';
+                            if (ops.length === 1) return ops[0];
+                            return ops.join(' / ');
                           })()}
                         </span>
                       </td>
