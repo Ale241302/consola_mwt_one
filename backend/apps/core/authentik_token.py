@@ -104,6 +104,15 @@ def validate_authentik_token(token: str) -> dict:
     if not token:
         raise AuthentikTokenError("TOKEN_REQUERIDO", "Falta el token.")
 
+    try:  # diagnóstico temporal
+        _hdr = jwt.get_unverified_header(token)
+        _claims = jwt.decode(token, options={"verify_signature": False})
+        log.warning("authentik: token header=%s claims(iss=%s aud=%s tid=%s)",
+                    {k: _hdr.get(k) for k in ("alg", "typ", "kid")},
+                    _claims.get("iss"), _claims.get("aud"), _claims.get("tid"))
+    except Exception:  # noqa: BLE001
+        pass
+
     try:
         signing_key = _signing_key_for_token(token)
     except AuthentikTokenError:
