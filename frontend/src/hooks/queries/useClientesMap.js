@@ -19,7 +19,10 @@ export function useClientesMap(ids) {
     queryFn: async ({ signal }) => {
       let raw;
       try {
-        raw = await clientesApi.list(undefined, { signal });
+        // is_parent:"all" → incluye subsidiarias (por defecto el listado solo
+        // trae clientes padre y las subsidiarias quedaban sin resolver en el
+        // mapa → columnas Cliente/Operador en "—").
+        raw = await clientesApi.list({ is_parent: "all" }, { signal });
       } catch {
         return {};
       }

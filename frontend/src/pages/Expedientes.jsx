@@ -863,11 +863,6 @@ export default function ScreenExpedientes() {
                           <span className="tabular">{maxCredit}d</span>
                         </div>
                       </td>
-                      <td>
-                        <span className="caption tabular">
-                          {fmtMoney(totalPaid)} / {fmtMoney(totalInv)}
-                        </span>
-                      </td>
                     </>}
                     {effectiveView === 'fleet' && <>
                       {!isClient && <td><span className="caption">—</span></td>}
@@ -882,7 +877,6 @@ export default function ScreenExpedientes() {
                       )}
                       {!isClient && <td className="td-money">{fmtMoney(totalInv)}</td>}
                     </>}
-                    {isAdmin && <td><span className="caption">—</span></td>}
                     <td onClick={(ev) => {
                           ev.stopPropagation();
                           navigate(`/expedientes/fusion/${e.fid}`);
@@ -1031,9 +1025,6 @@ export default function ScreenExpedientes() {
                           <span className="tabular">{e.credit_days}d</span>
                         </div>
                       </td>
-                      <td>
-                        <PayBar e={e}/>
-                      </td>
                     </>}
 
                     {effectiveView === 'fleet' && <>
@@ -1070,11 +1061,6 @@ export default function ScreenExpedientes() {
                       )}
                     </>}
 
-                    {isAdmin && (
-                      <td>
-                        <AlertStack e={e} lang={lang}/>
-                      </td>
-                    )}
                     <td onClick={(ev)=>{
                          ev.stopPropagation();
                          // Va a la vista intermedia de la OC (PO-xxxx-xxxxx).
@@ -1509,7 +1495,6 @@ export default function ScreenExpedientes() {
                 <th style={{textAlign:'right'}}>{lang==='es'?'Facturado Cliente':'Client Invoiced'}</th>
                 {!isClient && <th style={{textAlign:'right'}}>{lang==='es'?'Facturado MWT':'MWT Invoiced'}</th>}
                 <th style={{textAlign:'right'}}>{tr(lang,'credit_days')}</th>
-                <th style={{width: 140}}>{tr(lang,'payments_breakdown')}</th>
               </>}
               {effectiveView === 'fleet' && <>
                 {/* "Origen → Destino" y "Modo" son información operativa
@@ -1527,9 +1512,6 @@ export default function ScreenExpedientes() {
                   <th style={{textAlign:'right'}}>{tr(lang,'invoiced')}</th>
                 )}
               </>}
-              {/* Columna de alertas internas (bloqueos, docs faltantes,
-                  retrasos de fábrica, señales de crédito): CEO-ONLY. */}
-              {isAdmin && <th style={{width:110}}>{tr(lang,'alerts_blocks')}</th>}
               <th style={{width:36}}></th>
               {isAdmin && <th style={{width:36}}></th>}
             </tr>
