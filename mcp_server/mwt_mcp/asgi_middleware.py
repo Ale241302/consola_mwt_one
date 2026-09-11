@@ -119,7 +119,7 @@ class IdentityPropagationMiddleware:
             # conector / M365 Copilot) sepa a qué authorization server ir.
             # Solo aplica cuando está activo; no toca el flujo DeviceToken.
             if (settings.mcp_oauth and not device_secret and not entra_token
-                    and not authz.startswith(("devicetoken ", "bearer "))):
+                    and not authz.lower().startswith(("devicetoken ", "bearer "))):
                 metadata = f"{settings.oauth_base}/.well-known/oauth-authorization-server"
                 body = (
                     '{"error": true, "code": "OAUTH_REQUIRED", '
