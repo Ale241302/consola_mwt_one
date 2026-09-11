@@ -869,7 +869,15 @@ class McpTokenView(APIView):
             target = decision["target"]
             email = target["email"]
             uid = target["user_uuid"]
-            req_client = str((request.data or {}).get("cliente_id") or "").strip()
+            # El MCP envía el tenant como `client_id` (Ola 2 · app por cliente);
+            # aceptamos también `cliente_id` (legacy/M365). Sin tenant resuelto
+            # (server global/admin) el JWT lleva TODO el scope del usuario: no
+            # se fuerza a elegir una empresa.
+            req_client = str(
+                (request.data or {}).get("client_id")
+                or (request.data or {}).get("cliente_id")
+                or ""
+            ).strip()
             clients = decision["clients"]
             if req_client:
                 match = [c for c in clients
@@ -881,10 +889,8 @@ class McpTokenView(APIView):
                 grant_restrict = req_client
             elif len(clients) == 1:
                 grant_restrict = str(clients[0].get("cliente_id"))
-            else:
-                return Response({"detail": "El usuario tiene varias empresas; envía cliente_id.",
-                                 "code": "ELEGIR_EMPRESA"},
-                                status=status.HTTP_400_BAD_REQUEST)
+            # else: usuario multi-empresa en el server global/admin → grant_restrict
+            # queda None y el JWT incluye todas sus empresas (scope completo).
         else:
             email = self._target_email(request)
             uid = self._target_id(request)
