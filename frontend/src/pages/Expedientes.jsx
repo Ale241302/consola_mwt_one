@@ -358,6 +358,12 @@ export default function ScreenExpedientes() {
   // Sprint 2026-05-20 · Toggle nuevo: Tabla vs Kanban.
   // El antiguo selector Financial/Ops/Fleet se ocultó por simplificación de UX.
   const [viewMode, setViewMode] = useState('table');       // 'table' | 'kanban'
+  // Sprint 2026-09-11 · paginador de la tabla (20 filas/página). Antes se
+  // pintaban TODAS las filas de golpe; con miles de expedientes eso congela
+  // la vista. Los KPIs siguen calculandose sobre el dataset completo.
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [q, statusFilter, brandFilter, clientFilter, signalFilter, alertFilter]);
   // En CLIENT forzamos la vista "fleet" (origen→destino, modo, ETA, total
   // facturado como "precio") y escondemos el selector. Esa vista es la más
   // limpia y útil para el cliente, sin columnas internas de margen.
@@ -657,6 +663,19 @@ export default function ScreenExpedientes() {
     }
     return out;
   }, [filtered, fusionGroups, fusionOpen]);
+
+  // Sprint 2026-09-11 · ventana de paginación sobre displayRows (incluye
+  // cabeceras de fusión). 20 por página, con clamp si los filtros reducen
+  // el total por debajo de la página actual.
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(displayRows.length / PAGE_SIZE)),
+    [displayRows.length]
+  );
+  const safePage = Math.min(page, totalPages);
+  const pagedRows = useMemo(
+    () => displayRows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
+    [displayRows, safePage]
+  );
 
   // Ola 3 · 3.27 · Virtualización delegada a ui/VirtualTable (threshold 60 +
   // desactivación en print + fallback a tabla normal). El cuerpo virtual lo
@@ -1520,7 +1539,7 @@ export default function ScreenExpedientes() {
             </tr>
           </thead>
           }
-          rows={displayRows}
+          rows={pagedRows}
           rowKey={(e) => (e.__fusionHeader ? `fusion-${e.fid}` : e.id)}
           renderRow={renderMasterRow}
           loadingSkeleton={loading && displayRows.length === 0 ? <TableSkeletonRows rows={8} /> : null}
@@ -1529,6 +1548,42 @@ export default function ScreenExpedientes() {
           estimateRowHeight={46}
         />
       </div>
+
+      {/* Sprint 2026-09-11 · paginador (20/página). Se oculta si no hace
+          falta (una sola página). El rango y el total son del dataset
+          filtrado, no de la ventana. */}
+      {displayRows.length > PAGE_SIZE && (
+        <div
+          className="flex ai-center gap-3"
+          style={{ justifyContent: 'flex-end', marginTop: 12 }}
+        >
+          <span className="caption tabular">
+            {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, displayRows.length)}
+            {' / '}{displayRows.length}
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={safePage <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            style={{ opacity: safePage <= 1 ? 0.5 : 1, cursor: safePage <= 1 ? 'not-allowed' : 'pointer' }}
+          >
+            ‹ {lang === 'es' ? 'Anterior' : 'Prev'}
+          </button>
+          <span className="caption tabular" style={{ minWidth: 64, textAlign: 'center' }}>
+            {safePage} / {totalPages}
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={safePage >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            style={{ opacity: safePage >= totalPages ? 0.5 : 1, cursor: safePage >= totalPages ? 'not-allowed' : 'pointer' }}
+          >
+            {lang === 'es' ? 'Siguiente' : 'Next'} ›
+          </button>
+        </div>
+      )}
 
 
       {!loading && loadError && filtered.length === 0 && (

@@ -121,7 +121,11 @@ def _fetch_user(usuario: str):
             user["role_uuid"] = role["id"]
             user["role_slug"] = role["slug"]
             user["role_name"] = role["name"]
-            user["permissions"] = role["permissions"] or {}
+            # Normalizar: core.roles.permissions puede ser JSONB (dict) o TEXT
+            # (JSON-string). El frontend espera un objeto {modules, actions};
+            # antes, si venía TEXT, llegaba como string y el sidebar no veía
+            # módulos para roles no-admin.
+            user["permissions"] = _normalize_permissions(role["permissions"])
         else:
             # Fallback: no hay fila en core.user_roles → usamos el string u.role
             # y leemos SU matriz desde core.roles.permissions (la fuente que

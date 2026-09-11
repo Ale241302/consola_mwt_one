@@ -145,14 +145,23 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
   // Sprint 2026-05-01: contador real de expedientes (antes era 32 hardcoded).
   // Se refresca cuando cambia la ruta para reflejar altas/bajas. Para CLIENT
   // el backend ya filtra por ClientScopedManager; para ADMIN devuelve todos.
+  //
+  // Sprint 2026-09-11 · performance: antes pedía el LISTADO COMPLETO
+  // (serializando todas las filas + refs) solo para leer .length. Ahora pide
+  // ?limit=1 y usa el `count` del backend (1 sola fila serializada + COUNT).
   const [expedientesCount, setExpedientesCount] = useState(null);
   useEffect(() => {
     let cancel = false;
-    expedientesApi.list()
+    expedientesApi.list({ limit: 1 })
       .then((d) => {
         if (cancel) return;
-        const arr = Array.isArray(d) ? d : (d?.results || []);
-        setExpedientesCount(arr.length);
+        if (Array.isArray(d)) {
+          setExpedientesCount(d.length);
+        } else if (typeof d?.count === "number") {
+          setExpedientesCount(d.count);
+        } else {
+          setExpedientesCount((d?.results || []).length);
+        }
       })
       .catch(() => { if (!cancel) setExpedientesCount(null); });
     return () => { cancel = true; };

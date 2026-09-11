@@ -490,11 +490,46 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # Sprint 2026-06-11 · Auditoría Fable5 (N+1): precomputar las
         # referencias (proformas/OCs/SAPs) en 3-4 queries TOTALES en vez
         # de 4-5 por fila dentro del serializer.
+        #
+        # Sprint 2026-09-11 · paginación opcional (backward-compatible):
+        #   ?limit=20&offset=0  → {count, limit, offset, results}
+        #   sin `limit`         → array completo (contrato actual intacto
+        #                         para Sidebar/Pipeline/MCP que agregan).
+        # Así el listado escala a miles sin traer todo cuando el caller
+        # pide una página.
         from .serializers import build_expediente_ref_batches, _viewer_is_client
-        rows = list(qs)
+        raw_limit  = request.query_params.get("limit")
+        raw_offset = request.query_params.get("offset")
+        limit_i  = None
+        offset_i = 0
+        try:
+            if raw_limit not in (None, ""):
+                limit_i = int(raw_limit)
+                if limit_i <= 0:
+                    limit_i = None
+            if raw_offset not in (None, ""):
+                offset_i = max(0, int(raw_offset))
+        except (TypeError, ValueError):
+            limit_i, offset_i = None, 0
+
+        if limit_i is not None:
+            count = qs.count()
+            rows = list(qs[offset_i:offset_i + limit_i])
+        else:
+            count = None
+            rows = list(qs)
+
         ctx = {"request": request}
         ctx.update(build_expediente_ref_batches(rows, is_client=_viewer_is_client(request.user)))
-        return Response(ExpedienteListSerializer(rows, many=True, context=ctx).data)
+        data = ExpedienteListSerializer(rows, many=True, context=ctx).data
+        if limit_i is not None:
+            return Response({
+                "count":   count,
+                "limit":   limit_i,
+                "offset":  offset_i,
+                "results": data,
+            })
+        return Response(data)
 
     def retrieve(self, request, pk=None):
         # Lookup tolerante: el `pk` puede venir como UUID (canónico) o

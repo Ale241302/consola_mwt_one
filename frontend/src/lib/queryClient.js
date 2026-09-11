@@ -7,7 +7,10 @@ import { ApiError } from "./api.js";
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,           // 30s: listados no re-fetch en cada navegación
+      // Sprint 2026-09-11 · 60s (antes 30s): los listados no se re-piden al
+      // navegar entre Dashboard/Expedientes/Otras. Las mutaciones invalidan
+      // (`queryKeys.*.all`) y fuerzan refetch activo aunque el dato esté fresh.
+      staleTime: 60_000,
       gcTime: 5 * 60_000,
       refetchOnWindowFocus: false, // consistente con el comportamiento actual
       retry: (count, err) => {
