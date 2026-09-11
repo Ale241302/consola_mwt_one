@@ -1,0 +1,157 @@
+{
+  "repository": "Ale241302/consola_mwt_one",
+  "commit": "de1837c5f00a043dfc1ee0ba9bddf3783fcfeb6f",
+  "method": "static-code-review",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "ead26c4d0051211db53a8847ddfa2cde743a0a1d98aef2ac3f67694b87154a6b",
+      "bytes": 9442
+    },
+    {
+      "path": "backend/apps/core/scoped_querysets.py",
+      "sha256": "c413fafa59af921431357e39a5120efcdad2208164dbe6b268b5a16d8e185b2b",
+      "bytes": 7708
+    },
+    {
+      "path": "backend/apps/expedientes/models.py",
+      "sha256": "d5cc11792a5ba2afac893504ee902d658971378c20470d6e63144a6b3620e8ba",
+      "bytes": 22265
+    },
+    {
+      "path": "backend/apps/expedientes/serializers.py",
+      "sha256": "55edf585376b04e369529abd8151ace930782ee3c9f7264936ce06ea2a5b0726",
+      "bytes": 43024
+    },
+    {
+      "path": "backend/apps/expedientes/tasks.py",
+      "sha256": "4530223d5ecd3a95f95742b042b2cf3085c9d9ce0cb0f362a23e8182fdd04c22",
+      "bytes": 9930
+    },
+    {
+      "path": "backend/apps/expedientes/urls.py",
+      "sha256": "df84f45a5a659c2ba477ee2a1756ca69c3ef9a9afd410d43996d24a05d66bef3",
+      "bytes": 7303
+    },
+    {
+      "path": "backend/apps/expedientes/validators.py",
+      "sha256": "b56e8807545ff8ef983cd09445bba1cd19ac4556bfd0011a09aa77898322d2c2",
+      "bytes": 10922
+    },
+    {
+      "path": "backend/apps/expedientes/views_matchmaker.py",
+      "sha256": "521b04b96f94ba2f19e746d63cf9b472cb2ef408d1ee89cda211c2e352dde8f0",
+      "bytes": 30696
+    },
+    {
+      "path": "backend/apps/expedientes/views_simplified_wizard.py",
+      "sha256": "4a353c4c8e76244d29e2975d3552481ec3840a7088a27608dd76052337bdd30d",
+      "bytes": 33772
+    },
+    {
+      "path": "backend/apps/expedientes/views_timeline.py",
+      "sha256": "f328786001d82f3af30a86a280c7ab68cb7161fec2b762e59c0a559d2c2db52f",
+      "bytes": 9124
+    },
+    {
+      "path": "backend/apps/expedientes/views_wizard.py",
+      "sha256": "2ab5cc1ab5a1e104ac9e030216760654ceaf84b47d99f724d793ec00334a71d1",
+      "bytes": 77693
+    },
+    {
+      "path": "backend/apps/expedientes/views.py",
+      "sha256": "7d62958b97a246de687d098a21f88a810fb8e553d943d2e7e32f4bb232dc8df6",
+      "bytes": 284453
+    },
+    {
+      "path": "backend/apps/inventario/views.py",
+      "sha256": "9de538f58e4732a563e6075464bdb0aea58700d497859f386d59f7e231d39bdc",
+      "bytes": 96150
+    },
+    {
+      "path": "backend/apps/transfers/models.py",
+      "sha256": "0e39c0f20d2804e217c210c725da7258e6bd8503ba2df66f230402bcb48c099d",
+      "bytes": 17744
+    },
+    {
+      "path": "backend/config/settings.py",
+      "sha256": "4c0340b7ab93b11aba15e83294e73ab8400e1411c2f17ada2fb81be2498d8d12",
+      "bytes": 23796
+    },
+    {
+      "path": "backend/sql/70_expedientes.sql",
+      "sha256": "b020ef834213cd6f83fe2b35601d15da675f0db5a524171bd447be797b4477e4",
+      "bytes": 15577
+    },
+    {
+      "path": "backend/sql/95_expediente_wizard.sql",
+      "sha256": "dfa071b3c012914323badddcb84164942e6ca3ce1e4718c7c742b50ffaa8afba",
+      "bytes": 14166
+    },
+    {
+      "path": "backend/sql/C1_documentos_audience.sql",
+      "sha256": "e4ee548000912b01f49f016356ddcada57b4f86219b2e087e5780edd2ac93175",
+      "bytes": 837
+    },
+    {
+      "path": "backend/sql/E3_expedientes_fusion.sql",
+      "sha256": "cb2dc17f12dbd0f7f3257fd531bcecd1dfc6db585073f03fd1b0ef80c6d78a27",
+      "bytes": 2009
+    },
+    {
+      "path": "backend/tests/test_fusion.py",
+      "sha256": "11b0724b46aa62520b7b625f286029e96949c1c11559e7611405985a3d7c193f",
+      "bytes": 8409
+    },
+    {
+      "path": "backend/tests/test_wizard_client_po.py",
+      "sha256": "cd1bd78401fb918360c709dfec827a2851e2c9aca246344045fd29a07d2417b1",
+      "bytes": 19688
+    },
+    {
+      "path": "frontend/src/App.jsx",
+      "sha256": "d3224ca46541d0ea6cd637cc1bd0dd2ab333bd53cc18669ffd61a6ba090f3d1b",
+      "bytes": 14811
+    },
+    {
+      "path": "frontend/src/lib/api.js",
+      "sha256": "ea1386c77571762d2ea6f3114e13ab41be9461e274fae7edf16525bc80e6dc20",
+      "bytes": 79070
+    },
+    {
+      "path": "frontend/src/lib/phaseDisplay.js",
+      "sha256": "d1af842bbdaf34ee7d526a8a8c759ffccb9ca2d6c48e7c2a4b273673fe78e247",
+      "bytes": 5367
+    },
+    {
+      "path": "frontend/src/pages/CreateExpedienteWizard.jsx",
+      "sha256": "cf0f08cff4f3a1e9c92e7d2573a63b91ca49b8ccb92bd4e956d4baf865df90da",
+      "bytes": 73160
+    },
+    {
+      "path": "frontend/src/pages/CreateExpedienteWizardLite.jsx",
+      "sha256": "c65edc0e45e329ecd009ea2f9120fd32dc7774f73ebf44d4e5851d3a8ef1d7ef",
+      "bytes": 155763
+    },
+    {
+      "path": "frontend/src/pages/ExpedienteDetail.jsx",
+      "sha256": "d9ff3b1f8a99dc3a0cceb51a9742a16e14de2f1cae59445e6fbe43396b14df6f",
+      "bytes": 154420
+    },
+    {
+      "path": "frontend/src/pages/FusionDetail.jsx",
+      "sha256": "f06c778b9147e9d11846253768712270e2099f3bd53ce9ab4a08b7d4a65bcc3a",
+      "bytes": 75356
+    },
+    {
+      "path": "frontend/src/pages/OCDetail.jsx",
+      "sha256": "a96b4a22e4b4a2f01ea6eb8789003de76a1ff311c7b1277c2b0873e350da5d68",
+      "bytes": 134699
+    },
+    {
+      "path": "mcp_server/mwt_mcp/server.py",
+      "sha256": "700b2c8ac46d1c6d40fabd8fd983a311b80e88e1324a1ee1a136ad443ee04868",
+      "bytes": 147581
+    }
+  ]
+}
