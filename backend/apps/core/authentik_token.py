@@ -116,7 +116,7 @@ def validate_authentik_token(token: str) -> dict:
     try:
         verified = jwt.decode(
             token,
-            signing_key.key,
+            signing_key,
             algorithms=["RS256"],
             audience=client_id(),
             options={"verify_exp": True, "verify_iss": True},
