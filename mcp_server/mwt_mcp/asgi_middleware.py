@@ -17,6 +17,8 @@ Ola 2 · MCP por cliente (contenedor compartido):
 """
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any, Awaitable, Callable
 
 from .config import settings
@@ -27,6 +29,18 @@ from .identity import (
     set_tenant,
     Tenant,
 )
+
+
+def _jwt_alg(token: str) -> str | None:
+    """Devuelve el `alg` del header de un JWT (sin verificar firma)."""
+    try:
+        header_b64 = token.split(".")[0]
+        pad = "=" * (-len(header_b64) % 4)
+        data = json.loads(base64.urlsafe_b64decode(header_b64 + pad))
+        return data.get("alg")
+    except Exception:  # noqa: BLE001
+        return None
+
 
 
 class IdentityPropagationMiddleware:
@@ -91,7 +105,14 @@ class IdentityPropagationMiddleware:
             if authz.lower().startswith("devicetoken "):
                 device_secret = authz.split(None, 1)[1].strip() or None
             elif authz.lower().startswith("bearer "):
-                entra_token = authz.split(None, 1)[1].strip() or None
+                candidate = authz.split(None, 1)[1].strip() or None
+                # Solo reenviamos al backend tokens OIDC asimétricos (RS256):
+                # son los únicos validables (Authentik / Entra). El gateway
+                # (ContextForge) también reenvía su propio token de sesión
+                # HS256 (sin iss/aud), que NO es validable → en ese caso nos
+                # quedamos con la identidad propagada X-Forwarded-User-*.
+                if candidate and _jwt_alg(candidate) == "RS256":
+                    entra_token = candidate
             # ── OAuth opt-in (MWT_MCP_OAUTH=1) ─────────────────────────────
             # Una request MCP SIN Authorization (ni DeviceToken ni Bearer)
             # dispara el challenge OAuth para que el cliente (Claude Desktop
