@@ -340,8 +340,7 @@ export default function ScreenOCDetail() {
     client_id:    apiOc.client_id,
     brand_id:     apiOc.brand_id,
     estado:       apiOc.estado,
-    status:       (apiOc.estado || "").toLowerCase() === "emitida"
-                    ? "in_progress" : "in_progress",
+    status:       (apiOc.estado || "").toUpperCase(),
     moneda:       apiOc.moneda || "USD",
     issued_at:    apiOc.issued_at || apiOc.created_at || null,
     total_value:  Number(apiOc.total_value || 0),
@@ -1194,11 +1193,27 @@ export default function ScreenOCDetail() {
 
   const filteredGroups = showOrphansOnly ? sapGroups.filter(g => !g.sap) : sapGroups;
 
-  const statusLabel = oc.status === 'CERRADO' ? tr(lang,'oc_state_closed')
-                    : oc.status === 'EN_EJECUCION' ? tr(lang,'oc_state_active')
-                    : tr(lang,'oc_state_partial');
-  const statusColor = oc.status === 'CERRADO' ? 'var(--text-tertiary)'
-                    : oc.status === 'EN_EJECUCION' ? 'var(--success)'
+  // Estado REAL de la OC (catálogo expedientes.estado_oc_cat). Antes solo
+  // se mapeaban CERRADO/EN_EJECUCION y todo lo demás caía en "Asignación
+  // parcial" (incl. EMITIDA/PENDIENTE), lo que confundía.
+  const ocState = (oc.status || '').toUpperCase();
+  const statusLabel = (() => {
+    const es = lang === 'es';
+    switch (ocState) {
+      case 'CERRADO':            return es ? 'Cerrada' : 'Closed';
+      case 'EN_EJECUCION':       return es ? 'En ejecución' : 'In execution';
+      case 'ASIGNACION_PARCIAL': return es ? 'Asignación parcial' : 'Partial assignment';
+      case 'EMITIDA':            return es ? 'Emitida' : 'Issued';
+      case 'PENDIENTE':          return es ? 'Pendiente' : 'Pending';
+      case 'BORRADOR':           return es ? 'Borrador' : 'Draft';
+      case 'CANCELADA':          return es ? 'Cancelada' : 'Cancelled';
+      default:                   return es ? 'Pendiente' : 'Pending';
+    }
+  })();
+  const statusColor = ocState === 'CERRADO' ? 'var(--text-tertiary)'
+                    : ocState === 'EN_EJECUCION' ? 'var(--success)'
+                    : ocState === 'CANCELADA' ? 'var(--critical, #DC2626)'
+                    : ocState === 'EMITIDA' ? 'var(--brand-primary)'
                     : 'var(--warning)';
 
   // ── Early returns DESPUÉS de todos los hooks (rules-of-hooks)
