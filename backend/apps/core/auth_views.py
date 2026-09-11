@@ -32,6 +32,7 @@ Notas:
 import hashlib
 import json
 import logging
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -282,13 +283,29 @@ class LoginView(APIView):
         # Cada login exitoso alinea la password de Authentik con la de la
         # consola, para que el usuario entre al MCP (Claude) con la misma clave.
         # Fail-safe: una caída de Authentik NUNCA bloquea el login de consola.
+        #
+        # Se ejecuta en un hilo daemon (fire-and-forget): Authentik puede tardar
+        # o estar caído y el login responde igual de rápido. Antes se llamaba en
+        # el hilo del request y con Authentik lento el login esperaba 2 x timeout
+        # (~20s) hasta responder.
+        def _sync_authentik_pw(email_low: str, plain: str) -> None:
+            try:
+                from apps.users.authentik_sync import set_password as _ak_set_password  # noqa: PLC0415
+                _ak_set_password(email_low, plain)
+            except Exception:  # noqa: BLE001
+                log.exception("authentik sync on login failed for %s", email_low)
+
         try:
             _email_low = (user.get("email_plain") or "").strip().lower()
             if _email_low and password:
-                from apps.users.authentik_sync import set_password as _ak_set_password  # noqa: PLC0415
-                _ak_set_password(_email_low, password)
+                threading.Thread(
+                    target=_sync_authentik_pw,
+                    args=(_email_low, password),
+                    name="authentik-pw-sync",
+                    daemon=True,
+                ).start()
         except Exception:  # noqa: BLE001
-            log.exception("authentik sync on login failed for %s", user.get("email_plain"))
+            log.exception("authentik sync on login dispatch failed for %s", user.get("email_plain"))
 
         tokens = _make_tokens(user)
 
