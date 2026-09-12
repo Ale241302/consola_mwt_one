@@ -19,8 +19,38 @@ AS $$
     );
 $$;
 
--- 1b) Resolver el % de comisión para (cliente, marca, SKU) con prioridad:
---     marca+familia > familia(cualquier marca) > marca > global. NULL si no hay.
+-- 2) Reglas de comisión por cliente × marca × familia.
+--    brand_id NULL  = todas las marcas
+--    familia  NULL  = toda la marca
+CREATE TABLE IF NOT EXISTS clientes.comision_regla (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id      uuid NOT NULL,
+    brand_id       uuid,
+    familia        varchar(64),
+    commission_pct numeric(6,4) NOT NULL
+                   CHECK (commission_pct >= 0 AND commission_pct <= 1),
+    valid_from     date DEFAULT CURRENT_DATE,
+    valid_to       date,
+    notas          text,
+    is_active      boolean NOT NULL DEFAULT true,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_comision_regla_vigente
+    ON clientes.comision_regla (
+        client_id,
+        COALESCE(brand_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        COALESCE(familia, '')
+    )
+    WHERE is_active;
+
+CREATE INDEX IF NOT EXISTS ix_comision_regla_client
+    ON clientes.comision_regla (client_id) WHERE is_active;
+
+-- 3) Resolver el % de comisión para (cliente, marca, SKU) con prioridad:
+--    marca+familia > familia(cualquier marca) > marca > global. NULL si no hay.
+--    (Debe ir DESPUÉS de CREATE TABLE: Postgres valida el cuerpo del SQL function.)
 CREATE OR REPLACE FUNCTION clientes.comision_pct_for(p_client uuid, p_brand uuid, p_sku text)
 RETURNS numeric
 LANGUAGE sql
@@ -53,39 +83,10 @@ AS $$
      LIMIT 1;
 $$;
 
--- 2) Reglas de comisión por cliente × marca × familia.
---    brand_id NULL  = todas las marcas
---    familia  NULL  = toda la marca
-CREATE TABLE IF NOT EXISTS clientes.comision_regla (
-    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    client_id      uuid NOT NULL,
-    brand_id       uuid,
-    familia        varchar(64),
-    commission_pct numeric(6,4) NOT NULL
-                   CHECK (commission_pct >= 0 AND commission_pct <= 1),
-    valid_from     date DEFAULT CURRENT_DATE,
-    valid_to       date,
-    notas          text,
-    is_active      boolean NOT NULL DEFAULT true,
-    created_at     timestamptz NOT NULL DEFAULT now(),
-    updated_at     timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_comision_regla_vigente
-    ON clientes.comision_regla (
-        client_id,
-        COALESCE(brand_id, '00000000-0000-0000-0000-000000000000'::uuid),
-        COALESCE(familia, '')
-    )
-    WHERE is_active;
-
-CREATE INDEX IF NOT EXISTS ix_comision_regla_client
-    ON clientes.comision_regla (client_id) WHERE is_active;
-
--- 3) Snapshot de comisión por línea (congelado al crear el expediente).
+-- 4) Snapshot de comisión por línea (congelado al crear el expediente).
 ALTER TABLE expedientes.linea ADD COLUMN IF NOT EXISTS commission_pct numeric(6,4);
 
--- 4) Backfill: la comisión global del cliente pasa a una regla (marca/familia NULL).
+-- 5) Backfill: la comisión global del cliente pasa a una regla (marca/familia NULL).
 INSERT INTO clientes.comision_regla (client_id, brand_id, familia, commission_pct)
 SELECT c.id, NULL, NULL, c.comision_pct
   FROM clientes.cliente c
