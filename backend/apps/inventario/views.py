@@ -859,13 +859,19 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             "dispatch_mode":  None,
             "consolidation":  None,
             "transferencia":  None,
+            # Etapa 1 · vista plural: un expediente puede tener varias salidas.
+            "transferencias":    [],
+            "shipping_artifacts": [],
         }
 
         try:
             with connection.cursor() as c:
-                # 1) ART-05 mas reciente con linea apuntando a este expediente.
+                # 1) TODAS las instancias ART-05 del expediente (plural),
+                #    ordenadas por fecha desc. La más reciente gobierna el
+                #    resumen singular por compatibilidad con el contrato previo.
                 c.execute("""
-                    SELECT bai.data->>'field-0052' AS doc_type,
+                    SELECT bai.id::text AS artifact_id,
+                           bai.data->>'field-0052' AS doc_type,
                            bai.data->>'field-0055' AS transport_mode,
                            bai.data->>'field-0061' AS freight_mode,
                            bai.data->>'field-0064' AS dispatch_mode,
@@ -880,41 +886,57 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                       AND bai.is_active   = TRUE
                       AND bal.expediente_id = %(exp_id)s::uuid
                     ORDER BY bai.created_at DESC
-                    LIMIT 1
                 """, {"exp_id": exp_id})
-                row = c.fetchone()
-                if row:
-                    out["doc_type"]       = row[0]
-                    out["transport_mode"] = row[1]
-                    out["freight_mode"]   = row[2]
-                    out["dispatch_mode"]  = row[3]
-                    out["tracking"]       = row[4]
-                    out["consolidation"]  = row[5]
-                    out["carrier"]        = row[6]
+                shipping_artifacts = []
+                for ar in c.fetchall():
+                    shipping_artifacts.append({
+                        "artifact_id":    ar[0],
+                        "doc_type":       ar[1],
+                        "transport_mode": ar[2],
+                        "freight_mode":   ar[3],
+                        "dispatch_mode":  ar[4],
+                        "tracking":       ar[5],
+                        "consolidation":  ar[6],
+                        "carrier":        ar[7],
+                    })
+                if shipping_artifacts:
+                    a0 = shipping_artifacts[0]
+                    out["doc_type"]       = a0["doc_type"]
+                    out["transport_mode"] = a0["transport_mode"]
+                    out["freight_mode"]   = a0["freight_mode"]
+                    out["dispatch_mode"]  = a0["dispatch_mode"]
+                    out["tracking"]       = a0["tracking"]
+                    out["consolidation"]  = a0["consolidation"]
+                    out["carrier"]        = a0["carrier"]
+                out["shipping_artifacts"] = shipping_artifacts
 
-                # 2) Transferencia mas reciente asociada al expediente
-                #    via expediente_nodo_assignment.transferencia_id.
+                # 2) TODAS las transferencias asociadas (plural), deduplicadas
+                #    por id y ordenadas por fecha desc. `transferencia` = la más
+                #    reciente, por compatibilidad con el contrato singular previo.
                 c.execute("""
-                    SELECT DISTINCT ON (t.id)
-                           t.id::text   AS id,
-                           t.codigo     AS codigo,
-                           t.estado     AS estado,
-                           t.eta        AS eta,
-                           t.dispatched_at AS dispatched_at,
-                           t.received_at   AS received_at,
-                           t.ref_tracking  AS ref_tracking
-                    FROM transfers.transferencia t
-                    JOIN inventario.expediente_nodo_assignment a
-                      ON a.transferencia_id = t.id
-                    WHERE a.expediente_id = %(exp_id)s::uuid
-                      AND a.is_active     = TRUE
-                      AND t.is_active     = TRUE
-                    ORDER BY t.id, t.created_at DESC
+                    SELECT * FROM (
+                        SELECT DISTINCT ON (t.id)
+                               t.id::text   AS id,
+                               t.codigo     AS codigo,
+                               t.estado     AS estado,
+                               t.eta        AS eta,
+                               t.dispatched_at AS dispatched_at,
+                               t.received_at   AS received_at,
+                               t.ref_tracking  AS ref_tracking,
+                               t.created_at    AS created_at
+                        FROM transfers.transferencia t
+                        JOIN inventario.expediente_nodo_assignment a
+                          ON a.transferencia_id = t.id
+                        WHERE a.expediente_id = %(exp_id)s::uuid
+                          AND a.is_active     = TRUE
+                          AND t.is_active     = TRUE
+                        ORDER BY t.id, t.created_at DESC
+                    ) sub
+                    ORDER BY sub.created_at DESC
                 """, {"exp_id": exp_id})
-                rows = c.fetchall()
-                if rows:
-                    r = rows[0]
-                    out["transferencia"] = {
+                transferencias = []
+                for r in c.fetchall():
+                    transferencias.append({
                         "id":            r[0],
                         "codigo":        r[1],
                         "estado":        r[2],
@@ -922,9 +944,13 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
                         "dispatched_at": r[4].isoformat() if r[4] else None,
                         "received_at":   r[5].isoformat() if r[5] else None,
                         "ref_tracking":  r[6],
-                    }
-                    if not out["tracking"] and r[6]:
-                        out["tracking"] = r[6]
+                    })
+                out["transferencias"] = transferencias
+                if transferencias:
+                    t0 = transferencias[0]
+                    out["transferencia"] = t0
+                    if not out["tracking"] and t0["ref_tracking"]:
+                        out["tracking"] = t0["ref_tracking"]
         except Exception as exc:
             log.exception("shipping_summary fallo para %s", exp_id)
             return Response({"detail": f"SQL error: {exc}"}, status=500)

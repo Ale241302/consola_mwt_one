@@ -1471,7 +1471,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["get"])
     def lineas(self, request, pk=None):
         qs = Linea.objects.filter(expediente_id=pk, is_active=True).order_by("sku", "size")
-        return Response(LineaSerializer(qs, many=True).data)
+        return Response(LineaSerializer(qs, many=True, context={"request": request}).data)
 
     # ── Documentos de un expediente ───────────────────
     @action(detail=True, methods=["get"])
@@ -4630,11 +4630,11 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 INSERT INTO expedientes.documento
                   (id, oc_id, expediente_id, kind, codigo, file_ext,
                    file_size_bytes, storage_url, author, fecha,
-                   is_active, created_at, updated_at)
+                   audience, is_active, created_at, updated_at)
                 SELECT gen_random_uuid(), %s::uuid,
                        CASE WHEN expediente_id IS NOT NULL THEN %s::uuid ELSE NULL END,
                        kind, codigo, file_ext, file_size_bytes, storage_url,
-                       author, fecha, TRUE, NOW(), NOW()
+                       author, fecha, audience, TRUE, NOW(), NOW()
                   FROM expedientes.documento
                  WHERE oc_id = %s::uuid AND is_active = TRUE
                 """,
@@ -5285,7 +5285,7 @@ class LineaViewSet(viewsets.ViewSet):
             v = request.query_params.get(p)
             if v:
                 qs = qs.filter(**{f: v})
-        return Response(LineaSerializer(qs.order_by("sku", "size"), many=True).data)
+        return Response(LineaSerializer(qs.order_by("sku", "size"), many=True, context={"request": request}).data)
 
     def retrieve(self, request, pk=None):
         try:
@@ -5296,7 +5296,7 @@ class LineaViewSet(viewsets.ViewSet):
         exp_ids = scoped_expediente_ids(request.user)
         if exp_ids is not None and str(l.expediente_id) not in exp_ids:
             return Response({"detail": "Línea no existe"}, status=404)
-        return Response(LineaSerializer(l).data)
+        return Response(LineaSerializer(l, context={"request": request}).data)
 
     def create(self, request):
         denied = _deny_client_mutation(request, action_label="linea.create")
@@ -5310,7 +5310,7 @@ class LineaViewSet(viewsets.ViewSet):
         data = dict(request.data or {})
         if not data.get("id"):
             data["id"] = str(uuid.uuid4())
-        s = LineaSerializer(data=data)
+        s = LineaSerializer(data=data, context={"request": request})
         s.is_valid(raise_exception=True)
         s.save()
         return Response(s.data, status=201)
@@ -5325,7 +5325,7 @@ class LineaViewSet(viewsets.ViewSet):
         exp_ids = scoped_expediente_ids(request.user)
         if exp_ids is not None and str(l.expediente_id) not in exp_ids:
             return Response({"detail": "Línea no existe"}, status=404)
-        s = LineaSerializer(l, data=request.data, partial=True)
+        s = LineaSerializer(l, data=request.data, partial=True, context={"request": request})
         s.is_valid(raise_exception=True)
         obj = s.save()
 
@@ -5370,7 +5370,7 @@ class LineaViewSet(viewsets.ViewSet):
                      WHERE id = %s::uuid
                 """, [str(new_legacy), str(new_total), str(obj.id)])
             obj.refresh_from_db()
-            s = LineaSerializer(obj)
+            s = LineaSerializer(obj, context={"request": request})
         except (TypeError, ValueError, ArithmeticError) as recalc_err:
             log.warning("[linea.update] recalc total_price fallo: %s", recalc_err)
 
@@ -5500,7 +5500,7 @@ class LineaViewSet(viewsets.ViewSet):
                         "unit_price_mwt", "unit_price_client",
                         "unit_price", "total_price", "updated_at",
                     ])
-                    updated.append(LineaSerializer(l).data)
+                    updated.append(LineaSerializer(l, context={"request": request}).data)
                 except (TypeError, ValueError, ArithmeticError) as exc:
                     errors.append({"linea_id": lid, "error": str(exc)})
                     log.warning("[bulk_update_prices] linea=%s err=%s", lid, exc)
