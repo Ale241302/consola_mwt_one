@@ -4459,10 +4459,10 @@ class ExpedienteViewSet(viewsets.ViewSet):
             str(getattr(exp, "operating_company_id", "") or "") or None)
         orig_oc_id = str(getattr(exp, "oc_id", "") or "") or None
 
-        # ── OC NUEVA: clona la original (MISMO codigo/PO + proforma/sap + doc).
-        #    Los codigos de OC duplicados están permitidos (ver E8). Así cada
-        #    expediente queda 1:1 con su propia OC y tiene su detalle limpio en
-        #    /expedientes/{ocId} (en vez de agregar varias bajo la misma OC).
+        # ── OC NUEVA: clona la original (MISMO codigo/PO + proforma).
+        #    Etapa 1 · NO hereda SAP ni estado comercial: el pedido nuevo
+        #    nace EMITIDA y sin SAP; cada comercialización tiene su propia
+        #    confirmación. Los codigos de OC duplicados están permitidos (E8).
         new_oc_id = str(uuid.uuid4())
         if orig_oc_id:
             cursor.execute(
@@ -4473,7 +4473,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                    coverage_pct, lines_count, lines_with_sap, air_pct, sea_pct,
                    credit_days_max, credit_band, notas, visibility_tier,
                    is_active, created_at, updated_at)
-                SELECT %s, codigo, %s::uuid, brand_id, proforma, sap, estado, moneda,
+                SELECT %s, codigo, %s::uuid, brand_id, proforma, NULL, 'EMITIDA', moneda,
                        issued_at, 0, 0, 0, 0,
                        0, 0, 0, 0, 0,
                        credit_days_max, credit_band, notas, visibility_tier,
@@ -4578,12 +4578,17 @@ class ExpedienteViewSet(viewsets.ViewSet):
 
             if split_q >= orig_qty:
                 # MOVER la línea entera a la OC+expediente nuevos (con repricing).
+                # Etapa 1 · la identidad nueva nace sin SAP ni fecha de producción
+                # (PENDIENTE_SAP): no se traslada la confirmación comercial del
+                # pedido original. Consistente con el split parcial y el SAP-split.
                 cursor.execute(
                     """
                     UPDATE expedientes.linea
                        SET oc_id = %s::uuid, expediente_id = %s::uuid, qty = %s,
                            unit_price = %s, unit_price_mwt = %s, unit_price_client = %s,
-                           total_price = %s, updated_at = NOW()
+                           total_price = %s,
+                           sap = NULL, production_date = NULL, estado = 'PENDIENTE_SAP',
+                           updated_at = NOW()
                      WHERE id = %s::uuid
                     """,
                     [new_oc_id, new_id, split_q, str(unit), str(p_mwt), str(p_cli), str(new_total), lid],
