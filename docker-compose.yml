@@ -158,6 +158,10 @@ services:
     image: consola-mwt-one/django:latest
     container_name: consola-mwt-one-celery-worker
     restart: unless-stopped
+    # init:true → tini es PID 1 y reapea los hijos huérfanos del healthcheck.
+    # Sin esto, el worker (Python como PID 1) no reapeaba y se acumulaban
+    # cientos de procesos zombie bajo carga.
+    init: true
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
@@ -179,12 +183,14 @@ services:
       - consola-net
       - mwt_default   # el worker descarga adjuntos de MinIO (emails, OCR)
     healthcheck:
-      # `celery inspect ping` devuelve "pong" si el worker está vivo.
-      test: ["CMD-SHELL", "celery -A config inspect ping -d worker@$$HOSTNAME || exit 1"]
-      interval: 30s
-      timeout: 10s
+      # `celery inspect ping` arranca una app Python completa. Bajo carga
+      # tardaba >10s, Docker lo SIGKILLeaba y los hijos quedaban zombie.
+      # --timeout 5 lo corta rápido y no se apila; interval 60s reduce el costo.
+      test: ["CMD-SHELL", "celery -A config inspect ping -d worker@$$HOSTNAME --timeout 5 || exit 1"]
+      interval: 60s
+      timeout: 20s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   # -----------------------------------------------------------------
   # Celery beat — Fase 5A (cron · fx_rate_refresh @ 0 1 * * * UTC)
@@ -238,6 +244,8 @@ services:
     image: consola-mwt-one/mcp-server:latest
     container_name: consola-mwt-one-mcp
     restart: unless-stopped
+    # init:true → reapea hijos huérfanos (evita zombies acumulados).
+    init: true
     env_file:
       - .env
     # Ola 7 · Staging de documentos: los file_path de documento_subir /
