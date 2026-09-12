@@ -1060,6 +1060,10 @@ def create_from_oc(request):
             (ocr_payload.get("po") or {}).get("currency") or "USD"
         )
         phase_signal          = "PENDING_CEO_REVIEW"
+        # Etapa 1 · el cliente opera su propio pedido; no puede inyectar
+        # operador ni forma de pago (decisión comercial interna pendiente).
+        operating_company_id_val = client_id
+        forma_pago_val           = None
     else:
         mode                  = request.data.get("mode")              # 'COMISION' | 'FULL' | None
         freight_mode          = request.data.get("freight_mode")      # 'SEA' | 'AIR'
@@ -1075,6 +1079,12 @@ def create_from_oc(request):
             (ocr_payload.get("po") or {}).get("currency") or "USD"
         )
         phase_signal          = "ON_TRACK"
+        # Etapa 1 · MCP/consola pueden fijar el operador y la forma de pago.
+        # Default de operador: Muito Work Limitada.
+        operating_company_id_val = (
+            request.data.get("operating_company_id") or MWT_OPERATING_CLIENT_ID
+        )
+        forma_pago_val = request.data.get("forma_pago")
 
     credit_clock_start_rule = request.data.get("credit_clock_start_rule")
 
@@ -1172,6 +1182,7 @@ def create_from_oc(request):
                 c.execute("""
                     INSERT INTO expedientes.expediente (
                         id, codigo, oc_id, client_id, brand_id,
+                        operating_company_id, forma_pago,
                         estado, modo_operacion, freight_mode, transport_mode,
                         dispatch_mode, price_basis, credit_clock_start_rule,
                         moneda, total_cost, total_invoiced, total_paid, balance,
@@ -1183,6 +1194,7 @@ def create_from_oc(request):
                         last_event_at, is_active
                     ) VALUES (
                         %s, %s, %s, %s, %s,
+                        %s, %s,
                         'REGISTRO', %s, %s, %s,
                         %s, %s, %s,
                         %s, %s, 0, 0, %s,
@@ -1197,6 +1209,8 @@ def create_from_oc(request):
                     str(expediente_id), expediente_codigo,
                     str(oc_id), str(client_id),
                     str(brand_id) if brand_id else None,
+                    str(operating_company_id_val) if operating_company_id_val else None,
+                    forma_pago_val,
                     mode, freight_mode, transport_mode,
                     dispatch_mode, price_basis, credit_clock_start_rule,
                     str(moneda), str(total_value), str(total_value),
@@ -1246,7 +1260,7 @@ def create_from_oc(request):
                 _is_mwt_op = (
                     operating_company_id_val is not None and
                     str(operating_company_id_val).lower() == str(MWT_OPERATING_CLIENT_ID).lower()
-                ) if 'operating_company_id_val' in dir() else True  # default: asumir MWT operador
+                )
 
                 # Sprint 2026-06-12 · _pick_plazo_price ahora vive como
                 # función PURA en po_alias_matcher.pick_plazo_price (mismo

@@ -30,6 +30,7 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 
@@ -779,7 +780,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # Esto facilita debug en el frontend (la respuesta sigue siendo
         # JSON parseable) y evita que el wizard explote con un parse error.
         try:
-            return self._do_create(request)
+            # Etapa 1 · alta atómica: OC + expediente + líneas en una sola
+            # transacción. Si algo falla (p. ej. una línea), no queda cabecera
+            # huérfana ni expediente parcial.
+            with transaction.atomic():
+                return self._do_create(request)
+        except DRFValidationError as ve:
+            # Validación (expediente o líneas) → rollback total y 400 con detalle.
+            return Response({"detail": "validation_error", "errors": ve.detail}, status=400)
         except Exception as e:
             log.exception("[expediente.create] unhandled exception")
             return Response({
@@ -886,6 +894,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # Crear las líneas (R6: sin FK; usamos raw insert defensivo)
         oc_id_val = payload.get("oc_id")
         line_count = 0
+        line_errors = []
         if isinstance(raw_lines, list) and raw_lines:
             # ── Resolver precio cliente UNA VEZ por producto (frozen) ──
             # El precio se calcula con el WATERFALL COMEX (mismo que usa
@@ -1204,6 +1213,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         line_count += 1
                     except Exception as e:
                         log.warning("[expediente.create] no pude insertar linea sku=%s: %s", sku, e)
+                        line_errors.append({
+                            "sku": sku,
+                            "size": str(talla) if talla is not None else None,
+                            "error": str(e)[:200],
+                        })
+
+            # Etapa 1 · ninguna línea puede fallar en silencio: si hubo
+            # errores, abortamos el alta completa (rollback) con 400.
+            if line_errors:
+                raise DRFValidationError({"lines": line_errors})
 
             # Actualizar lines_count en la OC para que el resumen sea coherente
             if oc_id_val and line_count > 0:
