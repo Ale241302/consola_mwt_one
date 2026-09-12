@@ -181,7 +181,8 @@ class TareaViewSet(viewsets.ViewSet):
         data["created_by_id"] = str(getattr(request.user, "id", "") or "") or None
         s = TareaSerializer(data=data)
         s.is_valid(raise_exception=True)
-        s.save()
+        # `id` está en read_only_fields → se inyecta explícito (patrón del proyecto).
+        s.save(id=data["id"])
         services.log_evento(s.instance.id, "CREADA", {"origen": s.instance.origen},
                             getattr(request.user, "id", None))
         return Response(s.data, status=201)
