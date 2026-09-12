@@ -11,7 +11,7 @@
 // opcional degrada a [] y la tabla se renderiza igual (sin los fallbacks
 // que solo enriquecían la vista).
 import { useQuery } from "@tanstack/react-query";
-import { expedientesApi, ocsApi, lineasApi, productosApi } from "../../lib/api.js";
+import { expedientesApi, ocsApi } from "../../lib/api.js";
 import { queryKeys } from "../../lib/queryKeys.js";
 
 export function useExpedientesData(params) {
@@ -19,15 +19,17 @@ export function useExpedientesData(params) {
     queryKey: queryKeys.expedientes.list(params),
     queryFn: async ({ signal }) => {
       // expedientes es mandatorio: si falla, la pantalla muestra el error
-      // real. Los demás endpoints son opcionales y degradan a [] (403 de
-      // rol, red, 5xx) sin tumbar el listado.
+      // real.
+      //
+      // Sprint 2026-09-11 · el listado ya viene AUTOSUFICIENTE del backend
+      // (order_value/total_client/total_mwt + client_name/operator_name
+      // batched en ExpedienteListSerializer). Antes el front bajaba además
+      // TODO /lineas/ (567KB, ~8s), /productos/ (~4s) y /clientes/ para
+      // calcular lo mismo client-side → 3 requests pesados innecesarios.
+      // Solo seguimos pidiendo /ocs/ (barato) para el fallback de navegación.
       const expRaw = await expedientesApi.list(params, { signal });
-      const [ocRaw, lnRaw, prodRaw] = await Promise.all([
-        ocsApi.list(undefined, { signal }).catch(() => []),
-        lineasApi.list({ is_active: true }, { signal }).catch(() => []),
-        productosApi.list(undefined, { signal }).catch(() => []),
-      ]);
-      return { expRaw, ocRaw, lnRaw, prodRaw };
+      const ocRaw = await ocsApi.list(undefined, { signal }).catch(() => []);
+      return { expRaw, ocRaw };
     },
   });
 }

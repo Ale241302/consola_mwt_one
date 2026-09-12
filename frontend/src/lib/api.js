@@ -1324,6 +1324,8 @@ const _analyticsGet = (path, opts = {}) => {
   return apiFetch(`${analyticsBase}/${path}/${_analyticsQs(params)}`, { token: getToken(), ...rest });
 };
 export const analyticsApi = {
+  // Bundle: todos los widgets del dashboard en UNA request (single-flight).
+  dashboardBundle:          (opts = {}) => _analyticsGet("dashboard_bundle", opts),
   dashboardKpis:            (opts = {}) => _analyticsGet("dashboard_kpis", opts),
   cashflow:                 (opts = {}) => _analyticsGet("cashflow", opts),
   aging:                    (opts = {}) => _analyticsGet("aging", opts),

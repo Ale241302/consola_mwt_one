@@ -3,6 +3,8 @@ import re
 import logging
 from datetime import datetime
 
+from django.db import connection
+
 from .models import (
     Oc, Expediente, Linea, Documento,
     TransicionCat, EventLog, OcrParsingLog,
@@ -246,6 +248,68 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
     return out
 
 
+def build_expediente_rollups(expedientes):
+    """Sprint 2026-09-11 · rollups batched para el listado /expedientes.
+
+    El frontend calculaba `order_value`/`total_client`/`total_mwt` bajando
+    TODAS las líneas activas (567 KB, ~8s) más el catálogo de productos, y
+    resolvía el nombre del cliente/operador bajando TODOS los clientes.
+
+    Acá precomputamos esos valores en 2 queries TOTALES (no por fila) para
+    que el listado sea autosuficiente y el front deje de pedir esos 3-4
+    datasets pesados. Escala a miles de expedientes sin degradar.
+
+    Devuelve:
+      batch_line_agg: {exp_id: {total_client, total_mwt}}
+      batch_clients:  {client_id: {name, country}}
+    """
+    exp_ids = [e.id for e in expedientes]
+    out = {"batch_line_agg": {}, "batch_clients": {}}
+    if not exp_ids:
+        return out
+
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT expediente_id,
+                   COALESCE(SUM(qty * COALESCE(NULLIF(unit_price_client, 0), unit_price, 0)), 0) AS total_client,
+                   COALESCE(SUM(qty * COALESCE(NULLIF(unit_price_mwt, 0), unit_price, 0)), 0)    AS total_mwt
+              FROM expedientes.linea
+             WHERE is_active = TRUE
+               AND expediente_id = ANY(%s)
+             GROUP BY expediente_id
+            """,
+            [exp_ids],
+        )
+        for eid, total_client, total_mwt in cur.fetchall():
+            out["batch_line_agg"][str(eid)] = {
+                "total_client": float(total_client or 0),
+                "total_mwt":    float(total_mwt or 0),
+            }
+
+    client_ids = set()
+    for e in expedientes:
+        if getattr(e, "client_id", None):
+            client_ids.add(str(e.client_id))
+        if getattr(e, "operating_company_id", None):
+            client_ids.add(str(e.operating_company_id))
+    if client_ids:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id::text,
+                       COALESCE(razon_social, nombre_comercial, codigo) AS name,
+                       pais_iso2
+                  FROM clientes.cliente
+                 WHERE id = ANY(%s::uuid[])
+                """,
+                [list(client_ids)],
+            )
+            for cid, name, iso in cur.fetchall():
+                out["batch_clients"][cid] = {"name": name, "country": iso}
+    return out
+
+
 class ExpedienteListSerializer(serializers.ModelSerializer):
     """
     Serializer del listado de expedientes — `GET /api/expedientes/`.
@@ -270,6 +334,16 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
     sap_codigos      = serializers.SerializerMethodField()
     # Sprint 2026-05-31 · flag autoritativo de OPERADOR (server-side).
     viewer_is_operator = serializers.SerializerMethodField()
+
+    # Sprint 2026-09-11 · rollups batched (listado autosuficiente).
+    # El frontend ya NO necesita bajar /lineas/ (567KB), /productos/ ni
+    # /clientes/ para pintar la tabla: estos campos vienen del backend.
+    order_value     = serializers.SerializerMethodField()
+    total_client    = serializers.SerializerMethodField()
+    total_mwt       = serializers.SerializerMethodField()
+    client_name     = serializers.SerializerMethodField()
+    client_country  = serializers.SerializerMethodField()
+    operator_name   = serializers.SerializerMethodField()
 
     # ── role helpers ───────────────────────────────────────────
     def _viewer_role(self):
@@ -469,6 +543,33 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
         }
         return op in leis
 
+    # ── rollups batched ────────────────────────────────────────
+    def _rollup(self, obj):
+        return (self.context or {}).get("batch_line_agg", {}).get(str(obj.id), {})
+
+    def _client_info(self, cid):
+        if not cid:
+            return {}
+        return (self.context or {}).get("batch_clients", {}).get(str(cid), {})
+
+    def get_order_value(self, obj):
+        return self._rollup(obj).get("total_client", 0.0)
+
+    def get_total_client(self, obj):
+        return self._rollup(obj).get("total_client", 0.0)
+
+    def get_total_mwt(self, obj):
+        return self._rollup(obj).get("total_mwt", 0.0)
+
+    def get_client_name(self, obj):
+        return self._client_info(getattr(obj, "client_id", None)).get("name")
+
+    def get_client_country(self, obj):
+        return self._client_info(getattr(obj, "client_id", None)).get("country")
+
+    def get_operator_name(self, obj):
+        return self._client_info(getattr(obj, "operating_company_id", None)).get("name")
+
     class Meta:
         model  = Expediente
         fields = (
@@ -499,6 +600,9 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             # Sprint 2026-06-11 · fusión visual de expedientes (E3). No es
             # dato sensible: solo agrupa filas en el listado.
             "fusion_id", "fusion_label",
+            # Sprint 2026-09-11 · rollups batched (listado autosuficiente).
+            "order_value", "total_client", "total_mwt",
+            "client_name", "client_country", "operator_name",
         )
 
 

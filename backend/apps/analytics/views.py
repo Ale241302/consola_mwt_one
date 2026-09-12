@@ -378,6 +378,61 @@ class AnalyticsViewSet(viewsets.ViewSet):
 
         return Response(out)
 
+    # ── Bundle del Dashboard (1 request en vez de ~14) ─────────
+    @action(detail=False, methods=["get"])
+    def dashboard_bundle(self, request):
+        """Ejecuta los analytics del dashboard en UNA sola petición.
+
+        El dashboard ADMIN/CEO monta ~14 widgets, cada uno con su endpoint.
+        En un server CPU-bound eso son ~14 round-trips + 14 stacks de
+        middleware (auth/permisos/DRF) + contención del GIL: medido ~13s.
+        Este bundle corre todas las acciones en una sola request y devuelve
+        {key: payload}. El front lo pide UNA vez (single-flight) y cada
+        widget lee su key del resultado cacheado.
+
+        ?keys=kpis,cashflow,... limita el trabajo a los widgets visibles.
+        `?client_id=`/`?brand_id=` se reenvían tal cual (scope por widget).
+        """
+        keys_param = (request.query_params.get("keys") or "").strip()
+        wanted = (
+            {k.strip() for k in keys_param.split(",") if k.strip()}
+            if keys_param else None
+        )
+
+        mapping = [
+            ("kpis",            "dashboard_kpis"),
+            ("cashflow",        "cashflow"),
+            ("aging",           "aging"),
+            ("exposicion",      "exposicion_clientes"),
+            ("margen_marcas",   "margen_marcas"),
+            ("by_status",       "by_status"),
+            ("urgent",          "urgent"),
+            ("credit_clock",    "credit_clock_avg"),
+            ("r1",              "r1_correction_ratio"),
+            ("by_status_brand", "by_status_by_brand"),
+            ("inventory_nodes", "inventory_coverage_by_node"),
+            ("top_skus",        "top_skus_margen"),
+            ("margin_scatter",  "expediente_margin_scatter"),
+            ("size_market",     "size_market_distribution"),
+            ("tacos",           "tacos_fba_us"),
+        ]
+
+        out = {}
+        for key, method_name in mapping:
+            if wanted is not None and key not in wanted:
+                continue
+            try:
+                resp = getattr(self, method_name)(request)
+                out[key] = getattr(resp, "data", resp)
+            except Exception as exc:  # noqa: BLE001 — un widget no tumba el resto
+                log.exception("[analytics.dashboard_bundle] %s falló: %s", key, exc)
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
+                out[key] = None
+        return Response(out)
+
     # ── Cash-flow proyectado vs real por semana ───────────────
     @action(detail=False, methods=["get"])
     def cashflow(self, request):

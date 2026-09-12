@@ -497,7 +497,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
         #                         para Sidebar/Pipeline/MCP que agregan).
         # Así el listado escala a miles sin traer todo cuando el caller
         # pide una página.
-        from .serializers import build_expediente_ref_batches, _viewer_is_client
+        from .serializers import build_expediente_ref_batches, build_expediente_rollups, _viewer_is_client
         raw_limit  = request.query_params.get("limit")
         raw_offset = request.query_params.get("offset")
         limit_i  = None
@@ -521,6 +521,9 @@ class ExpedienteViewSet(viewsets.ViewSet):
 
         ctx = {"request": request}
         ctx.update(build_expediente_ref_batches(rows, is_client=_viewer_is_client(request.user)))
+        # Rollups batched (order_value/total_client/total_mwt + nombre de
+        # cliente/operador): el listado queda autosuficiente.
+        ctx.update(build_expediente_rollups(rows))
         data = ExpedienteListSerializer(rows, many=True, context=ctx).data
         if limit_i is not None:
             return Response({

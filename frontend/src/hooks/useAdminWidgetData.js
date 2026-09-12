@@ -2,45 +2,47 @@
 // MWT.ONE · useAdminWidgetData
 // Sprint 2026-08-02 · Dashboard personalizable ADMIN/CEO.
 //
-// Capa de datos POR WIDGET: cada widget del grid admin fetchea su propio
-// endpoint de analytics con sus propios params de scope
-// ({ client_id, brand_id }) en vez del bundle monolítico de
-// useDashboardKpis (que este hook reemplaza — Dashboard.jsx era su único
-// consumidor).
+// Capa de datos POR WIDGET. Sprint 2026-09-11 · performance: en vez de
+// disparar 1 request por widget (~14 endpoints → ~13s en server CPU-bound),
+// ahora todos los widgets comparten UNA sola request al bundle
+// `/api/analytics/dashboard_bundle/` (single-flight por scope). Cada widget
+// lee su key del payload.
 //
 // Caché SWR (lib/swrCache.js), key `analytics:<endpoint>:<paramsKey>`:
-//   · Widgets con el mismo endpoint+scope comparten fetch/cache (p.ej.
-//     los filtrados client-side piden scope general una sola vez).
-//   · Siempre revalida en segundo plano: pinta lo cacheado al instante
-//     y actualiza cuando llega la respuesta fresca.
-//   · refreshNonce (botón "Actualizar" del header) fuerza re-fetch de
-//     todos los widgets montados.
+//   · Widgets con el mismo endpoint+scope comparten fetch/cache.
+//   · Siempre revalida en segundo plano (pinta lo cacheado al instante).
+//   · refreshNonce (botón "Actualizar") invalida el bundle una vez.
 //
-// Política de errores (POL_RESILIENCIA): un endpoint caído deja
-// data=null/[] y error seteado — el widget pinta EmptyState honesto,
-// nunca tumba el grid.
+// Política de errores (POL_RESILIENCIA): un endpoint caído deja data=null/[]
+// — el widget pinta EmptyState honesto, nunca tumba el grid.
 // =====================================================================
 import { useEffect, useState } from "react";
 import { analyticsApi } from "../lib/api.js";
 import { readCache, writeCache } from "../lib/swrCache.js";
 
-// endpointKey → método de analyticsApi.
-const METHODS = {
-  kpis:             "dashboardKpis",
-  cashflow:         "cashflow",
-  aging:            "aging",
-  exposicion:       "exposicionClientes",
-  margen_marcas:    "margenMarcas",
-  urgent:           "urgent",
-  credit_clock:     "creditClockAvg",
-  r1:               "r1CorrectionRatio",
-  by_status_brand:  "byStatusByBrand",
-  inventory_nodes:  "inventoryCoverageByNode",
-  top_skus:         "topSkusMargen",
-  margin_scatter:   "expedienteMarginScatter",
-  size_market:      "sizeMarketDistribution",
-  tacos:            "tacosFbaUs",
-};
+// Single-flight del bundle: todas las keys comparten UNA request por scope.
+const _bundleInflight = new Map();  // paramsKey -> Promise
+let _lastForceNonce = 0;
+
+function fetchBundle(params, refreshNonce) {
+  const paramsKey = params ? JSON.stringify(params) : "";
+  if (refreshNonce && refreshNonce !== _lastForceNonce) {
+    _lastForceNonce = refreshNonce;
+    _bundleInflight.clear();
+  }
+  if (_bundleInflight.has(paramsKey)) return _bundleInflight.get(paramsKey);
+  const p = analyticsApi.dashboardBundle({ params })
+    .then((d) => {
+      _bundleInflight.delete(paramsKey);
+      return d;
+    })
+    .catch((e) => {
+      _bundleInflight.delete(paramsKey);
+      throw e;
+    });
+  _bundleInflight.set(paramsKey, p);
+  return p;
+}
 
 export function useAdminWidgetData(endpointKey, params = null, refreshNonce = 0) {
   const paramsKey = params ? JSON.stringify(params) : "";
@@ -51,29 +53,27 @@ export function useAdminWidgetData(endpointKey, params = null, refreshNonce = 0)
   });
 
   useEffect(() => {
-    const method = METHODS[endpointKey];
-    if (!method) return undefined;
     let alive = true;
-    const params = paramsKey ? JSON.parse(paramsKey) : undefined;
     const cached = readCache(cacheKey);
     if (cached !== undefined) {
       setState({ data: cached, loading: false, error: null });
     } else {
       setState((s) => ({ ...s, loading: true, error: null }));
     }
-    analyticsApi[method]({ params })
-      .then((d) => {
+    const p = paramsKey ? JSON.parse(paramsKey) : null;
+    fetchBundle(p, refreshNonce)
+      .then((bundle) => {
         if (!alive) return;
-        writeCache(cacheKey, d);
-        setState({ data: d, loading: false, error: null });
+        const data = bundle ? bundle[endpointKey] : null;
+        writeCache(cacheKey, data);
+        setState({ data, loading: false, error: null });
       })
       .catch((err) => {
         if (!alive) return;
         setState((s) => ({ ...s, loading: false, error: err }));
       });
     return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpointKey, paramsKey, refreshNonce]);
+  }, [endpointKey, paramsKey, refreshNonce, cacheKey]);
 
   return state;
 }

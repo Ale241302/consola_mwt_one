@@ -46,7 +46,6 @@ import { readCache, writeCache } from "../lib/swrCache.js";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
 // Ola 3 · 3.26 · React Query — estado servidor (api.js sigue siendo transporte).
 import { useExpedientesData } from "../hooks/queries/useExpedientesData.js";
-import { useClientesMap } from "../hooks/queries/useClientesMap.js";
 import { useExpedienteMutations } from "../hooks/mutations/useExpedienteMutations.js";
 // Ola 3 · 3.27 · Virtualización compartida (threshold 60 + print + fallback).
 import VirtualTable from "../components/ui/VirtualTable.jsx";
@@ -87,11 +86,11 @@ function mapExpedienteFromApi(r) {
     proforma_codigos: Array.isArray(r.proforma_codigos) ? r.proforma_codigos : [],
     oc_codigos:       Array.isArray(r.oc_codigos)       ? r.oc_codigos       : [],
     sap_codigos:      Array.isArray(r.sap_codigos)      ? r.sap_codigos      : [],
-    client: '', client_country: '', client_id: r.client_id || null,
+    client: r.client_name || '', client_country: r.client_country || '', client_id: r.client_id || null,
     // Sprint 2026-08-02 · Operador (operating_company_id apunta a un
     // cliente). El nombre se hidrata en load() con el mismo batch de
     // /api/clientes/<id>; alimenta la columna OPERADOR de la tabla.
-    operator: '', operating_company_id: r.operating_company_id || null,
+    operator: r.operator_name || '', operating_company_id: r.operating_company_id || null,
     brand:  '', brand_id:  r.brand_id  || null,
     status: r.estado || 'REGISTRO',
     credit_days:  Number(r.credit_days) || 0,
@@ -152,7 +151,11 @@ function mapExpedienteFromApi(r) {
     // de receivables cuando total_invoiced viene en 0 (caso comun en
     // expedientes recien creados sin facturacion). NO calculamos un
     // estimado de payables — ese KPI muestra solo costos reales.
-    order_value:  0,
+    // Sprint 2026-09-11 · estos valores ahora llegan precalculados del
+    // backend (batched). El front ya no baja /lineas/ ni /productos/.
+    total_client: Number(r.total_client) || 0,
+    total_mwt:    Number(r.total_mwt) || 0,
+    order_value:  Number(r.order_value)  || 0,
     // Sprint 2026-06-11 · fusión visual (E3): los miembros de un grupo
     // comparten fusion_id y el listado los pinta como UNA fila padre
     // expandible. Cada miembro conserva su OC/SAP/proforma/documentos.
@@ -201,90 +204,22 @@ export default function ScreenExpedientes() {
     return expItems.map(mapExpedienteFromApi);
   }, [expQuery.data]);
 
-  // Ids únicos (cliente + operador) → useClientesMap hace UN list() batch.
-  const uniqueClientIds = useMemo(() => Array.from(new Set([
-    ...mappedFromRq.map(e => e.client_id).filter(Boolean),
-    ...mappedFromRq.map(e => e.operating_company_id).filter(Boolean),
-  ])), [mappedFromRq]);
-
-  const clientQuery = useClientesMap(uniqueClientIds);
-
-  // Enriquecimiento derivado (order_value, client, operator, credit_days).
+  // Enriquecimiento derivado: el backend YA entrega order_value/total_client/
+  // total_mwt y client_name/operator_name (batched, 2 queries totales). Por
+  // eso no bajamos /lineas/, /productos/ ni /clientes/ — eso era el 80% del
+  // tiempo de carga de esta pantalla.
   const enriched = useMemo(() => {
     const data = expQuery.data;
     if (!data) return null;
     const ocItems = Array.isArray(data.ocRaw) ? data.ocRaw : (data.ocRaw?.results || []);
-    const lineasArr = Array.isArray(data.lnRaw) ? data.lnRaw : (data.lnRaw?.results || []);
-    const productMap = {};
-    {
-      const arr = Array.isArray(data.prodRaw) ? data.prodRaw : (data.prodRaw?.results || []);
-      for (const p of arr) if (p?.id) productMap[p.id] = p;
-    }
-    const clientMap = clientQuery.data || {};
-
-    const enrichedList = mappedFromRq.map(e => {
-      const cli = clientMap[e.client_id];
-      // ── Calcular order_value sumando lineas de este expediente.
-      //    Para cada linea: usar unit_price si > 0, sino caer al
-      //    catalogo via especificaciones.client_prices[client_id]
-      //    o precio_lista. Mismo enfoque que OCDetail.
-      const expLines = lineasArr.filter(
-        l => l.expediente_id === e._raw.id
-      );
-      let orderValue = 0;
-      let totalClientVal = Number(e._raw?.balance || e._raw?.total_invoiced || 0);
-      let totalMwtVal = Number(e._raw?.total_cost || 0);
-      let sumClient = 0;
-      let sumMwt = 0;
-
-      for (const ln of expLines) {
-        const qty = Number(ln.qty || 0);
-        const priceClient = Number(ln.unit_price_client || ln.unit_price || 0);
-        const priceMwt = Number(ln.unit_price_mwt || ln.unit_price || 0);
-        sumClient += qty * priceClient;
-        sumMwt += qty * priceMwt;
-        let unit  = Number(ln.unit_price || 0);
-        if (unit === 0 && ln.producto_id) {
-          const p = productMap[ln.producto_id];
-          if (p) {
-            const cliMap = (p.especificaciones && p.especificaciones.client_prices) || {};
-            const override = Number(cliMap[e.client_id] || 0);
-            const lista    = Number(p.precio_lista || 0);
-            unit = override > 0 ? override : lista;
-          }
-        }
-        orderValue += qty * unit;
-      }
-
-      if (sumClient > 0) totalClientVal = sumClient;
-      if (sumMwt > 0) totalMwtVal = sumMwt;
-
-      const enrichedExp = {
-        ...e,
-        order_value: orderValue,
-        total_client: totalClientVal,
-        total_mwt: totalMwtVal,
-        // Sprint 2026-08-02 · nombre del operador (operating_company_id
-        // es un cliente; se hidrata con el mismo clientMap). Se resuelve
-        // ANTES del early-return de `cli` para no depender del cliente.
-        operator: (() => {
-          const op = e.operating_company_id ? clientMap[e.operating_company_id] : null;
-          return op ? (op.razon_social || op.nombre_comercial || op.nombre || op.codigo || '') : '';
-        })(),
-      };
-      if (!cli) return enrichedExp;
-      return {
-        ...enrichedExp,
-        client:         cli.razon_social || cli.nombre || cli.codigo || e.client,
-        client_country: cli.pais_iso2 || e.client_country,
-        credit_days:    Number(
-          cli.dias_credito ?? cli.credit_days ?? cli.credito_dias ?? e.credit_days ?? 0
-        ),
-      };
-    });
-
+    const enrichedList = mappedFromRq.map((e) => ({
+      ...e,
+      order_value:  e.order_value  || Number(e._raw?.balance || e._raw?.total_invoiced || 0),
+      total_client: e.total_client || Number(e._raw?.total_invoiced || 0),
+      total_mwt:    e.total_mwt    || Number(e._raw?.total_cost || 0),
+    }));
     return { enriched: enrichedList, ocItems };
-  }, [expQuery.data, clientQuery.data, mappedFromRq]);
+  }, [expQuery.data, mappedFromRq]);
 
   // Sincronizar el resultado RQ → estado de la pantalla + seed-cache.
   useEffect(() => {
