@@ -322,7 +322,7 @@ function TableHeader({ lang, sticky }) {
       borderBottom: "1px solid var(--border)",
       fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
       letterSpacing: 0.5, textTransform: "uppercase",
-      ...(sticky ? { position: "sticky", top: "var(--header-h, 56px)", zIndex: 3 } : {}),
+      ...(sticky ? { position: "sticky", top: 0, zIndex: 3 } : {}),
     }}>
       {headers.map((h, i) => <span key={i}>{h}</span>)}
     </div>

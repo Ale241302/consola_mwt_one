@@ -9537,8 +9537,8 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
 .ceo-table thead th,
 .table-sticky thead th {
   position: sticky;
-  top: var(--header-h, 56px);
-  z-index: 6;
+  top: 0;
+  z-index: 10;
   /* capa propia: garantiza que el encabezado cubra las filas al scrollear */
   transform: translateZ(0);
 }
