@@ -35,8 +35,8 @@ export default function ComisionesFamiliaSection({ value = [], onChange, lang = 
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="caption" style={{ color: MUTED }}>
         {es
-          ? "Define el % por Marca y/o Familia (la familia sale del prefijo del SKU, ej. 50B19). Si dejas Marca/Familia vacías, aplica a todo."
-          : "Set the % by Brand and/or Family (family = SKU prefix, e.g. 50B19). Empty Brand/Family = applies to all."}
+          ? "Define el % por Marca y/o Familia (la familia sale del modelo del producto, ej. 70B22). Si dejas Marca/Familia vacías, aplica a todo."
+          : "Set the % by Brand and/or Family (family = product model, e.g. 70B22). Empty Brand/Family = applies to all."}
       </div>
 
       <table className="table" style={{ width: "100%" }}>
