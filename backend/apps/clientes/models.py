@@ -486,4 +486,66 @@ class ClienteCreditClock(models.Model):
 
     class Meta:
         managed  = False
-        db_table = 'clientes\".\"credit_clock'
+        db_table = 'clientes"."credit_clock'
+
+
+# ════════════════════════════════════════════════════════════
+# Comisiones por Marca y Familia — K2_clientes_comision_regla.sql
+# ════════════════════════════════════════════════════════════
+class ComisionRegla(models.Model):
+    """Regla de comisión por cliente × marca × familia.
+
+    brand_id NULL = todas las marcas; familia NULL = toda la marca.
+    CEO/ADMIN-only (ver POL_VISIBILIDAD en serializers).
+    """
+    id             = models.UUIDField(primary_key=True)
+    client_id      = models.UUIDField()
+    brand_id       = models.UUIDField(null=True, blank=True)
+    familia        = models.CharField(max_length=64, null=True, blank=True)
+    commission_pct = models.DecimalField(max_digits=6, decimal_places=4)
+    valid_from     = models.DateField(null=True, blank=True)
+    valid_to       = models.DateField(null=True, blank=True)
+    notas          = models.TextField(null=True, blank=True)
+    is_active      = models.BooleanField(default=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'clientes"."comision_regla'
+        ordering = ('familia',)
+
+    @staticmethod
+    def familia_from_sku(sku: str | None) -> str:
+        """Misma regla que clientes.familia_from_sku (prefijo antes de '-'/espacio)."""
+        import re
+        s = (sku or "").strip()
+        if not s:
+            return ""
+        return re.split(r"[-\s]+", s, 1)[0].upper()
+
+    @classmethod
+    def resolve_pct(cls, client_id, brand_id=None, familia=None):
+        """Devuelve la comisión (Decimal) más específica para (client, brand, familia).
+
+        Prioridad: (marca+familia) > (familia, cualquier marca) > (marca, sin
+        familia) > (global sin marca/familia). None si no hay ninguna.
+        """
+        cid = str(client_id) if client_id else None
+        if not cid:
+            return None
+        fam = (familia or "").upper() or None
+        bid = str(brand_id) if brand_id else None
+        qs = cls.objects.filter(client_id=cid, is_active=True)
+        candidates = [
+            (lambda r: r.brand_id and fam and r.familia and str(r.brand_id) == bid and r.familia.upper() == fam),
+            (lambda r: not r.brand_id and fam and r.familia and r.familia.upper() == fam),
+            (lambda r: r.brand_id and not r.familia and str(r.brand_id) == bid),
+            (lambda r: not r.brand_id and not r.familia),
+        ]
+        rows = list(qs)
+        for match in candidates:
+            for r in rows:
+                if match(r):
+                    return r.commission_pct
+        return None

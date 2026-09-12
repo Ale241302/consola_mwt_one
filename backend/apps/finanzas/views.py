@@ -193,11 +193,20 @@ def _fetch_expedientes() -> list[dict]:
                 COALESCE(SUM(l.qty * l.unit_price_client), 0)     AS total_client,
                 COALESCE(SUM(l.qty * l.unit_price_mwt), 0)        AS total_mwt,
                 COALESCE(SUM(l.qty * (l.unit_price_client - l.unit_price_mwt)), 0) AS delta_total,
+                COALESCE(SUM(l.qty * l.unit_price_client *
+                    COALESCE(l.commission_pct,
+                             clientes.comision_pct_for(e.client_id, p.brand_id, l.sku),
+                             e.commission_pct, cl.comision_pct, 0)), 0) AS commission_client,
+                COALESCE(SUM(l.qty * (l.unit_price_client - l.unit_price_mwt) *
+                    COALESCE(l.commission_pct,
+                             clientes.comision_pct_for(e.client_id, p.brand_id, l.sku),
+                             e.commission_pct, cl.comision_pct, 0)), 0) AS commission_delta,
                 COALESCE(SUM(l.qty), 0)                           AS total_qty,
                 COUNT(l.id)                                       AS lines_count
             FROM expedientes.expediente e
             LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
             LEFT JOIN expedientes.linea l ON l.expediente_id = e.id AND l.is_active = TRUE
+            LEFT JOIN productos.producto p ON p.id = l.producto_id
             LEFT JOIN LATERAL (
                 SELECT
                     NULLIF(bai.data->>'field-1780150662711', '')::date AS shipment_date_artifact,
@@ -245,6 +254,14 @@ def _build_item(row: dict, today: date) -> dict:
         commission_amount = (base * _dec(commission_rate)).quantize(Decimal("0.01"))
     else:
         commission_amount = None
+
+    # K2 · prorrateo por línea (familias): si hay % por línea (expedientes.linea.commission_pct
+    # o reglas por marca/familia), se usa esa suma; si no, se cae al cálculo por tasa única.
+    comm_delta = _dec(row.get("commission_delta") or 0)
+    comm_client = _dec(row.get("commission_client") or 0)
+    per_line = comm_delta if is_mwt_operated else comm_client
+    if per_line and per_line != 0:
+        commission_amount = per_line.quantize(Decimal("0.01"))
 
     margen_pct = None
     if total_client > 0:

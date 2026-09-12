@@ -10,11 +10,11 @@ from rest_framework.response import Response
 from .models import (
     Cliente, TipoCat, EstadoCat, SegmentoCat,
     CanalCat, MedioPagoCat, IncotermCat,
-    ClienteCreditSnapshot,
+    ClienteCreditSnapshot, ComisionRegla,
 )
 from .serializers import (
     ClienteSerializer, ClienteListSerializer,
-    ClienteCreditSnapshotSerializer,
+    ClienteCreditSnapshotSerializer, ComisionReglaSerializer,
 )
 
 
@@ -381,6 +381,59 @@ class ClienteViewSet(viewsets.ViewSet):
             except Exception as e:  # noqa: BLE001
                 log.warning("delete MCP destroy falló: %s", e)
         return Response(status=204)
+
+    # ═══════════════════════════════════════════════════════════════
+    # Comisiones por Marca y Familia (K2 · CEO/ADMIN-only)
+    # ═══════════════════════════════════════════════════════════════
+    @action(detail=True, methods=["get", "put", "post"], url_path="comisiones")
+    def comisiones(self, request, pk=None):
+        """GET → reglas de comisión del cliente.
+        PUT/POST → reemplazo masivo ({reglas: [{brand_id?, familia?, commission_pct, ...}]}).
+        """
+        from apps.core.permissions import is_ceo_or_admin_role
+        user = getattr(request, "user", None)
+        role = str(getattr(user, "role", "") or "")
+        if not user or not (getattr(user, "is_superuser", False)
+                            or is_ceo_or_admin_role(role)):
+            return Response({"detail": "Solo Admin/CEO."}, status=403)
+        try:
+            c = Cliente.objects.get(pk=pk, is_active=True)
+        except Cliente.DoesNotExist:
+            return Response({"detail": "Cliente no existe"}, status=404)
+        if not _cliente_in_scope(request, str(c.id)):
+            return Response({"detail": "Cliente no existe"}, status=404)
+
+        if request.method == "GET":
+            rows = (ComisionRegla.objects
+                    .filter(client_id=str(c.id), is_active=True)
+                    .order_by("familia"))
+            return Response(ComisionReglaSerializer(rows, many=True).data)
+
+        items = request.data.get("reglas", request.data)
+        if not isinstance(items, list):
+            return Response({"detail": "Se espera una lista de reglas."}, status=400)
+        from django.db import transaction
+        with transaction.atomic():
+            ComisionRegla.objects.filter(client_id=str(c.id), is_active=True).update(is_active=False)
+            for it in items:
+                s = ComisionReglaSerializer(data=it)
+                s.is_valid(raise_exception=True)
+                fam = (s.validated_data.get("familia") or "").strip().upper() or None
+                ComisionRegla.objects.create(
+                    id=uuid.uuid4(),
+                    client_id=str(c.id),
+                    brand_id=s.validated_data.get("brand_id"),
+                    familia=fam,
+                    commission_pct=s.validated_data["commission_pct"],
+                    valid_from=s.validated_data.get("valid_from"),
+                    valid_to=s.validated_data.get("valid_to"),
+                    notas=s.validated_data.get("notas"),
+                    is_active=True,
+                )
+        rows = (ComisionRegla.objects
+                .filter(client_id=str(c.id), is_active=True)
+                .order_by("familia"))
+        return Response(ComisionReglaSerializer(rows, many=True).data)
 
     # ═══════════════════════════════════════════════════════════════
     # Parent-Child actions (sprint 2026-04-29)

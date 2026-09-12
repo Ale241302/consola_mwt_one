@@ -498,3 +498,20 @@ class ClienteCreditSnapshotSerializer(serializers.ModelSerializer):
         model  = ClienteCreditSnapshot
         fields = "__all__"
         read_only_fields = ("id", "created_at", "updated_at")
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Comisiones por Marca y Familia (K2)
+# ═════════════════════════════════════════════════════════════════════
+class ComisionReglaSerializer(serializers.Serializer):
+    """Regla de comisión por cliente × marca × familia (CEO/ADMIN-only)."""
+    id             = serializers.UUIDField(read_only=True)
+    brand_id       = serializers.UUIDField(required=False, allow_null=True)
+    familia        = serializers.CharField(required=False, allow_null=True,
+                                           allow_blank=True, max_length=64)
+    commission_pct = serializers.DecimalField(max_digits=6, decimal_places=4,
+                                              min_value=0, max_value=1)
+    valid_from     = serializers.DateField(required=False, allow_null=True)
+    valid_to       = serializers.DateField(required=False, allow_null=True)
+    notas          = serializers.CharField(required=False, allow_null=True,
+                                           allow_blank=True)
