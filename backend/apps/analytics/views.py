@@ -399,6 +399,23 @@ class AnalyticsViewSet(viewsets.ViewSet):
             if keys_param else None
         )
 
+        # Cache server-side (Redis): el dashboard es read-only y no cambia
+        # segundo a segundo. La 1ra carga paga el costo; las siguientes son
+        # instantáneas (misma cuenta+scope). TTL corto para no quedar viejo.
+        from django.core.cache import cache  # noqa: PLC0415
+        uid       = getattr(getattr(request, "user", None), "id", None)
+        client_id = (request.query_params.get("client_id") or "").strip()
+        brand_id  = (request.query_params.get("brand_id") or "").strip()
+        cache_key = f"analytics_bundle:v1:{uid}:{client_id}:{brand_id}:{keys_param}"
+        forced    = request.query_params.get("refresh") in ("1", "true")
+        if not forced:
+            try:
+                cached = cache.get(cache_key)
+                if cached is not None:
+                    return Response(cached)
+            except Exception:  # noqa: BLE001 — cache caído no rompe el dashboard
+                pass
+
         mapping = [
             ("kpis",            "dashboard_kpis"),
             ("cashflow",        "cashflow"),
@@ -431,6 +448,10 @@ class AnalyticsViewSet(viewsets.ViewSet):
                 except Exception:
                     pass
                 out[key] = None
+        try:
+            cache.set(cache_key, out, 60)
+        except Exception:  # noqa: BLE001
+            pass
         return Response(out)
 
     # ── Cash-flow proyectado vs real por semana ───────────────
