@@ -558,6 +558,29 @@ export default function ScreenExpedienteDetail() {
                 {lang === 'es' ? '✎ Editar general' : '✎ Edit (general)'}
               </button>
             )}
+            {/* Etapa 2 · Agenda del expediente: abre la mesa de trabajo
+                filtrada por este expediente. */}
+            {!isClient && exp.id && (
+              <button
+                type="button"
+                onClick={() => navigate(`/tareas?expediente=${encodeURIComponent(exp.id)}`)}
+                style={{
+                  marginLeft: 8,
+                  padding: '3px 12px',
+                  borderRadius: 999,
+                  background: 'rgba(255,255,255,0.10)',
+                  color: '#fff', fontSize: 11, fontWeight: 700,
+                  letterSpacing: 0.4,
+                  border: '1px solid rgba(255,255,255,0.40)',
+                  cursor: 'pointer',
+                }}
+                title={lang === 'es'
+                  ? 'Tareas / agenda de este expediente'
+                  : 'Tasks / agenda for this file'}
+              >
+                {lang === 'es' ? '✓ Tareas' : '✓ Tasks'}
+              </button>
+            )}
             {exp.is_blocked && (
               <span style={{ marginLeft: !isClient ? 8 : 'auto' }}>
                 <Badge kind="critical" dot>{lang==='es' ? 'BLOQUEADO · Crédito' : 'BLOCKED · Credit'}</Badge>

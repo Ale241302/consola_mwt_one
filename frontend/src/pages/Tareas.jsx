@@ -12,7 +12,7 @@
 //   Días hábiles = lunes a viernes (sin feriados).
 // ─────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useOutletContext } from "react-router-dom";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { tareasApi } from "../lib/api.js";
 import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 import { useRole } from "../context/RoleContext.jsx";
@@ -70,11 +70,11 @@ function Kpi({ label, value, tone }) {
 }
 
 // ── Modal crear tarea ──────────────────────────────────────────────
-function TareaModal({ lang, catalogo, onClose, onSaved }) {
+function TareaModal({ lang, catalogo, defaultExpediente, onClose, onSaved }) {
   const es = lang === "es";
   const [form, setForm] = useState({
     catalogo_codigo: "", titulo: "", descripcion: "",
-    tipo: "OPERATIVO", prioridad: "MEDIA", due_date: "", expediente_id: "", notes: "",
+    tipo: "OPERATIVO", prioridad: "MEDIA", due_date: "", expediente_id: defaultExpediente || "", notes: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -176,6 +176,8 @@ export default function Tareas() {
   const es = lang === "es";
   const navigate = useNavigate();
   const { isAdmin } = useRole();
+  const [searchParams] = useSearchParams();
+  const expFilter = searchParams.get("expediente") || "";
 
   const [view, setView] = useState("mesa");        // mesa | catalogo
   const [mesa, setMesa] = useState({ kpis: {}, items: [] });
@@ -197,12 +199,13 @@ export default function Tareas() {
       if (q) params.q = q;
       if (fEstado) params.estado = fEstado;
       if (fTipo) params.tipo = fTipo;
+      if (expFilter) params.expediente = expFilter;
       const d = await tareasApi.mesa(params);
       setMesa({ kpis: d?.kpis || {}, items: Array.isArray(d?.items) ? d.items : [] });
     } catch (e) {
       setError(e?.body?.detail || e?.message || "Error");
     } finally { setLoading(false); }
-  }, [q, fEstado, fTipo]);
+  }, [q, fEstado, fTipo, expFilter]);
 
   useEffect(() => { loadMesa(); }, [loadMesa]);
   useEffect(() => { tareasApi.catalogo.list().then((d) => setCatalogo(Array.isArray(d) ? d : [])).catch(() => {}); }, []);
@@ -265,6 +268,18 @@ export default function Tareas() {
 
       {view === "mesa" && (
         <>
+          {expFilter && (
+            <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 8,
+                          background: "rgba(48,131,254,0.10)", border: "1px solid rgba(48,131,254,0.30)",
+                          display: "flex", alignItems: "center", gap: 12, fontSize: 13 }}>
+              <span style={{ fontWeight: 600 }}>
+                {es ? "Agenda del expediente" : "File agenda"}: <span className="mono">{expFilter.slice(0, 8)}…</span>
+              </span>
+              <button className="btn btn-sm btn-ghost" onClick={() => navigate("/tareas")}>
+                {es ? "Ver todas las tareas" : "View all tasks"}
+              </button>
+            </div>
+          )}
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
             <Kpi label={es ? "Vencidas" : "Overdue"} value={k.vencidas || 0} tone="#B91C1C" />
             <Kpi label={es ? "Hoy" : "Today"} value={k.hoy || 0} tone="#B45309" />
@@ -384,7 +399,7 @@ export default function Tareas() {
       )}
 
       {showNew && (
-        <TareaModal lang={lang} catalogo={catalogo}
+        <TareaModal lang={lang} catalogo={catalogo} defaultExpediente={expFilter}
                     onClose={() => setShowNew(false)}
                     onSaved={() => flash(es ? "Tarea creada" : "Task created")} />
       )}
