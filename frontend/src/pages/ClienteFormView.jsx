@@ -35,6 +35,7 @@ import { CLIENTS } from "../data/mockData.js";
 import { clientesApi, apiFetch, getToken, storageUrl } from "../lib/api.js";
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
+import ComisionesFamiliaSection from "../components/clientes/ComisionesFamiliaSection.jsx";
 
 // ─── Design tokens ───────────────────────────────────────────
 const NAVY  = "var(--text-primary)";
@@ -201,6 +202,17 @@ export default function ScreenClienteFormView() {
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
 
+  // K2 · Comisiones por Marca/Familia (CEO/ADMIN-only).
+  const [reglas, setReglas] = useState([]);
+  useEffect(() => {
+    if (!isEdit || !clienteId) { setReglas([]); return; }
+    let cancel = false;
+    clientesApi.comisiones(clienteId)
+      .then((d) => { if (!cancel) setReglas(Array.isArray(d) ? d : (d?.results || [])); })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, [clienteId, isEdit]);
+
   // Repobla el form cada vez que cambia `initial` (después del fetch).
   useEffect(() => { setForm(defaultsFrom(initial)); }, [initial]);
 
@@ -284,6 +296,9 @@ export default function ScreenClienteFormView() {
       // Si es nuevo y backend devolvió id, redirige al detalle del recién creado;
       // si es edición, vuelve al detalle existente.
       const targetId = isEdit ? clienteId : (saved?.id || saved?.uuid);
+      if (isAdmin && targetId) {
+        try { await clientesApi.setComisiones(targetId, reglas); } catch (_) { /* best-effort */ }
+      }
       setTimeout(() => {
         navigate(targetId ? `/clientes/${targetId}` : "/clientes", { replace: false });
       }, 700);
@@ -703,14 +718,14 @@ export default function ScreenClienteFormView() {
                                   onBlur={() => blur("credito_limit_usd")}/>
                   </Field>
 
-                  {/* Comisión pactada · SLIDER + input sincronizado */}
-                  <CommissionSlider
-                    value={form.comision_pct}
-                    onChange={v => update("comision_pct", v)}
-                    error={showError("comision_pct") ? liveErrors.comision_pct : null}
-                    lang={lang}
-                  />
                 </Grid>
+
+                <div style={{ marginTop: 16 }}>
+                  <div className="micro" style={{ marginBottom: 8 }}>
+                    {lang === "es" ? "COMISIONES POR MARCA / FAMILIA" : "COMMISSIONS BY BRAND / FAMILY"}
+                  </div>
+                  <ComisionesFamiliaSection value={reglas} onChange={setReglas} lang={lang}/>
+                </div>
 
                 <div style={{
                   marginTop: 14, padding: "8px 12px",

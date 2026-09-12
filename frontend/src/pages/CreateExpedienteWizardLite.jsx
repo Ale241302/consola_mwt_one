@@ -121,6 +121,24 @@ export default function CreateExpedienteWizardLite() {
   const [selClient, setSelClient]       = useState(null);   // {id, label, parent_id, …}
 
   const [orderLines, setOrderLines]     = useState([]);     // [{tmpId, sku, talla, cantidad, producto_id, product_label, is_assigned, unassigned_request_sent}]
+  // K2 · comisiones del cliente (default por familia para la columna % Comisión).
+  const [comisionReglas, setComisionReglas] = useState([]);
+  useEffect(() => {
+    if (!selClient?.id) { setComisionReglas([]); return; }
+    let cancel = false;
+    clientesApi.comisiones(selClient.id)
+      .then((d) => { if (!cancel) setComisionReglas(Array.isArray(d) ? d : (d?.results || [])); })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, [selClient?.id]);
+  const pctForSku = useCallback((sku) => {
+    const fam = String(sku || "").trim().split(/[-\s]+/)[0].toUpperCase();
+    const rows = comisionReglas || [];
+    const byFam = fam ? rows.find((r) => String(r.familia || "").toUpperCase() === fam) : null;
+    if (byFam) return Number(byFam.commission_pct) || 0;
+    const glob = rows.find((r) => !r.familia);
+    return glob ? (Number(glob.commission_pct) || 0) : null;
+  }, [comisionReglas]);
   // Sprint 2026-07-15 · overrides manuales de precio por SKU (Paso 3).
   //   { [SKU_UPPER]: { client?: number|string, mwt?: number|string } }
   // El admin fija el precio por SKU y se aplica a TODAS las líneas de ese SKU.
@@ -761,6 +779,9 @@ export default function CreateExpedienteWizardLite() {
             cantidad:      Number(l.cantidad) || 0,
             producto_id:   l.producto_id || null,
             product_label: l.product_label || null,
+            ...(l.commission_pct != null
+                 ? { commission_pct: l.commission_pct }
+                 : (pctForSku && pctForSku(l.sku) != null ? { commission_pct: pctForSku(l.sku) } : {})),
             ...(_hasOverride ? { price_override: true } : {}),
             ...(unitPriceLegacy != null ? { unit_price: unitPriceLegacy } : {}),
             ...(unitPriceClient != null ? { unit_price_client: unitPriceClient } : {}),
@@ -872,6 +893,8 @@ export default function CreateExpedienteWizardLite() {
               creditProjection={creditProjection}
               isAdmin={isAdmin}
               splitEnabled={isFullEdit}
+              showComision={isAdmin}
+              pctForSku={pctForSku}
             />
           )}
           {step === 3 && (
@@ -1530,6 +1553,7 @@ function Step2Productos({
   setReqDialog, setToast,
   priceMap = {}, creditProjection, isAdmin = false,
   splitEnabled = false,
+  showComision = false, pctForSku = null,
 }) {
   const dropRef = useRef(null);
   const [dragOver, setDragOver] = useState(false);
@@ -1715,6 +1739,11 @@ function Step2Productos({
                 <th style={{ textAlign: "right", paddingRight: 24 }}>
                   {lang === "es" ? "Cantidad" : "Qty"}
                 </th>
+                {showComision && (
+                  <th style={{ width: 110, textAlign: "right" }}>
+                    % {lang === "es" ? "Comisión" : "Comm."}
+                  </th>
+                )}
                 {/* Sprint 2026-05-03 v3.8 · P. unit y Subtotal ocultas a pedido del CEO. */}
                 <th>{lang === "es" ? "Estado" : "Status"}</th>
                 <th style={{ width: 56, textAlign: "center" }}></th>
@@ -1766,6 +1795,19 @@ function Step2Productos({
                         </div>
                       )}
                     </td>
+                    {showComision && (
+                      <td style={{ textAlign: "right" }}>
+                        <input className="input tabular-nums" type="number" min="0" max="100" step="0.01"
+                               value={l.commission_pct != null
+                                 ? (Number(l.commission_pct) * 100).toFixed(2)
+                                 : (pctForSku ? (Number(pctForSku(l.sku) || 0) * 100).toFixed(2) : "")}
+                               onChange={(e) => {
+                                 const v = e.target.value;
+                                 updateLine(l.tmpId, { commission_pct: v === "" ? null : Number(v) / 100 });
+                               }}
+                               style={{ width: 84, textAlign: "right", display: "inline-block" }}/>
+                      </td>
+                    )}
                     {/* Sprint 2026-05-03 v3.8 · TDs P. unit y Subtotal eliminados. */}
                     <td>
                       {unassigned ? (

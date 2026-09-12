@@ -571,6 +571,14 @@ marcasApi.expedientes = (marcaId) =>
   apiFetch(`/marcas/${encodeURIComponent(marcaId)}/expedientes/`,
            { token: getToken() });
 export const clientesApi       = resource("clientes");
+// K2 · Comisiones por Marca y Familia (CEO/ADMIN-only).
+//   GET /api/clientes/{id}/comisiones/            → [{id, brand_id, familia, commission_pct, ...}]
+//   PUT /api/clientes/{id}/comisiones/  {reglas:[...]}  → reemplazo masivo
+clientesApi.comisiones = (id) =>
+  apiFetch(`/clientes/${encodeURIComponent(id)}/comisiones/`, { token: getToken() });
+clientesApi.setComisiones = (id, reglas) =>
+  apiFetch(`/clientes/${encodeURIComponent(id)}/comisiones/`,
+           { method: "PUT", body: { reglas }, token: getToken() });
 export const productosApi      = resource("productos");
 export const ncmApi            = resource("ncm");
 
