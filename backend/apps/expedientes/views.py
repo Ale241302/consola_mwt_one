@@ -16,6 +16,7 @@ Acciones avanzadas (state machine):
        → genera ART-04, transiciona REGISTRO → PRODUCCION
 =====================================================================
 """
+import copy
 import io
 import json
 import logging
@@ -358,11 +359,15 @@ def _parse_phase_date(raw):
 
 
 def _recompute_phase_days(entry: dict):
-    """Recalcula `days` de una entrada {start,end,days} in-place (si puede)."""
+    """Recalcula `days` de una entrada {start,end,days} in-place (si puede).
+
+    Regla operativa: una fase con inicio y fin el MISMO día cuenta como 1 día
+    (nunca 0). Las fases abiertas (sin fin) siguen usando hoy - inicio.
+    """
     d0 = _parse_phase_date(entry.get("start"))
     d1 = _parse_phase_date(entry.get("end"))
     if d0 and d1:
-        entry["days"] = max(0, (d1 - d0).days)
+        entry["days"] = max(1, (d1 - d0).days)
     elif d0:
         entry["days"] = max(0, (date.today() - d0).days)
 
@@ -465,8 +470,8 @@ def fill_missing_phase_dates(exp) -> bool:
     Nunca pisa valores existentes y sólo escribe fases realmente vacías.
     Devuelve True si `exp.phase_durations_json` cambió.
     """
-    original = dict(exp.phase_durations_json or {})
-    pd = dict(original)
+    original = copy.deepcopy(exp.phase_durations_json or {})
+    pd = copy.deepcopy(original)
     if not pd:
         return False
 
@@ -521,6 +526,11 @@ def fill_missing_phase_dates(exp) -> bool:
             if not (merged_visual and phase in ("PREPARACION", "DESPACHO")):
                 _set(phase, start=cursor, end=nxt)
             cursor = nxt
+
+    # Normalizar `days` de todas las entradas (inicio == fin → 1d).
+    for _v in pd.values():
+        if isinstance(_v, dict):
+            _recompute_phase_days(_v)
 
     if pd == original:
         return False
@@ -1555,6 +1565,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     days = (d1 - d0).days
                     if days < 0:
                         return Response({"detail": f"fecha fin anterior al inicio en {key}"}, status=400)
+                    # inicio == fin cuenta como 1 día (nunca 0).
+                    days = max(1, days)
                 elif d0:
                     days = max(0, (_dt.date.today() - d0).days)
                 elif d1:

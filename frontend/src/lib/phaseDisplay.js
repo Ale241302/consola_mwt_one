@@ -87,7 +87,7 @@ export function mergePhaseDurations(durations) {
     const a = new Date(merged.start + "T12:00:00");
     const b = new Date(merged.end + "T12:00:00");
     if (!isNaN(a.getTime()) && !isNaN(b.getTime()) && b >= a) {
-      merged.days = Math.round((b - a) / 86400000);
+      merged.days = Math.max(1, Math.round((b - a) / 86400000));
     }
   }
   return out;

@@ -101,7 +101,7 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
         const nxt = present[i + 1];
         if (nxt) {
           exit = entry[nxt];
-          real = Math.max(0, Math.round((new Date(entry[nxt] + "T12:00:00") - a) / DAY_MS));
+          real = Math.max(1, Math.round((new Date(entry[nxt] + "T12:00:00") - a) / DAY_MS));
         } else {
           real = Math.max(0, Math.round((today - a) / DAY_MS));
           open = s === currentStatus && s !== "CERRADO";
@@ -126,7 +126,7 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
         const a = new Date(firstEntry + "T12:00:00");
         const b = new Date(lastExit + "T12:00:00");
         if (!isNaN(a.getTime()) && !isNaN(b.getTime()) && b >= a) {
-          realDays = Math.round((b - a) / DAY_MS);
+          realDays = Math.max(1, Math.round((b - a) / DAY_MS));
         }
       }
       const open = infos.some((i) => i.open);
@@ -176,7 +176,9 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
     if (a && b && b < a) return null;
 
     if (a) {
-      return Math.max(0, Math.round((b - a) / DAY_MS));
+      // inicio == fin → 1 día (nunca 0). Fase abierta (sin fin) conserva 0.
+      const raw = Math.max(0, Math.round((b - a) / DAY_MS));
+      return (mStart && mEnd) ? Math.max(1, raw) : raw;
     }
     return null;
   }, [mStart, mEnd]);
