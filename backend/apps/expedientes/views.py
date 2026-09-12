@@ -336,6 +336,125 @@ class OcViewSet(viewsets.ViewSet):
         })
 
 
+# ════════════════════════════════════════════════════════════
+# Fases técnicas (máquina de estados) — fuente única para las claves
+# válidas de `phase_durations_json` y para derivar fechas del EventLog.
+# ════════════════════════════════════════════════════════════
+PHASE_ORDER = [
+    "REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO",
+    "TRANSITO", "EN_DESTINO", "CERRADO",
+]
+PHASE_KEYS = set(PHASE_ORDER)
+
+
+def _parse_phase_date(raw):
+    """Convierte 'YYYY-MM-DD[...]' a datetime.date; None si no es válido."""
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(str(raw).strip()[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _recompute_phase_days(entry: dict):
+    """Recalcula `days` de una entrada {start,end,days} in-place (si puede)."""
+    d0 = _parse_phase_date(entry.get("start"))
+    d1 = _parse_phase_date(entry.get("end"))
+    if d0 and d1:
+        entry["days"] = max(0, (d1 - d0).days)
+    elif d0:
+        entry["days"] = max(0, (date.today() - d0).days)
+
+
+def merge_phase_dates(current, assignments):
+    """
+    Fusiona fechas de fase en `phase_durations_json` respetando lo existente.
+
+    `current`: dict actual (no se muta).
+    `assignments`: iterable de (fase, campo, 'YYYY-MM-DD'), campo start|end.
+    Sólo rellena campos vacíos (nunca pisa un valor manual/previo) y recalcula
+    `days`. Devuelve (dict_nuevo, changed).
+    """
+    out = dict(current or {})
+    changed = False
+    for phase, field, iso in assignments:
+        phase = str(phase or "").strip().upper()
+        if phase not in PHASE_KEYS or field not in ("start", "end") or not iso:
+            continue
+        entry = out.get(phase)
+        entry = dict(entry) if isinstance(entry, dict) else {}
+        if entry.get(field):
+            continue
+        entry[field] = iso
+        _recompute_phase_days(entry)
+        out[phase] = entry
+        changed = True
+    return out, changed
+
+
+def record_phase_transition(exp, previous_state, fase_to, occurred_at=None) -> bool:
+    """
+    Al cambiar de fase persiste el rango: cierra la fase anterior (`end`) y
+    abre la nueva (`start`) con la fecha de la transición (occurred_at o hoy).
+    Devuelve True si `exp.phase_durations_json` cambió (el caller debe guardar).
+    """
+    when = _parse_phase_date(occurred_at) or date.today()
+    iso = when.isoformat()
+    assignments = []
+    if previous_state:
+        assignments.append((previous_state, "end", iso))
+    if fase_to:
+        assignments.append((fase_to, "start", iso))
+    new_pd, changed = merge_phase_dates(exp.phase_durations_json or {}, assignments)
+    if changed:
+        exp.phase_durations_json = new_pd
+    return changed
+
+
+def heal_phase_durations_from_events(exp) -> bool:
+    """
+    Completa `phase_durations_json` con las entradas de fase registradas en el
+    EventLog (fuente canónica). Cubre expedientes legados que avanzaron sin
+    dejar override: agrega `start` de cada fase vista y `end` de la anterior.
+    Nunca pisa valores existentes. Devuelve True si cambió.
+    """
+    rows = list(
+        EventLog.objects.filter(
+            aggregate_type="expediente",
+            aggregate_id=str(exp.id),
+            is_active=True,
+        ).order_by("created_at").values_list("phase_to", "created_at")
+    )
+    if not rows:
+        return False
+
+    entry = {}
+    first_at = None
+    for phase_to, created in rows:
+        if created and (first_at is None or created < first_at):
+            first_at = created
+        fase = (phase_to or "").strip().upper()
+        if fase in PHASE_KEYS:
+            if fase not in entry or created < entry[fase]:
+                entry[fase] = created
+    # REGISTRO no siempre emite phase_to explícito: cae al evento más antiguo.
+    if first_at is not None and "REGISTRO" not in entry:
+        entry["REGISTRO"] = first_at
+
+    seq = [p for p in PHASE_ORDER if p in entry]
+    assignments = []
+    for i, fase in enumerate(seq):
+        assignments.append((fase, "start", entry[fase].date().isoformat()))
+        if i + 1 < len(seq):
+            assignments.append((fase, "end", entry[seq[i + 1]].date().isoformat()))
+
+    new_pd, changed = merge_phase_dates(exp.phase_durations_json or {}, assignments)
+    if changed:
+        exp.phase_durations_json = new_pd
+    return changed
+
+
 def check_auto_close_en_destino(exp) -> bool:
     """
     Si exp.estado == 'EN_DESTINO' y han transcurrido 120 días desde la fecha fin
@@ -1293,11 +1412,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
     #   · La duración real sigue derivándose del EventLog; esto sólo
     #     prioriza el valor manual en el detalle y en el Cronograma del
     #     Resumen de Exportación.
-    _PHASE_KEYS = {
-        "REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO",
-        "PREPARACION_DESPACHO",
-        "TRANSITO", "EN_DESTINO", "CERRADO",
-    }
+    # Claves técnicas + la fase visual fusionada (PREPARACION_DESPACHO).
+    _PHASE_KEYS = PHASE_KEYS | {"PREPARACION_DESPACHO"}
 
     @action(detail=True, methods=["get", "post", "patch"], url_path="phase-durations")
     def phase_durations(self, request, pk=None):
@@ -1312,6 +1428,13 @@ class ExpedienteViewSet(viewsets.ViewSet):
 
         if request.method.upper() == "GET":
             check_auto_close_en_destino(exp)
+            # Self-heal: derivar fechas de fase del EventLog para expedientes
+            # legados que avanzaron sin registrar overrides manuales.
+            try:
+                if heal_phase_durations_from_events(exp):
+                    exp.save(update_fields=["phase_durations_json", "updated_at"])
+            except Exception as e:
+                log.warning("phase_durations GET heal falló exp=%s: %s", exp.id, e)
             return Response({"phase_durations": exp.phase_durations_json or {}})
 
         denied = _deny_client_mutation(request, action_label="expediente.phase_durations")
@@ -1987,6 +2110,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
             log.exception("transition atomic tx falló: %s", e)
             return Response({"detail": "transaction_failed", "error": str(e)}, status=500)
 
+        # Persistir fechas de fase (inicio/fin) para que el timeline y el
+        # cronograma las muestren sin depender de overrides manuales.
+        try:
+            if record_phase_transition(exp, previous_state, fase_to, occurred_at):
+                exp.save(update_fields=["phase_durations_json", "updated_at"])
+        except Exception as e:
+            log.warning("transition: no se pudieron persistir fechas de fase exp=%s: %s", exp.id, e)
+
         exp.refresh_from_db()
         return Response({
             "ok": True,
@@ -2407,16 +2538,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     c.execute("""
                         INSERT INTO pipeline.event_log (
                             id, correlation_id, event_type, aggregate_type, aggregate_id,
-                            action_source, previous_status, new_status, payload,
+                            action_source, previous_status, new_status, phase_from, phase_to, payload,
                             emitted_by_id, emitted_by_role, is_active
                         ) VALUES (
                             %s, %s, 'sap.confirmed', 'expediente', %s,
-                            'C5', %s, %s, %s::jsonb,
+                            'C5', %s, %s, %s, %s, %s::jsonb,
                             %s, %s, TRUE
                         )
                     """, [
                         str(uuid.uuid4()), str(correlation_id), str(exp.id),
-                        previous_state, 'PRODUCCION', json.dumps(ev1_payload),
+                        previous_state, 'PRODUCCION', previous_state, 'PRODUCCION', json.dumps(ev1_payload),
                         emitter_id, 'admin',
                     ])
 
@@ -2429,16 +2560,16 @@ class ExpedienteViewSet(viewsets.ViewSet):
                     c.execute("""
                         INSERT INTO pipeline.event_log (
                             id, correlation_id, event_type, aggregate_type, aggregate_id,
-                            action_source, previous_status, new_status, payload,
+                            action_source, previous_status, new_status, phase_from, phase_to, payload,
                             emitted_by_id, emitted_by_role, is_active
                         ) VALUES (
                             %s, %s, 'expediente.state_changed', 'expediente', %s,
-                            'C5', %s, %s, %s::jsonb,
+                            'C5', %s, %s, %s, %s, %s::jsonb,
                             %s, %s, TRUE
                         )
                     """, [
                         str(uuid.uuid4()), str(correlation_id), str(exp.id),
-                        previous_state, 'PRODUCCION', json.dumps(ev2_payload),
+                        previous_state, 'PRODUCCION', previous_state, 'PRODUCCION', json.dumps(ev2_payload),
                         emitter_id, 'admin',
                     ])
 
@@ -2455,6 +2586,14 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 {"detail": "transaction_failed", "error": str(e)},
                 status=500,
             )
+
+        # Registrar fechas de fase (REGISTRO→PRODUCCION) para el timeline.
+        try:
+            exp.refresh_from_db(fields=["phase_durations_json"])
+            if record_phase_transition(exp, previous_state, "PRODUCCION"):
+                exp.save(update_fields=["phase_durations_json", "updated_at"])
+        except Exception as e:
+            log.warning("confirm_sap: no se pudieron persistir fechas de fase exp=%s: %s", exp.id, e)
 
         # Respuesta: expediente actualizado (optimistic refresh en el front)
         exp.refresh_from_db()
