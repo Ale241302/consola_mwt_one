@@ -1,6 +1,6 @@
-"""
-apps.finanzas · views (read-only API CEO-only)
-Sprint 2026-05-24 · Decision CEO (Alejandro)
+﻿"""
+apps.finanzas Â· views (read-only API CEO-only)
+Sprint 2026-05-24 Â· Decision CEO (Alejandro)
 Agente responsable: [AG-BACKEND]
 
 Endpoints:
@@ -9,7 +9,7 @@ Endpoints:
   GET /api/finanzas/comisiones/<expediente_id>/ -> breakdown linea por linea
   GET /api/finanzas/cliente/<client_id>/       -> perfil financiero cliente
 
-Calculo "al vuelo" (sin MV) — para MVP. Cuando crezca el volumen, mover a
+Calculo "al vuelo" (sin MV) â€” para MVP. Cuando crezca el volumen, mover a
 mv_linea_finanzas refrescada por Celery. Deuda diferida documentada en
 docs/finanzas/SPEC_FINANZAS_MODULE_v1.md.
 
@@ -58,8 +58,8 @@ def _dec(v) -> Decimal:
 def _resolve_display_id(codigo: str | None, proforma_codigo: str | None) -> str:
     """number_proforma > codigo. Estandariza prefijo PF en todos los identificadores."""
     raw = (proforma_codigo or codigo or "").strip()
-    if not raw or raw == "—":
-        return "—"
+    if not raw or raw == "â€”":
+        return "â€”"
     if not raw.upper().startswith("PF"):
         return f"PF {raw}"
     return raw
@@ -77,7 +77,7 @@ def _resolve_devengo_estado(
     total_paid: Decimal,
     today: date,
 ) -> tuple[str, date | None]:
-    """Estado de devengo segun §3.3 del SPEC.
+    """Estado de devengo segun Â§3.3 del SPEC.
 
     Returns:
         (estado, fecha_devengo_esperada)
@@ -92,7 +92,7 @@ def _resolve_devengo_estado(
     cd_cli = int(credit_days_cliente or 90)
     cd_mwt = int(credit_days_mwt or 90)
 
-    # Jerarquía de fecha base (real > eta > estimada con días crédito cliente)
+    # JerarquÃ­a de fecha base (real > eta > estimada con dÃ­as crÃ©dito cliente)
     base = shipment_date or eta
     if base is None and created_at_date is not None:
         base = created_at_date + timedelta(days=cd_cli)
@@ -149,7 +149,7 @@ def _next_month_business_window(d: date | None, n_days: int = 10) -> tuple[date 
 
 def _fetch_expedientes() -> list[dict]:
     """Lee TODOS los expedientes activos con agregados de lineas.
-    Una sola query JOIN — evita N+1. Solo lineas activas.
+    Una sola query JOIN â€” evita N+1. Solo lineas activas.
     Sin filtro por operating_company_id (decision CEO 2026-07-29).
     """
     with connection.cursor() as c:
@@ -195,11 +195,11 @@ def _fetch_expedientes() -> list[dict]:
                 COALESCE(SUM(l.qty * (l.unit_price_client - l.unit_price_mwt)), 0) AS delta_total,
                 COALESCE(SUM(l.qty * l.unit_price_client *
                     COALESCE(l.commission_pct,
-                             clientes.comision_pct_for(e.client_id, p.brand_id, l.sku),
+                             clientes.comision_pct_for(e.client_id, p.marca_id, l.sku),
                              e.commission_pct, cl.comision_pct, 0)), 0) AS commission_client,
                 COALESCE(SUM(l.qty * (l.unit_price_client - l.unit_price_mwt) *
                     COALESCE(l.commission_pct,
-                             clientes.comision_pct_for(e.client_id, p.brand_id, l.sku),
+                             clientes.comision_pct_for(e.client_id, p.marca_id, l.sku),
                              e.commission_pct, cl.comision_pct, 0)), 0) AS commission_delta,
                 COALESCE(SUM(l.qty), 0)                           AS total_qty,
                 COUNT(l.id)                                       AS lines_count
@@ -255,8 +255,8 @@ def _build_item(row: dict, today: date) -> dict:
     else:
         commission_amount = None
 
-    # K2 · prorrateo por línea (familias): si hay % por línea (expedientes.linea.commission_pct
-    # o reglas por marca/familia), se usa esa suma; si no, se cae al cálculo por tasa única.
+    # K2 Â· prorrateo por lÃ­nea (familias): si hay % por lÃ­nea (expedientes.linea.commission_pct
+    # o reglas por marca/familia), se usa esa suma; si no, se cae al cÃ¡lculo por tasa Ãºnica.
     comm_delta = _dec(row.get("commission_delta") or 0)
     comm_client = _dec(row.get("commission_client") or 0)
     per_line = comm_delta if is_mwt_operated else comm_client
@@ -302,7 +302,7 @@ def _build_item(row: dict, today: date) -> dict:
         "codigo":                row["codigo"],
         "proforma_codigo":       row["proforma_codigo"],
         "client_id":             row["client_id"],
-        "cliente_razon_social":  row["cliente_razon_social"] or "—",
+        "cliente_razon_social":  row["cliente_razon_social"] or "â€”",
         "cliente_segmento":      row["cliente_segmento"] or None,
         "dias_credito_cliente":  cd_cli,
         "commission_rate":       (str(commission_rate) if commission_rate is not None else None),
@@ -500,7 +500,7 @@ def margin_scatter(request):
 
     Response: {
         "points": [
-            {"id": "<expediente_id>", "label": "EXP-2026-0001 · Sondel",
+            {"id": "<expediente_id>", "label": "EXP-2026-0001 Â· Sondel",
              "projected": 0.21, "real": 0.21, "value": 2591.45},
             ...
         ],
@@ -523,11 +523,11 @@ def margin_scatter(request):
         m = float(mp)
         # MVP: projected == real. Cuando haya drift de margen, separar.
         delta = float(_dec(it.get("delta_total")))
-        cliente = it.get("cliente_razon_social") or "—"
-        display = it.get("display_id") or it.get("codigo") or "—"
+        cliente = it.get("cliente_razon_social") or "â€”"
+        display = it.get("display_id") or it.get("codigo") or "â€”"
         points.append({
             "id":        it["expediente_id"],
-            "label":     f"{display} · {cliente}",
+            "label":     f"{display} Â· {cliente}",
             "projected": m,
             "real":      m,
             "value":     delta,
@@ -538,7 +538,7 @@ def margin_scatter(request):
 @api_view(["GET"])
 @permission_classes([IsCeoOrAdmin])
 def cliente_profile(request, client_id):
-    """Perfil financiero de un cliente — comision agregada + sus expedientes."""
+    """Perfil financiero de un cliente â€” comision agregada + sus expedientes."""
     today = date.today()
     rows = _fetch_expedientes()
     mine = [r for r in rows if str(r["client_id"]) == str(client_id)]
@@ -555,7 +555,7 @@ def cliente_profile(request, client_id):
         tot_client += _dec(it["total_client"])
         tot_mwt += _dec(it["total_mwt"])
 
-    # Datos basicos del cliente (separately — perfil no duplica /api/clientes/)
+    # Datos basicos del cliente (separately â€” perfil no duplica /api/clientes/)
     cliente_summary = None
     if items:
         cliente_summary = {
@@ -578,3 +578,4 @@ def cliente_profile(request, client_id):
         "expedientes": items,
         "today": today.isoformat(),
     })
+
