@@ -55,6 +55,7 @@ app.conf.task_routes = {
     "finance.fx_rate_refresh":          {"queue": "default"},
     "finance.recompute_credit_clock":   {"queue": "default"},
     "tickets.*":                        {"queue": "default"},
+    "tareas.*":                         {"queue": "default"},
 }
 
 

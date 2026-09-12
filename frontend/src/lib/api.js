@@ -617,6 +617,36 @@ export const documentosApi     = resource("documentos");
 export const cobrosApi         = resource("cobros");
 
 // ---------------------------------------------------------------------
+// Etapa 2 · Tareas: catálogo + agenda por expediente + mesa de trabajo.
+//   GET  /api/tareas/                     ?expediente=&estado=&tipo=&vencidas=&q=
+//   GET  /api/tareas/mesa/                (pendientes con contexto)
+//   POST /api/tareas/  |  /api/tareas/{id}/{enviar|responder|completar|cancelar|reprogramar}/
+//   GET/POST /api/tareas/catalogo/
+// ---------------------------------------------------------------------
+export const tareasApi = {
+  list:        (params)      => apiFetch(`/tareas/${qs(params)}`, { token: getToken() }),
+  get:         (id)          => apiFetch(`/tareas/${id}/`, { token: getToken() }),
+  create:      (body)        => apiFetch(`/tareas/`, { method: "POST", body, token: getToken() }),
+  update:      (id, body)    => apiFetch(`/tareas/${id}/`, { method: "PATCH", body, token: getToken() }),
+  remove:      (id)          => apiFetch(`/tareas/${id}/`, { method: "DELETE", token: getToken() }),
+  mesa:        (params)      => apiFetch(`/tareas/mesa/${qs(params)}`, { token: getToken() }),
+  generar:     (body)        => apiFetch(`/tareas/generar/`, { method: "POST", body: body || {}, token: getToken() }),
+  enviar:      (id)          => apiFetch(`/tareas/${id}/enviar/`, { method: "POST", token: getToken() }),
+  responder:   (id)          => apiFetch(`/tareas/${id}/responder/`, { method: "POST", token: getToken() }),
+  completar:   (id)          => apiFetch(`/tareas/${id}/completar/`, { method: "POST", token: getToken() }),
+  cancelar:    (id, body)    => apiFetch(`/tareas/${id}/cancelar/`, { method: "POST", body: body || {}, token: getToken() }),
+  reactivar:   (id)          => apiFetch(`/tareas/${id}/reactivar/`, { method: "POST", token: getToken() }),
+  reprogramar: (id, body)    => apiFetch(`/tareas/${id}/reprogramar/`, { method: "POST", body, token: getToken() }),
+  eventos:     (id)          => apiFetch(`/tareas/${id}/eventos/`, { token: getToken() }),
+  catalogo: {
+    list:   ()          => apiFetch(`/tareas/catalogo/`, { token: getToken() }),
+    create: (body)      => apiFetch(`/tareas/catalogo/`, { method: "POST", body, token: getToken() }),
+    update: (id, body)  => apiFetch(`/tareas/catalogo/${id}/`, { method: "PATCH", body, token: getToken() }),
+    remove: (id)        => apiFetch(`/tareas/catalogo/${id}/`, { method: "DELETE", token: getToken() }),
+  },
+};
+
+// ---------------------------------------------------------------------
 // Inbound Engine v1 (sprint 2026-04-29)
 //   POST /api/inventory/ocr-receipt/    (multipart: file)
 //   POST /api/inventory/receive/        (json: cabecera + lines[])

@@ -102,6 +102,7 @@ const SIDEBAR_KEY_TO_MODULE = {
   usuarios:        "usuarios",
   roles:           "roles",
   "mesa-trabajo":  "expedientes",
+  tareas:          "tareas",
   sizing:          "sizing",
 };
 

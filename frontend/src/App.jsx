@@ -62,6 +62,7 @@ const ScreenMesaTrabajo = lazy(() => import("./pages/MesaTrabajo.jsx"));
 const ScreenProfilePage = lazy(() => import("./pages/ProfilePage.jsx"));
 const ScreenTickets = lazy(() => import("./pages/Tickets.jsx"));
 const ScreenTicketDetail = lazy(() => import("./pages/TicketDetail.jsx"));
+const ScreenTareas = lazy(() => import("./pages/Tareas.jsx"));
 
 function PageFallback() {
   return (
@@ -135,6 +136,9 @@ export default function App() {
         <Route path="/finanzas" element={<CeoAdminOnlyRoute><ScreenFinanzas /></CeoAdminOnlyRoute>} />
         {/* Sprint 2026-07-20 · Mesa de trabajo — CEO/Admin/superadmin. */}
         <Route path="/mesa-trabajo" element={<CeoAdminOnlyRoute><ScreenMesaTrabajo /></CeoAdminOnlyRoute>} />
+        {/* Etapa 2 · Tareas (catálogo + agenda + mesa de trabajo) — staff interno,
+            visible según el módulo RBAC `tareas`. */}
+        <Route path="/tareas" element={<InternalOnlyRoute><ScreenTareas /></InternalOnlyRoute>} />
         <Route path="/inventario" element={<InternalOnlyRoute><ScreenInventario /></InternalOnlyRoute>} />
         {/* Sprint Inbound Engine v1 (2026-04-29) — wizard full-page */}
         <Route path="/inventario/recepcion" element={<InternalOnlyRoute><InboundReceptionWizard /></InternalOnlyRoute>} />

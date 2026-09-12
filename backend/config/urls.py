@@ -30,4 +30,5 @@ urlpatterns = [
     path("api/",           include("apps.tickets.urls")),          # /api/tickets/ + chat + adjuntos + dashboard [LOTE_SM_TICKETS]
     path("api/",           include("apps.finance.urls")),          # /api/finance/payments/ [v2.0 · drawer Registrar Pago + IA + audit]
     path("api/",           include("apps.finanzas.urls")),         # /api/finanzas/* [Sprint 2026-05-24 · CEO-ONLY modulo Finanzas]
+    path("api/",           include("apps.tareas.urls")),           # /api/tareas/* + /api/tareas/catalogo/ [Etapa 2 · agenda + mesa de trabajo]
 ]

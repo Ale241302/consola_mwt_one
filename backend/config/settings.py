@@ -92,6 +92,7 @@ LOCAL_APPS = [
     "apps.tickets",         # Modulo de tickets / soporte interno (LOTE_SM_TICKETS)
     "apps.finance",         # Finance v2.0 · "Registrar Pago" + IA + audit append-only
     "apps.finanzas",        # Sprint 2026-05-24 · Modulo Finanzas CEO-ONLY (comisiones, margen, devengo)
+    "apps.tareas",          # Etapa 2 · Catálogo + agenda de tareas + mesa de trabajo
     # Los siguientes módulos se irán activando cuando cada app tenga su
     # apps.py + views.py correspondiente. Dejarlos comentados evita que
     # Django falle al arrancar por ImportError durante INSTALLED_APPS.
@@ -144,7 +145,7 @@ DATABASES = {
         "OPTIONS":  {"options": "-c search_path=core,clientes,expedientes,pipeline,"
                                 "financiero,transfers,nodos,brands,productos,"
                                 "proveedores,inventario,portal,email_templates,"
-                                "notifications,cobros,dashboard,ai,public"},
+                                "notifications,cobros,dashboard,ai,tareas,public"},
     }
 }
 
@@ -340,6 +341,14 @@ CELERY_BEAT_SCHEDULE = {
         "task":     "core.mcp_poll_inbox",
         "schedule": 120.0,
         "options":  {"queue": "default", "expires": 300},
+    },
+    # Etapa 2 · agenda de tareas: genera/actualiza las tareas automáticas
+    # de todos los expedientes (consulta producción 15d, reconfirmar 10d,
+    # preparar despacho, revisar itinerario) y cancela las obsoletas. 8 AM MX.
+    "tareas_generar_agenda": {
+        "task":     "tareas.generar_agenda",
+        "schedule": _crontab(hour=8, minute=0),
+        "options":  {"queue": "default", "expires": 3600},
     },
     # Archival a S3 Glacier — Fase 5C (placeholder; el task se crea
     # en una sub-fase posterior. Comentado hasta que esté implementado).
