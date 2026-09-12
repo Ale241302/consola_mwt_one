@@ -195,11 +195,11 @@ def _fetch_expedientes() -> list[dict]:
                 COALESCE(SUM(l.qty * (l.unit_price_client - l.unit_price_mwt)), 0) AS delta_total,
                 COALESCE(SUM(l.qty * l.unit_price_client *
                     COALESCE(l.commission_pct,
-                             clientes.comision_pct_for(e.client_id, p.marca_id, l.sku),
+                             clientes.comision_pct_for(e.client_id, p.marca_id, COALESCE(p.nombre, l.sku)),
                              e.commission_pct, cl.comision_pct, 0)), 0) AS commission_client,
                 COALESCE(SUM(l.qty * (l.unit_price_client - l.unit_price_mwt) *
                     COALESCE(l.commission_pct,
-                             clientes.comision_pct_for(e.client_id, p.marca_id, l.sku),
+                             clientes.comision_pct_for(e.client_id, p.marca_id, COALESCE(p.nombre, l.sku)),
                              e.commission_pct, cl.comision_pct, 0)), 0) AS commission_delta,
                 COALESCE(SUM(l.qty), 0)                           AS total_qty,
                 COUNT(l.id)                                       AS lines_count
@@ -578,4 +578,5 @@ def cliente_profile(request, client_id):
         "expedientes": items,
         "today": today.isoformat(),
     })
+
 

@@ -1,8 +1,10 @@
 ﻿-- =====================================================================
--- K3 Â· Default de comisiÃ³n por lÃ­nea (trigger)
--- Al insertar una lÃ­nea sin commission_pct, se resuelve desde las reglas
+-- K3 · Default de comisión por línea (trigger)
+-- La FAMILIA se deriva del MODELO del producto (nombre, ej. "70B22-BP-HIDRO"
+-- -> "70B22"), no del SKU (que puede ser numérico). Fallback al SKU.
+-- Al insertar una línea sin commission_pct, se resuelve desde las reglas
 -- del cliente (clientes.comision_pct_for por marca+familia). Si el caller
--- envÃ­a un valor explÃ­cito, se respeta (admin puede sobreescribir).
+-- envía un valor explícito, se respeta (admin puede sobreescribir).
 -- =====================================================================
 CREATE OR REPLACE FUNCTION expedientes.linea_default_commission()
 RETURNS trigger
@@ -11,6 +13,7 @@ AS $$
 DECLARE
     v_client uuid;
     v_brand  uuid;
+    v_model  text;
     v_pct    numeric;
 BEGIN
     IF NEW.commission_pct IS NOT NULL THEN
@@ -25,11 +28,12 @@ BEGIN
         RETURN NEW;
     END IF;
     IF NEW.producto_id IS NOT NULL THEN
-        SELECT p.marca_id INTO v_brand
+        SELECT p.marca_id, p.nombre INTO v_brand, v_model
           FROM productos.producto p
          WHERE p.id = NEW.producto_id;
     END IF;
-    v_pct := clientes.comision_pct_for(v_client, v_brand, NEW.sku);
+    v_pct := clientes.comision_pct_for(
+        v_client, v_brand, COALESCE(NULLIF(v_model, ''), NEW.sku));
     NEW.commission_pct := v_pct;
     RETURN NEW;
 END;
@@ -41,12 +45,12 @@ CREATE TRIGGER trg_linea_default_commission
     FOR EACH ROW
     EXECUTE FUNCTION expedientes.linea_default_commission();
 
--- Backfill de lÃ­neas existentes sin comisiÃ³n.
+-- Recompute de líneas existentes usando el MODELO (nombre del producto).
 UPDATE expedientes.linea l
-   SET commission_pct = clientes.comision_pct_for(e.client_id, p.marca_id, l.sku)
-  FROM expedientes.expediente e, productos.producto p
+   SET commission_pct = clientes.comision_pct_for(
+         e.client_id,
+         (SELECT p.marca_id FROM productos.producto p WHERE p.id = l.producto_id),
+         COALESCE(NULLIF((SELECT p.nombre FROM productos.producto p WHERE p.id = l.producto_id), ''), l.sku))
+  FROM expedientes.expediente e
  WHERE e.id = l.expediente_id
-   AND p.id = l.producto_id
-   AND l.commission_pct IS NULL
    AND l.is_active;
-
