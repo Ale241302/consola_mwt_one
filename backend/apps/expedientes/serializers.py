@@ -298,7 +298,7 @@ def build_expediente_rollups(expedientes):
             cur.execute(
                 """
                 SELECT id::text,
-                       COALESCE(razon_social, nombre_comercial, codigo) AS name,
+                       COALESCE(razon_social, nombre_comercial) AS name,
                        pais_iso2
                   FROM clientes.cliente
                  WHERE id = ANY(%s::uuid[])
