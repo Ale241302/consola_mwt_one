@@ -9539,7 +9539,11 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   position: sticky;
   top: var(--header-h, 56px);
   z-index: 6;
+  /* capa propia: garantiza que el encabezado cubra las filas al scrollear */
+  transform: translateZ(0);
 }
+.table,
+.table-sticky { border-collapse: separate; border-spacing: 0; }
 .table thead th,
 .inv-table th,
 .products-table th { background: var(--surface); }

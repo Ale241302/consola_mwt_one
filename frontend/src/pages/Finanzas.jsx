@@ -379,7 +379,7 @@ export default function Finanzas({ lang = "es" }) {
         border: "1px solid var(--border-subtle, #E2E8F0)",
         borderRadius: 12,
       }}>
-        <table className="table-sticky" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <table className="table-sticky" style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
           <thead>
             <tr style={{
               background: "var(--surface-alt, #F1F5F9)",
