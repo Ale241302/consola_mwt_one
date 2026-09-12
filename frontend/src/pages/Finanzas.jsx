@@ -387,7 +387,6 @@ export default function Finanzas({ lang = "es" }) {
             }}>
               <Th>{lang === "es" ? "ID" : "ID"}</Th>
               <Th>{lang === "es" ? "Importador" : "Importer"}</Th>
-              <Th>{lang === "es" ? "Operador" : "Operator"}</Th>
               <Th right>{lang === "es" ? "% Comisión" : "% Commission"}</Th>
               <Th right>{lang === "es" ? "Total MWT" : "MWT total"}</Th>
               <Th right>{lang === "es" ? "Total cliente" : "Client total"}</Th>
@@ -402,7 +401,7 @@ export default function Finanzas({ lang = "es" }) {
           <tbody>
             {pageItems.length === 0 && (
               <tr>
-                <td colSpan={12} style={{
+                <td colSpan={11} style={{
                   padding: "32px 16px", textAlign: "center",
                   color: "var(--text-tertiary, #94A3B8)", fontSize: 13,
                 }}>
@@ -422,16 +421,16 @@ export default function Finanzas({ lang = "es" }) {
                   <div style={{ fontWeight: 600, color: "var(--text-primary, #0F172A)" }}>
                     {it.cliente_razon_social}
                   </div>
+                  {it.operador_razon_social && it.operador_razon_social !== it.cliente_razon_social && (
+                    <div style={{ fontSize: 10, color: "var(--text-tertiary, #94A3B8)", marginTop: 2 }}>
+                      {lang === "es" ? "Operador" : "Operator"}: {it.operador_razon_social}
+                    </div>
+                  )}
                   {it.cliente_segmento && (
                     <div style={{ fontSize: 10, color: "var(--text-tertiary, #94A3B8)", marginTop: 2 }}>
                       {lang === "es" ? "Segmento" : "Segment"} {it.cliente_segmento}
                     </div>
                   )}
-                </Td>
-                <Td>
-                  <span style={{ fontWeight: 600, color: "var(--text-primary, #0F172A)" }}>
-                    {it.operador_razon_social || "—"}
-                  </span>
                 </Td>
                 <Td right>
                   {formatPct(it.commission_rate)}
