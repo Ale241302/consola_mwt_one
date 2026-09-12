@@ -2187,8 +2187,14 @@ export default function ScreenOCDetail() {
             padding:'14px 22px', borderTop:'1px solid var(--divider)',
             background:'var(--bg-alt)',
           }}>
-            <span className="micro">{lang==='es'?'Valor total de la Orden':'Total order value'}</span>
-            <span style={{font:'800 18px/1 var(--font-display)', fontVariantNumeric:'tabular-nums'}}>{fmtMoney(computedTotal)}</span>
+            <span className="micro">
+              {isMwtOp && canSeeMwtPrice
+                ? (lang==='es'?'Valor total de la Orden MWT':'MWT Total order value')
+                : (lang==='es'?'Valor total de la Orden':'Total order value')}
+            </span>
+            <span style={{font:'800 18px/1 var(--font-display)', fontVariantNumeric:'tabular-nums'}}>
+              {fmtMoney(isMwtOp && canSeeMwtPrice ? computedMwtTotal : computedTotal)}
+            </span>
           </div>
         </div>
 
@@ -2199,7 +2205,7 @@ export default function ScreenOCDetail() {
             <div className="card-subtitle">
               {allLines.length} {lang==='es'?'líneas':'lines'}
               {isAdmin && <> · {lang==='es'?'editable':'editable'}</>}
-              {' '}· {fmtMoney(computedTotal)} {lang==='es'?'total':'total'}
+              {' '}· {fmtMoney(isMwtOp && canSeeMwtPrice ? computedMwtTotal : computedTotal)} {lang==='es'?'total':'total'}
               {/* El "diferido" es concepto interno — nunca se muestra a CLIENT. */}
               {isAdmin && computedDeferred > 0 && <> · <span style={{color:'var(--brand-accent-dark,#0E8A6D)'}}>🔒 {fmtMoney(computedDeferred)} {lang==='es'?'diferido':'deferred'}</span></>}
             </div>
