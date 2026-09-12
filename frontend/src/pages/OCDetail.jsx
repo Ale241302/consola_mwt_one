@@ -1186,10 +1186,13 @@ export default function ScreenOCDetail() {
       transport_mode: lines[0].transport_mode,
       production_date: lines[0].production_date,
       status: lines[0].status,
-      total_value: lines.reduce((a,l)=>a+(l.qty*l.unit_price), 0),
+      total_value: lines.reduce(
+        (a, l) => a + ((isMwtOp && canSeeMwtPrice) ? lineMwtTotal(l) : lineClientTotal(l)),
+        0,
+      ),
       total_qty:   lines.reduce((a,l)=>a+l.qty, 0),
     }));
-  }, [allLines]);
+  }, [allLines, isMwtOp, canSeeMwtPrice]);
 
   const filteredGroups = showOrphansOnly ? sapGroups.filter(g => !g.sap) : sapGroups;
 
