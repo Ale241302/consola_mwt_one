@@ -9,12 +9,38 @@ from __future__ import annotations
 import uuid
 from datetime import date, timedelta
 
+from django.conf import settings
 from django.db import IntegrityError, connection
+from django.utils import timezone
 
 from .models import Tarea, TareaCatalogo, TareaEvento
 
 # Estados de expediente considerados terminales (no generan tareas nuevas).
 _EXP_TERMINAL = ("CERRADO", "CANCELADO")
+
+
+# ── Responsable por defecto (Álvaro) ────────────────────────────────
+_DEFAULT_RESP = "__unset__"
+
+
+def default_responsable_id():
+    """UUID del responsable por defecto (configurable por email). Cacheado."""
+    global _DEFAULT_RESP
+    if _DEFAULT_RESP != "__unset__":
+        return _DEFAULT_RESP
+    email = getattr(settings, "TAREAS_DEFAULT_RESPONSABLE_EMAIL", "alvaro@muitowork.com")
+    _DEFAULT_RESP = None
+    if email:
+        try:
+            with connection.cursor() as c:
+                c.execute("SELECT id::text FROM core.users WHERE email_plain = %s "
+                          "AND is_active = TRUE LIMIT 1", [email])
+                row = c.fetchone()
+                if row:
+                    _DEFAULT_RESP = row[0]
+        except Exception:
+            _DEFAULT_RESP = None
+    return _DEFAULT_RESP
 
 
 # ── Calendario ──────────────────────────────────────────────────────
@@ -119,6 +145,7 @@ def ensure_auto(exp: dict, codigo: str, *, due: date | None = None,
             titulo=cat["nombre"], descripcion=cat["descripcion"],
             tipo=tipo or cat["tipo"], estado="PENDIENTE", prioridad="MEDIA",
             origen="AUTO", due_date=due,
+            responsable_user_id=default_responsable_id(),
             depends_on_hito=cat.get("depends_on_hito"),
             is_active=True, created_by_id=user_id,
         )
@@ -188,9 +215,28 @@ def generar_para_expediente(exp_id, user_id=None) -> dict:
     return {"expediente_id": str(exp_id), "creadas": _generar_exp(exp, user_id)}
 
 
+def _cancelar_inactivos(user_id=None) -> int:
+    """Cancela tareas AUTO vivas cuyo expediente fue eliminado/inactivado."""
+    with connection.cursor() as c:
+        c.execute("""
+            SELECT t.id::text
+              FROM tareas.tarea t
+              LEFT JOIN expedientes.expediente e ON e.id = t.expediente_id
+             WHERE t.is_active AND t.origen = 'AUTO'
+               AND t.estado NOT IN ('RESUELTA','CANCELADA')
+               AND (e.id IS NULL OR e.is_active = FALSE)
+        """)
+        ids = [r[0] for r in c.fetchall()]
+    for tid in ids:
+        Tarea.objects.filter(id=tid).update(estado="CANCELADA", updated_at=timezone.now())
+        log_evento(tid, "AUTO_CANCELADA", {"motivo": "expediente inactivo"}, user_id)
+    return len(ids)
+
+
 def generar_global(user_id=None) -> dict:
     """Corrida completa (job diario). Idempotente."""
+    canceladas = _cancelar_inactivos(user_id)
     creadas = 0
     for exp in fetch_active_expedientes():
         creadas += len(_generar_exp(exp, user_id))
-    return {"creadas": creadas}
+    return {"creadas": creadas, "canceladas": canceladas}

@@ -178,6 +178,8 @@ class TareaViewSet(viewsets.ViewSet):
                 data.setdefault("descripcion", cat.descripcion)
                 data.setdefault("depends_on_hito", cat.depends_on_hito)
         data.setdefault("origen", "MANUAL")
+        if not data.get("responsable_user_id"):
+            data["responsable_user_id"] = services.default_responsable_id()
         data["created_by_id"] = str(getattr(request.user, "id", "") or "") or None
         s = TareaSerializer(data=data)
         s.is_valid(raise_exception=True)

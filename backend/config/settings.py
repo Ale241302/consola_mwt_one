@@ -103,6 +103,10 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY + LOCAL_APPS
 
+# Etapa 2 · Tareas: responsable por defecto (se resuelve por email a su UUID).
+TAREAS_DEFAULT_RESPONSABLE_EMAIL = os.environ.get(
+    "TAREAS_DEFAULT_RESPONSABLE_EMAIL", "alvaro@muitowork.com")
+
 # ─── Upload limits (Excel COMEX hasta 50 MB) ──────────────────
 # Default Django: 2.5 MB en memoria, 2.5 MB en POST. Lo subimos para
 # soportar pricelists grandes. nginx también está en 50M (frontend +

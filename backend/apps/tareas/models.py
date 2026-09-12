@@ -53,6 +53,7 @@ class Tarea(models.Model):
     notes               = models.TextField(null=True, blank=True)
     external_ref        = models.TextField(null=True, blank=True)
     evidence            = models.JSONField(default=dict, blank=True)
+    documentos          = models.JSONField(default=list, blank=True)
     is_override         = models.BooleanField(default=False)
     is_active           = models.BooleanField(default=True)
     created_by_id       = models.UUIDField(null=True, blank=True)
