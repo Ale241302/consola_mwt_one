@@ -417,6 +417,7 @@ def heal_phase_durations_from_events(exp) -> bool:
     Completa `phase_durations_json` con las entradas de fase registradas en el
     EventLog (fuente canónica). Cubre expedientes legados que avanzaron sin
     dejar override: agrega `start` de cada fase vista y `end` de la anterior.
+    Usa `phase_to` y, como respaldo (eventos SAP legados), `new_status`.
     Nunca pisa valores existentes. Devuelve True si cambió.
     """
     rows = list(
@@ -424,17 +425,19 @@ def heal_phase_durations_from_events(exp) -> bool:
             aggregate_type="expediente",
             aggregate_id=str(exp.id),
             is_active=True,
-        ).order_by("created_at").values_list("phase_to", "created_at")
+        ).order_by("created_at").values_list("phase_to", "new_status", "created_at")
     )
     if not rows:
         return False
 
     entry = {}
     first_at = None
-    for phase_to, created in rows:
+    for phase_to, new_status, created in rows:
         if created and (first_at is None or created < first_at):
             first_at = created
-        fase = (phase_to or "").strip().upper()
+        # `phase_to` es el campo canónico; eventos legados (p.ej. sap_confirmar
+        # previo al fix) sólo traen `new_status` → se usa como respaldo.
+        fase = (phase_to or new_status or "").strip().upper()
         if fase in PHASE_KEYS:
             if fase not in entry or created < entry[fase]:
                 entry[fase] = created
