@@ -26,6 +26,7 @@ import StockMovementsDrawer   from "../components/inventario/StockMovementsDrawe
 import { createPortal } from "react-dom";
 import { stockApi, nodosApi, nodoAssignmentsApi } from "../lib/api.js";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
+import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 
 // ── Helpers backend → UI ────────
 // El backend ahora enriquece el payload con producto_sku, producto_nombre,
@@ -196,6 +197,12 @@ export default function ScreenInventario() {
         .filter(Boolean).join(' ').toLowerCase().includes(needle);
     });
   }, [q, nodeFilter, INVENTORY]);
+
+  // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
+  const {
+    pageItems, page, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(rows, { defaultPerPage: 20 });
+  useEffect(() => { setPage(1); }, [q, nodeFilter, setPage]);
 
   return (
     <div className="page">
@@ -376,7 +383,7 @@ export default function ScreenInventario() {
           <tbody>
             {loading && rows.length === 0 && <TableSkeletonRows rows={8} />}
             <AnimatePresence mode="popLayout">
-              {rows.map((i, idx) => {
+              {pageItems.map((i, idx) => {
                 const available = i.qty - i.reserved;
                 // Sprint 2026-05-11 fix · expediente y talla suman a la
                 // unicidad — sin esto colapsan filas distintas del mismo
@@ -526,6 +533,16 @@ export default function ScreenInventario() {
           </div>
         )}
       </div>
+
+      <TablePagination
+        page={page}
+        totalPages={totalPages}
+        perPage={perPage}
+        setPerPage={setPerPage}
+        setPage={setPage}
+        total={total}
+        lang={lang}
+      />
 
       {/* Drawer · Nuevo movimiento DEPRECATED — sustituido por el
           wizard full-page /transferencias/nueva (sprint Transfer Engine v2). */}

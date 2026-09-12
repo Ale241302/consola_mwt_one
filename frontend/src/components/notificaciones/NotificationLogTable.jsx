@@ -9,7 +9,8 @@
 //   · Fila expandible (AnimatePresence) con subject, body_preview
 //     y error técnico cuando status === 'Exhausted' | 'Failed'
 // ─────────────────────────────────────────────────────────────
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
+import { usePagination, TablePagination } from "../ui/TablePagination.jsx";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -70,6 +71,12 @@ export default function NotificationLogTable({ lang='es', logs=[] }) {
       })
       .sort((a,b) => (b.ts || '').localeCompare(a.ts || ''));
   }, [logs, q, statusF, from, to]);
+
+  // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
+  const {
+    pageItems, page, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(rows, { defaultPerPage: 20 });
+  useEffect(() => { setPage(1); }, [q, statusF, from, to, setPage]);
 
   const statusCounts = useMemo(() => {
     const c = { ALL: logs.length };
@@ -146,7 +153,7 @@ export default function NotificationLogTable({ lang='es', logs=[] }) {
         </div>
 
         <AnimatePresence mode="popLayout" initial={false}>
-          {rows.map((n, idx) => {
+          {pageItems.map((n, idx) => {
             const tMeta = NOTIFICATION_TRIGGER_META[n.trigger] || { label: n.trigger, color:'#64748B' };
             const isOpen = openId === n.id;
             const hasErr = (n.status === 'Exhausted' || n.status === 'Failed') && n.error;
@@ -274,6 +281,16 @@ export default function NotificationLogTable({ lang='es', logs=[] }) {
           </div>
         )}
       </div>
+
+      <TablePagination
+        page={page}
+        totalPages={totalPages}
+        perPage={perPage}
+        setPerPage={setPerPage}
+        setPage={setPage}
+        total={total}
+        lang={lang}
+      />
     </div>
   );
 }

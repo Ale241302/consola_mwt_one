@@ -49,6 +49,7 @@ import { useExpedientesData } from "../hooks/queries/useExpedientesData.js";
 import { useExpedienteMutations } from "../hooks/mutations/useExpedienteMutations.js";
 // Ola 3 · 3.27 · Virtualización compartida (threshold 60 + print + fallback).
 import VirtualTable from "../components/ui/VirtualTable.jsx";
+import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 // Sprint 2026-05-20 · Fusión Pipeline → Expedientes.
 // Tabla/Kanban toggle reemplaza Vista Financial/Ops/Fleet. El render del
 // Kanban delega 100% al ScreenPipeline (mismo fetch, mismo UX, sin reescritura).
@@ -293,12 +294,10 @@ export default function ScreenExpedientes() {
   // Sprint 2026-05-20 · Toggle nuevo: Tabla vs Kanban.
   // El antiguo selector Financial/Ops/Fleet se ocultó por simplificación de UX.
   const [viewMode, setViewMode] = useState('table');       // 'table' | 'kanban'
-  // Sprint 2026-09-11 · paginador de la tabla (20 filas/página). Antes se
-  // pintaban TODAS las filas de golpe; con miles de expedientes eso congela
-  // la vista. Los KPIs siguen calculandose sobre el dataset completo.
-  const PAGE_SIZE = 20;
-  const [page, setPage] = useState(1);
-  useEffect(() => { setPage(1); }, [q, statusFilter, brandFilter, clientFilter, signalFilter, alertFilter]);
+  // Sprint 2026-09-11 · paginador de la tabla. Antes se pintaban TODAS las
+  // filas de golpe; con miles de expedientes eso congela la vista. Los KPIs
+  // siguen calculandose sobre el dataset completo. Sprint 2026-09-12: el
+  // tamaño de página es configurable (5/10/20/50/100, default 20).
   // En CLIENT forzamos la vista "fleet" (origen→destino, modo, ETA, total
   // facturado como "precio") y escondemos el selector. Esa vista es la más
   // limpia y útil para el cliente, sin columnas internas de margen.
@@ -600,17 +599,16 @@ export default function ScreenExpedientes() {
   }, [filtered, fusionGroups, fusionOpen]);
 
   // Sprint 2026-09-11 · ventana de paginación sobre displayRows (incluye
-  // cabeceras de fusión). 20 por página, con clamp si los filtros reducen
-  // el total por debajo de la página actual.
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(displayRows.length / PAGE_SIZE)),
-    [displayRows.length]
-  );
-  const safePage = Math.min(page, totalPages);
-  const pagedRows = useMemo(
-    () => displayRows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
-    [displayRows, safePage]
-  );
+  // cabeceras de fusión), con clamp si los filtros reducen el total por
+  // debajo de la página actual. Sprint 2026-09-12: página configurable.
+  const {
+    pageItems: pagedRows, page: safePage, setPage, perPage, setPerPage,
+    totalPages, total: totalRows,
+  } = usePagination(displayRows, { defaultPerPage: 20 });
+
+  useEffect(() => {
+    setPage(1);
+  }, [q, statusFilter, brandFilter, clientFilter, signalFilter, alertFilter, setPage]);
 
   // Ola 3 · 3.27 · Virtualización delegada a ui/VirtualTable (threshold 60 +
   // desactivación en print + fallback a tabla normal). El cuerpo virtual lo
@@ -1484,41 +1482,17 @@ export default function ScreenExpedientes() {
         />
       </div>
 
-      {/* Sprint 2026-09-11 · paginador (20/página). Se oculta si no hace
-          falta (una sola página). El rango y el total son del dataset
-          filtrado, no de la ventana. */}
-      {displayRows.length > PAGE_SIZE && (
-        <div
-          className="flex ai-center gap-3"
-          style={{ justifyContent: 'flex-end', marginTop: 12 }}
-        >
-          <span className="caption tabular">
-            {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, displayRows.length)}
-            {' / '}{displayRows.length}
-          </span>
-          <button
-            type="button"
-            className="btn btn-sm"
-            disabled={safePage <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            style={{ opacity: safePage <= 1 ? 0.5 : 1, cursor: safePage <= 1 ? 'not-allowed' : 'pointer' }}
-          >
-            ‹ {lang === 'es' ? 'Anterior' : 'Prev'}
-          </button>
-          <span className="caption tabular" style={{ minWidth: 64, textAlign: 'center' }}>
-            {safePage} / {totalPages}
-          </span>
-          <button
-            type="button"
-            className="btn btn-sm"
-            disabled={safePage >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            style={{ opacity: safePage >= totalPages ? 0.5 : 1, cursor: safePage >= totalPages ? 'not-allowed' : 'pointer' }}
-          >
-            {lang === 'es' ? 'Siguiente' : 'Next'} ›
-          </button>
-        </div>
-      )}
+      {/* Sprint 2026-09-11 · paginador. El rango y el total son del dataset
+          filtrado, no de la ventana. Sprint 2026-09-12: tamaño configurable. */}
+      <TablePagination
+        page={safePage}
+        totalPages={totalPages}
+        perPage={perPage}
+        setPerPage={setPerPage}
+        setPage={setPage}
+        total={totalRows}
+        lang={lang}
+      />
 
 
       {!loading && loadError && filtered.length === 0 && (

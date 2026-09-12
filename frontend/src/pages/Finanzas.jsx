@@ -20,6 +20,7 @@
 // =====================================================================
 import React, { useEffect, useMemo, useState } from "react";
 import { apiFetch, getToken } from "../lib/api.js";
+import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 
 // ---------------------------------------------------------------------
 // Helpers de presentacion (centralizados para no multiplicar/dividir
@@ -120,9 +121,14 @@ export default function Finanzas({ lang = "es" }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filtroEstado, setFiltroEstado] = useState("");
+  const [filtroQuery, setFiltroQuery] = useState("");
+  const [filtroImportador, setFiltroImportador] = useState("");
+  const [filtroOperador, setFiltroOperador] = useState("");
   // Sprint 2026-05-30 (CEO) - data para graficas (scatter + bar chart).
   const [scatterPoints, setScatterPoints] = useState([]);
   const [monthlyCommission, setMonthlyCommission] = useState([]);
+  // Tabla de comisiones (lista completa, paginada en cliente).
+  const [tableItems, setTableItems] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,11 +167,46 @@ export default function Finanzas({ lang = "es" }) {
     return () => { cancelled = true; };
   }, [lang]);
 
-  const items = useMemo(() => {
-    const arr = overview?.items || [];
-    if (!filtroEstado) return arr;
-    return arr.filter(it => it.devengo_estado === filtroEstado);
-  }, [overview, filtroEstado]);
+  // Lista completa para la tabla (permite paginar y filtrar en el cliente).
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/finanzas/comisiones/", { token: getToken() })
+      .then(d => { if (!cancelled) setTableItems(Array.isArray(d?.results) ? d.results : []); })
+      .catch(() => { if (!cancelled) setTableItems([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const importadores = useMemo(
+    () => [...new Set(tableItems.map(i => i.cliente_razon_social).filter(Boolean))].sort(),
+    [tableItems],
+  );
+  const operadores = useMemo(
+    () => [...new Set(tableItems.map(i => i.operador_razon_social).filter(Boolean))].sort(),
+    [tableItems],
+  );
+
+  const filtered = useMemo(() => {
+    const q = filtroQuery.trim().toLowerCase();
+    return tableItems.filter(it => {
+      if (filtroEstado && it.devengo_estado !== filtroEstado) return false;
+      if (filtroImportador && it.cliente_razon_social !== filtroImportador) return false;
+      if (filtroOperador && (it.operador_razon_social || "") !== filtroOperador) return false;
+      if (q) {
+        const hay = `${it.display_id || ""} ${it.codigo || ""} ${it.proforma_codigo || ""} `
+          + `${it.cliente_razon_social || ""} ${it.operador_razon_social || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [tableItems, filtroEstado, filtroImportador, filtroOperador, filtroQuery]);
+
+  const {
+    pageItems, page: safePage, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(filtered, { defaultPerPage: 20 });
+
+  useEffect(() => {
+    setPage(1);
+  }, [filtroEstado, filtroImportador, filtroOperador, filtroQuery, setPage]);
 
   if (loading) {
     return (
@@ -269,55 +310,89 @@ export default function Finanzas({ lang = "es" }) {
         <FinanzasMonthlyBar buckets={monthlyCommission} lang={lang} />
       </div>
 
-      {/* Filtro */}
+      {/* Filtros */}
       <div style={{
-        display: "flex", alignItems: "center", gap: 12, marginBottom: 12,
+        display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12,
       }}>
-        <div style={{
-          fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
-          color: "var(--text-tertiary, #94A3B8)", textTransform: "uppercase",
-        }}>{lang === "es" ? "Filtrar por devengo:" : "Filter by accrual:"}</div>
+        <input
+          type="search"
+          value={filtroQuery}
+          onChange={(e) => setFiltroQuery(e.target.value)}
+          placeholder={lang === "es" ? "Buscar ID, importador u operador…" : "Search ID, importer or operator…"}
+          style={{
+            padding: "6px 10px", border: "1px solid var(--border, #CBD5E1)",
+            borderRadius: 6, fontSize: 12, minWidth: 240, background: "var(--surface, #fff)",
+          }}
+        />
         <select
           value={filtroEstado}
           onChange={(e) => setFiltroEstado(e.target.value)}
-          style={{
-            padding: "6px 10px", border: "1px solid var(--border, #CBD5E1)",
-            borderRadius: 6, fontSize: 12, fontWeight: 600,
-            background: "var(--surface, #fff)",
-          }}
+          style={{ padding: "6px 10px", border: "1px solid var(--border, #CBD5E1)",
+                   borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--surface, #fff)" }}
         >
-          <option value="">{lang === "es" ? "Todos" : "All"}</option>
+          <option value="">{lang === "es" ? "Estado: todos" : "Status: all"}</option>
           {Object.keys(DEVENGO_STYLE).map(k0 => (
             <option key={k0} value={k0}>
               {lang === "es" ? DEVENGO_STYLE[k0].label_es : DEVENGO_STYLE[k0].label_en}
             </option>
           ))}
         </select>
+        <select
+          value={filtroImportador}
+          onChange={(e) => setFiltroImportador(e.target.value)}
+          style={{ padding: "6px 10px", border: "1px solid var(--border, #CBD5E1)",
+                   borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--surface, #fff)",
+                   maxWidth: 220 }}
+        >
+          <option value="">{lang === "es" ? "Importador: todos" : "Importer: all"}</option>
+          {importadores.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <select
+          value={filtroOperador}
+          onChange={(e) => setFiltroOperador(e.target.value)}
+          style={{ padding: "6px 10px", border: "1px solid var(--border, #CBD5E1)",
+                   borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--surface, #fff)",
+                   maxWidth: 220 }}
+        >
+          <option value="">{lang === "es" ? "Operador: todos" : "Operator: all"}</option>
+          {operadores.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+        {(filtroQuery || filtroEstado || filtroImportador || filtroOperador) && (
+          <button
+            type="button"
+            onClick={() => { setFiltroQuery(""); setFiltroEstado(""); setFiltroImportador(""); setFiltroOperador(""); }}
+            style={{ padding: "6px 10px", border: "1px solid var(--border, #CBD5E1)",
+                     borderRadius: 6, fontSize: 12, fontWeight: 600,
+                     background: "var(--surface-alt, #F1F5F9)", cursor: "pointer" }}
+          >
+            {lang === "es" ? "Limpiar" : "Clear"}
+          </button>
+        )}
         <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary, #94A3B8)" }}>
-          {items.length} {lang === "es" ? "resultados" : "results"}
+          {filtered.length} {lang === "es" ? "resultados" : "results"}
         </span>
       </div>
 
       {/* Tabla de comisiones */}
-      <div style={{
+      <div className="table-scroll" style={{
         background: "var(--surface, #fff)",
         border: "1px solid var(--border-subtle, #E2E8F0)",
-        borderRadius: 12, overflow: "hidden",
+        borderRadius: 12,
       }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <table className="table-sticky" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{
               background: "var(--surface-alt, #F1F5F9)",
               borderBottom: "2px solid var(--border, #CBD5E1)",
             }}>
               <Th>{lang === "es" ? "ID" : "ID"}</Th>
-              <Th>{lang === "es" ? "Cliente" : "Client"}</Th>
-              <Th right>{lang === "es" ? "Tasa" : "Rate"}</Th>
+              <Th>{lang === "es" ? "Importador" : "Importer"}</Th>
+              <Th>{lang === "es" ? "Operador" : "Operator"}</Th>
+              <Th right>{lang === "es" ? "% Comisión" : "% Commission"}</Th>
               <Th right>{lang === "es" ? "Total MWT" : "MWT total"}</Th>
               <Th right>{lang === "es" ? "Total cliente" : "Client total"}</Th>
-              <Th right>{lang === "es" ? "Δ $" : "Δ $"}</Th>
+              <Th right>{lang === "es" ? "Arbitraje" : "Arbitrage"}</Th>
               <Th right>{lang === "es" ? "Comisión $" : "Commission $"}</Th>
-              <Th right>{lang === "es" ? "Margen %" : "Margin %"}</Th>
               <Th>{lang === "es" ? "Plazos (MWT/Cli)" : "Terms (MWT/Cli)"}</Th>
               <Th>{lang === "es" ? "Fecha devengo" : "Accrual date"}</Th>
               <Th>{lang === "es" ? "Fecha pago aprox." : "Approx. payment date"}</Th>
@@ -325,19 +400,19 @@ export default function Finanzas({ lang = "es" }) {
             </tr>
           </thead>
           <tbody>
-            {items.length === 0 && (
+            {pageItems.length === 0 && (
               <tr>
                 <td colSpan={12} style={{
                   padding: "32px 16px", textAlign: "center",
                   color: "var(--text-tertiary, #94A3B8)", fontSize: 13,
                 }}>
                   {lang === "es"
-                    ? "No hay expedientes operados por MWT que coincidan con el filtro."
-                    : "No MWT-operated files match the filter."}
+                    ? "No hay expedientes que coincidan con los filtros."
+                    : "No files match the filters."}
                 </td>
               </tr>
             )}
-            {items.map((it, i) => (
+            {pageItems.map((it, i) => (
               <tr key={it.expediente_id} style={{
                 borderBottom: "1px solid var(--border-subtle, #F1F5F9)",
                 background: i % 2 === 1 ? "rgba(241, 245, 249, 0.4)" : "transparent",
@@ -352,6 +427,11 @@ export default function Finanzas({ lang = "es" }) {
                       {lang === "es" ? "Segmento" : "Segment"} {it.cliente_segmento}
                     </div>
                   )}
+                </Td>
+                <Td>
+                  <span style={{ fontWeight: 600, color: "var(--text-primary, #0F172A)" }}>
+                    {it.operador_razon_social || "—"}
+                  </span>
                 </Td>
                 <Td right>
                   {formatPct(it.commission_rate)}
@@ -370,33 +450,31 @@ export default function Finanzas({ lang = "es" }) {
                 <Td right mono style={{ fontWeight: 700, color: "var(--success, #00B286)" }}>
                   {it.commission_amount === null ? "—" : formatMoney(it.commission_amount)}
                 </Td>
-                <Td right>{formatPct(it.margen_pct)}</Td>
                 <Td>
                   <span className="tabular-nums" style={{ fontSize: 11 }}>
-                    {it.credit_days_mwt || "—"} / {it.credit_days_cliente || "—"}d
+                    {it.credit_days_mwt == null ? "—" : it.credit_days_mwt} /{" "}
+                    {it.credit_days_cliente == null ? "—" : it.credit_days_cliente}d
                   </span>
                 </Td>
                 <Td>{formatDate(it.fecha_devengo_esperada)}</Td>
-                <Td>
-                  {it.mes_pago_aproximado ? (
-                    <div style={{ display:'flex', flexDirection:'column', gap:1 }}>
-                      <span style={{ fontWeight:600, color:'var(--text-primary, #0F172A)' }}>
-                        {_monthLabelEs(it.mes_pago_aproximado)}
-                      </span>
-                      {it.fecha_pago_aprox_inicio && it.fecha_pago_aprox_fin && (
-                        <span style={{ fontSize:10, color:'var(--text-tertiary, #94A3B8)' }}>
-                          {formatDate(it.fecha_pago_aprox_inicio)} – {formatDate(it.fecha_pago_aprox_fin)}
-                        </span>
-                      )}
-                    </div>
-                  ) : "—"}
-                </Td>
+                <Td>{formatDate(it.fecha_pago_aprox)}</Td>
                 <Td><DevengoBadge estado={it.devengo_estado} lang={lang}/></Td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* Paginación */}
+      <TablePagination
+        page={safePage}
+        totalPages={totalPages}
+        perPage={perPage}
+        setPerPage={setPerPage}
+        setPage={setPage}
+        total={total}
+        lang={lang}
+      />
 
       {/* Sprint 2026-05-30 (CEO) - footer 'Proximos sprints' removido
           tras implementar graficas scatter + bar por mes + columna

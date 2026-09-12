@@ -30,6 +30,7 @@ import {
 } from "../data/mockData.js";
 import { productosApi, storageUrl } from "../lib/api.js";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
+import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 import useBrandsLight from "../hooks/useBrandsLight.js";
 
 // ─────────────────────────────────────────────────────────────
@@ -164,6 +165,12 @@ export default function ScreenProductos() {
       })
       .sort((a, b) => (a.sku || '').localeCompare(b.sku || ''));
   }, [q, brandFilter, BRAND_PRODUCTS]);
+
+  // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
+  const {
+    pageItems, page, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(rows, { defaultPerPage: 20 });
+  useEffect(() => { setPage(1); }, [q, brandFilter, setPage]);
 
   // ── Helpers de selección ────────
   const toggleOne = (id) => {
@@ -410,7 +417,7 @@ export default function ScreenProductos() {
           <tbody>
             {loading && rows.length === 0 && <TableSkeletonRows rows={8} />}
             <AnimatePresence mode="popLayout">
-              {rows.map((p, idx) => {
+              {pageItems.map((p, idx) => {
                 const brand = brandMap[p.brand_id];
                 const initials = p.nombre.split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase();
                 return (
@@ -565,6 +572,16 @@ export default function ScreenProductos() {
           </div>
         )}
       </div>
+
+      <TablePagination
+        page={page}
+        totalPages={totalPages}
+        perPage={perPage}
+        setPerPage={setPerPage}
+        setPage={setPage}
+        total={total}
+        lang={lang}
+      />
 
       {/* ─── Modal de confirmación de eliminar ─── */}
       <AnimatePresence>

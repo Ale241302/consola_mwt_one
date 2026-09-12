@@ -34,6 +34,7 @@ import {
 } from "../constants/marluvas.js";
 import { getBandPlazos, anchorPrice } from "../lib/marluvasPricing.js";
 import { useSkuTallas } from "../hooks/useSkuTallas.js";
+import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 
 // ───────────────────── Tokens visuales ─────────────────────
 // Coherentes con BrandClientPricingForm (motor de precios). Mantenerlos
@@ -222,6 +223,11 @@ export default function ScreenPriceHistory() {
     return { events: events.length, skus, cells };
   }, [events]);
 
+  // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
+  const {
+    pageItems, page, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(events, { defaultPerPage: 20 });
+
   return (
     <div className="page">
       {/* Header */}
@@ -306,7 +312,7 @@ export default function ScreenPriceHistory() {
                 <div className="heading-md">Sin historial</div>
                 <div className="caption">Ajusta los filtros o esperá a que el motor de precios guarde una simulación.</div>
               </td></tr>
-            ) : events.map((e) => {
+            ) : pageItems.map((e) => {
               const vigencia = e.fecha_inicio || e.fecha_fin
                 ? `${e.fecha_inicio || '—'} → ${e.fecha_fin || 'indef.'}`
                 : '—';
@@ -341,6 +347,18 @@ export default function ScreenPriceHistory() {
           </tbody>
         </table>
       </div>
+
+      {!loading && events.length > 0 && (
+        <TablePagination
+          page={page}
+          totalPages={totalPages}
+          perPage={perPage}
+          setPerPage={setPerPage}
+          setPage={setPage}
+          total={total}
+          lang="es"
+        />
+      )}
 
       {/* Drawer detalle */}
       {detailId && (

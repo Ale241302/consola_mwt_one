@@ -9,7 +9,8 @@
 // Columnas: fecha · expediente & proforma · monto vencido ·
 //           grace days · destinatario · estado
 // ─────────────────────────────────────────────────────────────
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
+import { usePagination, TablePagination } from "../ui/TablePagination.jsx";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -58,6 +59,12 @@ export default function CollectionLogTable({ lang='es', logs=[] }) {
       })
       .sort((a,b) => (b.created_at || '').localeCompare(a.created_at || ''));
   }, [logs, q, from, to]);
+
+  // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
+  const {
+    pageItems, page, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(rows, { defaultPerPage: 20 });
+  useEffect(() => { setPage(1); }, [q, from, to, setPage]);
 
   const kpiTotal = rows.reduce((a, c) => a + (c.amount_overdue || 0), 0);
   const kpiC1 = rows.filter(c => c.trigger === 'C1').length;
@@ -128,7 +135,7 @@ export default function CollectionLogTable({ lang='es', logs=[] }) {
         </div>
 
         <AnimatePresence mode="popLayout" initial={false}>
-          {rows.map((c, idx) => (
+                {pageItems.map((c, idx) => (
             <motion.div
               key={c.id}
               layout
@@ -202,6 +209,16 @@ export default function CollectionLogTable({ lang='es', logs=[] }) {
           </div>
         )}
       </div>
+
+      <TablePagination
+        page={page}
+        totalPages={totalPages}
+        perPage={perPage}
+        setPerPage={setPerPage}
+        setPage={setPage}
+        total={total}
+        lang={lang}
+      />
     </div>
   );
 }

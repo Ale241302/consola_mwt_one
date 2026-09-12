@@ -12,7 +12,8 @@
 // El sistema (CollectionBot) es el que manda los correos; el
 // humano solo audita y abre el drawer para gobernar excepciones.
 // ─────────────────────────────────────────────────────────────
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
+import { usePagination, TablePagination } from "../ui/TablePagination.jsx";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   IconSearch, IconX, IconFilter, IconAlert, IconSparkle,
@@ -90,6 +91,12 @@ export default function OverduePortfolioTable({
       })
       .sort((a, b) => b.days_overdue - a.days_overdue);
   }, [cases, q, clientFilter, stageFilter, minAmount, maxAmount]);
+
+  // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
+  const {
+    pageItems, page, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(rows, { defaultPerPage: 20 });
+  useEffect(() => { setPage(1); }, [q, clientFilter, stageFilter, minAmount, maxAmount, setPage]);
 
   function clearFilters() {
     setQ(""); setCF("all"); setSF("all"); setMin(""); setMax("");
@@ -188,7 +195,7 @@ export default function OverduePortfolioTable({
         </div>
 
         <AnimatePresence mode="popLayout" initial={false}>
-          {rows.map((c, idx) => {
+          {pageItems.map((c, idx) => {
             const stMeta = CASE_STATE_META[c.case_state] || CASE_STATE_META.active;
             const StIcon = stMeta.icon;
             return (
@@ -277,6 +284,16 @@ export default function OverduePortfolioTable({
           </div>
         )}
       </div>
+
+      <TablePagination
+        page={page}
+        totalPages={totalPages}
+        perPage={perPage}
+        setPerPage={setPerPage}
+        setPage={setPage}
+        total={total}
+        lang={lang}
+      />
     </div>
   );
 }

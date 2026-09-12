@@ -15,6 +15,7 @@ import { useNavigate, useOutletContext, Link } from "react-router-dom";
 
 import { useRole } from "../context/RoleContext.jsx";
 import { ticketsApi } from "../lib/api.js";
+import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 
 const REASON_LABELS = {
   MEJORA:      { es: "Mejora",       en: "Improvement"     },
@@ -84,6 +85,12 @@ export default function ScreenTickets() {
       return true;
     });
   }, [tickets, statusFilter, reasonFilter, q]);
+
+  // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
+  const {
+    pageItems, page, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(filtered, { defaultPerPage: 20 });
+  useEffect(() => { setPage(1); }, [statusFilter, reasonFilter, q, setPage]);
 
   // ── Acciones ───────────────────────────────────────────
   const onDelete = async (t) => {
@@ -205,7 +212,7 @@ export default function ScreenTickets() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(t => (
+                {pageItems.map(t => (
                   <TicketRow
                     key={t.id}
                     t={t}
@@ -219,6 +226,17 @@ export default function ScreenTickets() {
               </tbody>
             </table>
           </div>
+        )}
+        {!loading && filtered.length > 0 && (
+          <TablePagination
+            page={page}
+            totalPages={totalPages}
+            perPage={perPage}
+            setPerPage={setPerPage}
+            setPage={setPage}
+            total={total}
+            lang={lang}
+          />
         )}
       </div>
     </div>

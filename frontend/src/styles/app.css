@@ -9518,3 +9518,28 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
 @media print {
   .mwt-vtable-scroll { max-height: none !important; overflow: visible !important; }
 }
+
+/* ── Sprint 2026-09-12 · Encabezado de tabla fijo (sticky) + scroll ──
+   Contenedores con scroll vertical propio: el <thead> queda fijo arriba
+   mientras el cuerpo hace scroll. Algunas th ya traían position:sticky;
+   aquí se garantiza el contenedor y se añade a las que faltaban. */
+.table-scroll,
+.table-wrap,
+.products-table-wrap,
+.inv-table-wrap,
+.tickets-table-wrap {
+  overflow: auto;
+  max-height: calc(100vh - var(--header-h, 56px) - 170px);
+}
+.products-table th,
+.tickets-table th,
+.ceo-table thead th,
+.table-sticky thead th {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+}
+.products-table th { background: var(--surface); }
+.tickets-table th { background: var(--surface-alt, #F8FAFC); }
+
+

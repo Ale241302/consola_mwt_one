@@ -14,6 +14,7 @@
 //   POST   /api/users/<uuid>/toggle-active/
 // =====================================================================
 import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 import { createPortal } from "react-dom";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -56,6 +57,12 @@ export default function Users() {
   }, [q, roleFilter, includeInactive]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
+  const {
+    pageItems, page, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(users, { defaultPerPage: 20 });
+  useEffect(() => { setPage(1); }, [q, roleFilter, includeInactive, setPage]);
 
   // Contador de solicitudes MCP pendientes (para el badge/banner).
   useEffect(() => {
@@ -203,9 +210,10 @@ export default function Users() {
         background: "var(--surface-raised)",
         border: "1px solid var(--border)",
         borderRadius: 10,
-        overflow: "hidden",
+        overflow: "auto",
+        maxHeight: "calc(100vh - var(--header-h, 56px) - 220px)",
       }}>
-        <TableHeader lang={lang}/>
+        <TableHeader lang={lang} sticky/>
         {loading && users.length === 0 && (
           <div style={{ padding: 32, textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
             {lang === "es" ? "Cargando…" : "Loading…"}
@@ -216,7 +224,7 @@ export default function Users() {
             {error ? `⚠️ ${error}` : (lang === "es" ? "No hay usuarios." : "No users.")}
           </div>
         )}
-        {users.map((u) => (
+        {pageItems.map((u) => (
           <UserRow key={u.id} user={u}
                    onEdit={() => openEdit(u)}
                    onToggleActive={() => askToggleActive(u)}
@@ -225,6 +233,18 @@ export default function Users() {
                    lang={lang}/>
         ))}
       </div>
+
+      {users.length > 0 && (
+        <TablePagination
+          page={page}
+          totalPages={totalPages}
+          perPage={perPage}
+          setPerPage={setPerPage}
+          setPage={setPage}
+          total={total}
+          lang={lang}
+        />
+      )}
 
       {/* Modal de confirmación unificado — vía portal a body */}
       {pendingAction && createPortal(
@@ -287,7 +307,7 @@ export default function Users() {
 // ─────────────────────────────────────────────────────────────────────
 const COL_TEMPLATE = "minmax(200px, 2fr) minmax(180px, 1.4fr) 140px 140px 100px 150px 160px";
 
-function TableHeader({ lang }) {
+function TableHeader({ lang, sticky }) {
   const headers = [
     lang === "es" ? "Nombre" : "Name",
     lang === "es" ? "Email" : "Email",
@@ -304,6 +324,7 @@ function TableHeader({ lang }) {
       borderBottom: "1px solid var(--border)",
       fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)",
       letterSpacing: 0.5, textTransform: "uppercase",
+      ...(sticky ? { position: "sticky", top: 0, zIndex: 3 } : {}),
     }}>
       {headers.map((h, i) => <span key={i}>{h}</span>)}
     </div>

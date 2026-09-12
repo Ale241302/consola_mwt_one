@@ -12,8 +12,9 @@
 //   PLANNED (gris) · APPROVED (azul) · IN-TRANSIT (ámbar) ·
 //   RECEIVED (verde claro) · RECONCILED (verde oscuro)
 // ─────────────────────────────────────────────────────────────
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 import { useOutletContext, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -185,6 +186,12 @@ export default function ScreenTransfers() {
         return (b.created_at || '').localeCompare(a.created_at || '');
       });
   }, [q, statusFilter, TRANSFERS]);
+
+  // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
+  const {
+    pageItems, page, setPage, perPage, setPerPage, totalPages, total,
+  } = usePagination(rows, { defaultPerPage: 20 });
+  useEffect(() => { setPage(1); }, [q, statusFilter, setPage]);
 
   // ── Status counts para chips ───────────
   const statusCounts = useMemo(() => {
@@ -408,7 +415,7 @@ export default function ScreenTransfers() {
         </div>
 
         <AnimatePresence mode="popLayout">
-          {rows.map((t, idx) => {
+          {pageItems.map((t, idx) => {
             const tot   = getTransferTotals(t);
             const meta  = TRANSFER_STATUS_META[t.status];
             const lmeta = LEGAL_CONTEXT_META[t.legal_context] || { label: t.legal_context, color: '#64748B' };
@@ -780,6 +787,18 @@ export default function ScreenTransfers() {
               {lang==='es'?'Sin movimientos con esos filtros':'No transfers match these filters'}
             </div>
           </div>
+        )}
+
+        {rows.length > 0 && (
+          <TablePagination
+            page={page}
+            totalPages={totalPages}
+            perPage={perPage}
+            setPerPage={setPerPage}
+            setPage={setPage}
+            total={total}
+            lang={lang}
+          />
         )}
       </div>
 

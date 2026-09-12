@@ -176,8 +176,10 @@ def _fetch_expedientes() -> list[dict]:
                 MAX(e.created_at)::date                           AS created_at_date,
                 a05.shipment_date_artifact                        AS shipment_date_artifact,
                 a05.eta_artifact                                  AS eta_artifact,
-                COALESCE(e.credit_days_mwt, e.credit_days, 90)   AS credit_days_mwt,
+                e.credit_days_mwt                                 AS credit_days_mwt,
                 COALESCE(e.credit_days_cliente, e.credit_days, cl.dias_credito, 90) AS credit_days_cliente,
+                NULLIF(e.phase_durations_json -> 'PREPARACION' ->> 'end', '')::date          AS prep_end,
+                NULLIF(e.phase_durations_json -> 'PREPARACION_DESPACHO' ->> 'end', '')::date AS prepdesp_end,
                 e.forma_pago                                      AS forma_pago,
                 COALESCE(e.balance, 0)                            AS balance,
                 COALESCE(e.total_paid, 0)                         AS total_paid,
@@ -189,6 +191,7 @@ def _fetch_expedientes() -> list[dict]:
                 END                                               AS commission_rate_source,
                 cl.razon_social                                   AS cliente_razon_social,
                 cl.segmento                                       AS cliente_segmento,
+                oc.razon_social                                   AS operador_razon_social,
                 COALESCE(cl.dias_credito, 90)                     AS cliente_dias_credito,
                 COALESCE(SUM(l.qty * l.unit_price_client), 0)     AS total_client,
                 COALESCE(SUM(l.qty * l.unit_price_mwt), 0)        AS total_mwt,
@@ -205,6 +208,7 @@ def _fetch_expedientes() -> list[dict]:
                 COUNT(l.id)                                       AS lines_count
             FROM expedientes.expediente e
             LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+            LEFT JOIN clientes.cliente oc ON oc.id = e.operating_company_id
             LEFT JOIN expedientes.linea l ON l.expediente_id = e.id AND l.is_active = TRUE
             LEFT JOIN productos.producto p ON p.id = l.producto_id
             LEFT JOIN LATERAL (
@@ -223,6 +227,7 @@ def _fetch_expedientes() -> list[dict]:
             ) a05 ON TRUE
             WHERE e.is_active = TRUE
             GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
+                     oc.id, oc.razon_social,
                      a05.shipment_date_artifact, a05.eta_artifact
             ORDER BY proforma_codigo ASC NULLS LAST, e.codigo ASC
             """
@@ -237,10 +242,9 @@ def _build_item(row: dict, today: date) -> dict:
     total_client = _dec(row["total_client"])
 
     # Regla de Operador (Sprint 2026-08-03 CEO Directive):
-    # Si operating_company_id == client_id (expediente directo del cliente),
-    # NO es operado por Muito Work Limitada.
-    # Por lo tanto, total_mwt debe ser 0.00 y la base de comision es total_client.
-    is_mwt_operated = (row["operating_company_id"] != row["client_id"])
+    # El expediente lo opera Muito Work Limitada si su operating_company_id es
+    # MWT (constante MWT_OPERATING_CLIENT_ID); si no, lo opera el propio cliente.
+    is_mwt_operated = (str(row["operating_company_id"]) == MWT_OPERATING_CLIENT_ID)
 
     if is_mwt_operated:
         total_mwt = _dec(row["total_mwt"])
@@ -249,28 +253,30 @@ def _build_item(row: dict, today: date) -> dict:
         total_mwt = Decimal("0.00")
         delta_total = total_client
 
-    if commission_rate is not None:
-        base = delta_total if is_mwt_operated else total_client
-        commission_amount = (base * _dec(commission_rate)).quantize(Decimal("0.01"))
+    # K2 · prorrateo por línea (familias): si hay % por línea
+    # (expedientes.linea.commission_pct o reglas por marca/familia), se usa esa suma.
+    comm_client = _dec(row.get("commission_client") or 0)
+
+    # Regla CEO: la comisión MWT se calcula SIEMPRE sobre el Total Cliente.
+    # Si el expediente lo opera Muito Work Limitada, la comisión se muestra en 0:
+    # en ese caso el beneficio de MWT es el arbitraje (Δ), no una comisión.
+    if is_mwt_operated:
+        commission_amount = Decimal("0.00")
+    elif comm_client and comm_client != 0:
+        commission_amount = comm_client.quantize(Decimal("0.01"))
+    elif commission_rate is not None:
+        commission_amount = (total_client * _dec(commission_rate)).quantize(Decimal("0.01"))
     else:
         commission_amount = None
-
-    # K2 Â· prorrateo por lÃ­nea (familias): si hay % por lÃ­nea (expedientes.linea.commission_pct
-    # o reglas por marca/familia), se usa esa suma; si no, se cae al cÃ¡lculo por tasa Ãºnica.
-    comm_delta = _dec(row.get("commission_delta") or 0)
-    comm_client = _dec(row.get("commission_client") or 0)
-    per_line = comm_delta if is_mwt_operated else comm_client
-    if per_line and per_line != 0:
-        commission_amount = per_line.quantize(Decimal("0.01"))
 
     margen_pct = None
     if total_client > 0:
         margen_pct = (delta_total / total_client).quantize(Decimal("0.0001"))
 
     cd_cli = int(row["credit_days_cliente"] or row.get("cliente_dias_credito") or 90)
-    cd_mwt = int(row["credit_days_mwt"] or 90)
+    cd_mwt = int(row["credit_days_mwt"]) if row.get("credit_days_mwt") is not None else None
 
-    estado, fecha_devengo = _resolve_devengo_estado(
+    estado, _fecha_devengo_credito = _resolve_devengo_estado(
         commission_rate=_dec(commission_rate) if commission_rate is not None else None,
         shipment_date=(row.get("shipment_date_artifact") or row["shipment_date"]),
         eta=(row.get("eta_artifact") or row["eta"]),
@@ -280,6 +286,16 @@ def _build_item(row: dict, today: date) -> dict:
         balance=_dec(row["balance"]),
         total_paid=_dec(row["total_paid"]),
         today=today,
+    )
+
+    # Fecha de devengo = fecha en que finalizó la fase de PREPARACION
+    # (PREPARACION_DESPACHO si la fase visual fusionada reemplazó a PREPARACION).
+    # Si la fase aún no cerró, no hay devengo todavía.
+    fecha_devengo = row.get("prep_end") or row.get("prepdesp_end")
+
+    # Fecha de pago aproximada = devengo + plazo del CLIENTE (no el de MWT).
+    fecha_pago_aprox = (
+        fecha_devengo + timedelta(days=cd_cli) if fecha_devengo else None
     )
 
     base = (row.get("shipment_date_artifact")
@@ -304,6 +320,7 @@ def _build_item(row: dict, today: date) -> dict:
         "client_id":             row["client_id"],
         "cliente_razon_social":  row["cliente_razon_social"] or "â€”",
         "cliente_segmento":      row["cliente_segmento"] or None,
+        "operador_razon_social": row.get("operador_razon_social") or None,
         "dias_credito_cliente":  cd_cli,
         "commission_rate":       (str(commission_rate) if commission_rate is not None else None),
         "commission_rate_source": row["commission_rate_source"],
@@ -322,6 +339,7 @@ def _build_item(row: dict, today: date) -> dict:
         "shipment_date_source":  ("artifact_ART05" if row.get("shipment_date_artifact")
                                   else ("expediente" if row["shipment_date"] else None)),
         "fecha_devengo_esperada": fecha_devengo.isoformat() if fecha_devengo else None,
+        "fecha_pago_aprox":       fecha_pago_aprox.isoformat() if fecha_pago_aprox else None,
         "devengo_estado":        estado,
         "lines_count":           row["lines_count"],
         "total_qty":             str(_dec(row["total_qty"])),
