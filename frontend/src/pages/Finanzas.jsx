@@ -422,13 +422,8 @@ export default function Finanzas({ lang = "es" }) {
                     {it.cliente_razon_social}
                   </div>
                   {it.operador_razon_social && it.operador_razon_social !== it.cliente_razon_social && (
-                    <div style={{ fontSize: 10, color: "var(--text-tertiary, #94A3B8)", marginTop: 2 }}>
-                      {lang === "es" ? "Operador" : "Operator"}: {it.operador_razon_social}
-                    </div>
-                  )}
-                  {it.cliente_segmento && (
-                    <div style={{ fontSize: 10, color: "var(--text-tertiary, #94A3B8)", marginTop: 2 }}>
-                      {lang === "es" ? "Segmento" : "Segment"} {it.cliente_segmento}
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary, #475569)", marginTop: 3 }}>
+                      {lang === "es" ? "Importador" : "Importer"}: {it.operador_razon_social}
                     </div>
                   )}
                 </Td>
