@@ -20,7 +20,7 @@ import io
 import json
 import logging
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
@@ -456,6 +456,76 @@ def heal_phase_durations_from_events(exp) -> bool:
     if changed:
         exp.phase_durations_json = new_pd
     return changed
+
+
+def fill_missing_phase_dates(exp) -> bool:
+    """
+    Rellena fases sin fecha repartiendo el intervalo entre dos fases ancla
+    consecutivas (p.ej. Producción fin → Tránsito inicio → Preparación/Despacho).
+    Nunca pisa valores existentes y sólo escribe fases realmente vacías.
+    Devuelve True si `exp.phase_durations_json` cambió.
+    """
+    original = dict(exp.phase_durations_json or {})
+    pd = dict(original)
+    if not pd:
+        return False
+
+    merged_visual = (
+        isinstance(pd.get("PREPARACION_DESPACHO"), dict)
+        and bool(pd.get("PREPARACION_DESPACHO").get("start"))
+    )
+
+    def _rng(phase):
+        entry = pd.get(phase)
+        if not isinstance(entry, dict):
+            return None, None
+        return _parse_phase_date(entry.get("start")), _parse_phase_date(entry.get("end"))
+
+    def _set(phase, start=None, end=None):
+        entry = dict(pd.get(phase) or {})
+        if start:
+            entry["start"] = start.isoformat()
+        if end:
+            entry["end"] = end.isoformat()
+        _recompute_phase_days(entry)
+        pd[phase] = entry
+
+    # 1) Cadena contigua: una fase con start pero sin end hereda el start de la
+    #    siguiente fase conocida.
+    for i, phase in enumerate(PHASE_ORDER):
+        s, e = _rng(phase)
+        if s and not e:
+            for nxt in PHASE_ORDER[i + 1:]:
+                ns, _ = _rng(nxt)
+                if ns:
+                    _set(phase, end=ns)
+                    break
+
+    # 2) Reparto de huecos entre anclas consecutivas.
+    known = [i for i, p in enumerate(PHASE_ORDER) if _rng(p)[0]]
+    for a, b in zip(known, known[1:]):
+        k = b - a - 1
+        if k <= 0:
+            continue
+        _, a_end = _rng(PHASE_ORDER[a])
+        b_start, _ = _rng(PHASE_ORDER[b])
+        if not a_end or not b_start or b_start < a_end:
+            continue
+        total = (b_start - a_end).days
+        base, rem = divmod(total, k)
+        cursor = a_end
+        for n in range(k):
+            step = base + (1 if n < rem else 0)
+            phase = PHASE_ORDER[a + 1 + n]
+            nxt = cursor + timedelta(days=step)
+            if not (merged_visual and phase in ("PREPARACION", "DESPACHO")):
+                _set(phase, start=cursor, end=nxt)
+            cursor = nxt
+
+    if pd == original:
+        return False
+    exp.phase_durations_json = pd
+    return True
 
 
 def check_auto_close_en_destino(exp) -> bool:
@@ -1431,10 +1501,13 @@ class ExpedienteViewSet(viewsets.ViewSet):
 
         if request.method.upper() == "GET":
             check_auto_close_en_destino(exp)
-            # Self-heal: derivar fechas de fase del EventLog para expedientes
-            # legados que avanzaron sin registrar overrides manuales.
+            # Self-heal: derivar fechas de fase del EventLog y rellenar huecos
+            # entre fases ancla para expedientes legados.
             try:
-                if heal_phase_durations_from_events(exp):
+                changed = heal_phase_durations_from_events(exp)
+                if fill_missing_phase_dates(exp):
+                    changed = True
+                if changed:
                     exp.save(update_fields=["phase_durations_json", "updated_at"])
             except Exception as e:
                 log.warning("phase_durations GET heal falló exp=%s: %s", exp.id, e)
