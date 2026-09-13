@@ -192,6 +192,12 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # Etapa 5 · Portal cliente — embarques (respeta el scope del token).
     "portal_embarques": ("expedientes", "view"),
     "portal_embarque":  ("expedientes", "view"),
+    "portal_subir_documento": ("expedientes", "create"),
+
+    # Etapa 5 · Comisiones por marca + flujo + saldo inicial.
+    "finanzas_comisiones_por_marca": ("finanzas", "view"),
+    "finanzas_flujo":                ("finanzas", "view"),
+    "finanzas_saldo_inicial_set":    ("finanzas", "update"),
     # ── Storage ────────────────────────────────────────────────────────────
     "storage_subir_archivo": ("storage", "create"),
     "artefacto_archivo_descargar": ("storage", "download_doc"),

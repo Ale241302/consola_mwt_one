@@ -809,6 +809,14 @@ export const finanzasApi = {
   comisiones: (params) => apiFetch(`/finanzas/comisiones/${qs(params)}`, { token: getToken() }),
   radiografia: (windowDays) =>
     apiFetch(`/finanzas/radiografia/${qs(windowDays ? { window_days: windowDays } : null)}`, { token: getToken() }),
+  comisionesPorMarca: () =>
+    apiFetch(`/finanzas/comisiones-por-marca/`, { token: getToken() }),
+  flujo: (dias) =>
+    apiFetch(`/finanzas/flujo/${qs(dias ? { dias } : null)}`, { token: getToken() }),
+  saldoInicial: () =>
+    apiFetch(`/finanzas/saldo-inicial/`, { token: getToken() }),
+  setSaldoInicial: (body) =>
+    apiFetch(`/finanzas/saldo-inicial/`, { method: "POST", body, token: getToken() }),
 };
 
 // ---------------------------------------------------------------------
@@ -1497,6 +1505,26 @@ export const portalApi = {
   misEmbarques:   (cid) => apiFetch(`${portalBase}/mis_embarques/`,  { token: getToken(), headers: portalHeaders(cid) }),
   embarque:       (cid, id) => apiFetch(`${portalBase}/embarque/?id=${encodeURIComponent(id)}`,
                                         { token: getToken(), headers: portalHeaders(cid) }),
+  // Etapa 5 · el cliente sube un documento a su expediente (multipart).
+  subirDocumento: async (cid, { expedienteId, file, kind, codigo }) => {
+    const fd = new FormData();
+    fd.append("expediente_id", expedienteId);
+    if (kind) fd.append("kind", kind);
+    if (codigo) fd.append("codigo", codigo);
+    fd.append("file", file);
+    const resp = await fetch(`${API_BASE}${portalBase}/subir_documento/`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${getToken()}`, ...portalHeaders(cid) },
+      body: fd,
+    });
+    let body = null;
+    try { body = await resp.json(); } catch { body = null; }
+    if (!resp.ok) {
+      const err = new Error(body?.detail || resp.statusText || "Error");
+      err.status = resp.status; err.body = body; throw err;
+    }
+    return body || {};
+  },
   // Ola 3 · 3.29 — líneas de una OC scopeada (precio cliente, sin costos internos).
   ocLines:        (cid, ocId) => apiFetch(`${portalBase}/oc_lines/?id=${encodeURIComponent(ocId)}`,
                                           { token: getToken(), headers: portalHeaders(cid) }),

@@ -20,6 +20,8 @@
 // =====================================================================
 import React, { useEffect, useMemo, useState } from "react";
 import { apiFetch, getToken } from "../lib/api.js";
+// Etapa 5 · comisiones por marca (ventana 10–20) + flujo 90 días (USD/CRC).
+import ComisionesFlujo from "../components/finanzas/ComisionesFlujo.jsx";
 import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 
 // ---------------------------------------------------------------------
@@ -252,6 +254,9 @@ export default function Finanzas({ lang = "es" }) {
             : "MWT commissions, weighted margin and accrual calendar. Real-time data from expedientes operated by Muito Work Limitada."}
         </p>
       </div>
+
+      {/* Etapa 5 · Comisiones por marca + flujo 90 días */}
+      <ComisionesFlujo lang={lang} />
 
       {/* KPIs hero */}
       <div style={{

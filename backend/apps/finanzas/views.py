@@ -147,9 +147,22 @@ def _next_month_business_window(d: date | None, n_days: int = 10) -> tuple[date 
     return (inicio, cur, label)
 
 
+def _ventana_10_20(base: date | None) -> tuple[date | None, date | None, str | None]:
+    """Etapa 5 · ventana de pago de comisión: días 10–20 del mes SIGUIENTE
+    al pago del cliente (ej. pago 1-sep → comisión 10–20 oct)."""
+    if base is None:
+        return (None, None, None)
+    if base.month == 12:
+        inicio = date(base.year + 1, 1, 10)
+    else:
+        inicio = date(base.year, base.month + 1, 10)
+    fin = inicio.replace(day=20)
+    return (inicio, fin, inicio.strftime("%Y-%m"))
+
+
 def _fetch_expedientes() -> list[dict]:
     """Lee TODOS los expedientes activos con agregados de lineas.
-    Una sola query JOIN â€” evita N+1. Solo lineas activas.
+    Una sola query JOIN — evita N+1. Solo lineas activas.
     Sin filtro por operating_company_id (decision CEO 2026-07-29).
     """
     with connection.cursor() as c:
@@ -192,6 +205,8 @@ def _fetch_expedientes() -> list[dict]:
                 cl.razon_social                                   AS cliente_razon_social,
                 cl.segmento                                       AS cliente_segmento,
                 oc.razon_social                                   AS operador_razon_social,
+                e.brand_id::text                                  AS brand_id,
+                bm.nombre                                         AS brand_name,
                 COALESCE(cl.dias_credito, 90)                     AS cliente_dias_credito,
                 COALESCE(SUM(l.qty * l.unit_price_client), 0)     AS total_client,
                 COALESCE(SUM(l.qty * l.unit_price_mwt), 0)        AS total_mwt,
@@ -209,6 +224,7 @@ def _fetch_expedientes() -> list[dict]:
             FROM expedientes.expediente e
             LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
             LEFT JOIN clientes.cliente oc ON oc.id = e.operating_company_id
+            LEFT JOIN brands.marca bm ON bm.id = e.brand_id
             LEFT JOIN expedientes.linea l ON l.expediente_id = e.id AND l.is_active = TRUE
             LEFT JOIN productos.producto p ON p.id = l.producto_id
             LEFT JOIN LATERAL (
@@ -228,6 +244,7 @@ def _fetch_expedientes() -> list[dict]:
             WHERE e.is_active = TRUE
             GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
                      oc.id, oc.razon_social,
+                     e.brand_id, bm.nombre,
                      a05.shipment_date_artifact, a05.eta_artifact
             ORDER BY proforma_codigo ASC NULLS LAST, e.codigo ASC
             """
@@ -311,6 +328,7 @@ def _build_item(row: dict, today: date) -> dict:
     fpa_inicio, fpa_fin, mes_pago_label = _next_month_business_window(
         fecha_facturada, n_days=10
     )
+    vc_ini, vc_fin, vc_mes = _ventana_10_20(fecha_pago_aprox or fecha_facturada)
 
     return {
         "expediente_id":         row["expediente_id"],
@@ -347,6 +365,11 @@ def _build_item(row: dict, today: date) -> dict:
         "mes_pago_aproximado":       mes_pago_label,
         "fecha_pago_aprox_inicio":   fpa_inicio.isoformat() if fpa_inicio else None,
         "fecha_pago_aprox_fin":      fpa_fin.isoformat() if fpa_fin else None,
+        "brand_id":                  row.get("brand_id"),
+        "brand_name":                row.get("brand_name"),
+        "ventana_comision_inicio":   vc_ini.isoformat() if vc_ini else None,
+        "ventana_comision_fin":      vc_fin.isoformat() if vc_fin else None,
+        "mes_comision":              vc_mes,
     }
 
 
@@ -805,5 +828,184 @@ def radiografia_ceo(request):
             "tareas_revision": tareas_rev,
         },
     })
+
+
+# ---------------------------------------------------------------------
+# Etapa 5 · COMISIONES POR MARCA (ventana 10–20 del mes siguiente al pago)
+# ---------------------------------------------------------------------
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def comisiones_por_marca(request):
+    """Comisión por marca, separada en proyectada / pendiente / devengada,
+    con la ventana de pago 10–20 del mes siguiente al pago del cliente."""
+    today = date.today()
+    items = [_build_item(r, today) for r in _fetch_expedientes()]
+    marcas: dict[str, dict] = {}
+    for it in items:
+        key = it.get("brand_name") or "(sin marca)"
+        m = marcas.setdefault(key, {
+            "brand_id": it.get("brand_id"), "brand_name": key,
+            "comision_total": Decimal("0"), "comision_devengada": Decimal("0"),
+            "comision_pendiente": Decimal("0"), "comision_proyectada": Decimal("0"),
+            "delta_total": Decimal("0"), "expedientes": 0, "sin_tasa": 0,
+            "ventanas": {},
+        })
+        m["expedientes"] += 1
+        m["delta_total"] += _dec(it.get("delta_total"))
+        amt = it.get("commission_amount")
+        if amt is None:
+            m["sin_tasa"] += 1
+            continue
+        a = _dec(amt)
+        m["comision_total"] += a
+        est = it["devengo_estado"]
+        if est == "DEVENGADA":
+            m["comision_devengada"] += a
+        elif est in ("DEVENGABLE", "VENCIDA"):
+            m["comision_pendiente"] += a
+        elif est == "PROYECTADA":
+            m["comision_proyectada"] += a
+        mes = it.get("mes_comision")
+        if mes:
+            v = m["ventanas"].setdefault(mes, {
+                "mes": mes, "inicio": it.get("ventana_comision_inicio"),
+                "fin": it.get("ventana_comision_fin"), "monto": Decimal("0"),
+            })
+            v["monto"] += a
+    results = []
+    for m in marcas.values():
+        for v in m["ventanas"].values():
+            v["monto"] = str(v["monto"].quantize(Decimal("0.01")))
+        m["ventanas"] = sorted(m["ventanas"].values(), key=lambda x: x["mes"])
+        for k in ("comision_total", "comision_devengada", "comision_pendiente",
+                  "comision_proyectada", "delta_total"):
+            m[k] = str(m[k].quantize(Decimal("0.01")))
+        results.append(m)
+    results.sort(key=lambda x: _dec(x["comision_total"]), reverse=True)
+    return Response({
+        "results": results,
+        "today": today.isoformat(),
+        "ventana_comision": "días 10–20 del mes siguiente al pago del cliente",
+    })
+
+
+# ---------------------------------------------------------------------
+# Etapa 5 · FLUJO DE DINERO (90 días, USD + CRC) + saldo inicial
+# ---------------------------------------------------------------------
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def flujo(request):
+    """Flujo NETO proyectado (entradas − salidas) a N días (default 90),
+    agrupado por semana, en USD y CRC, más el saldo inicial configurado.
+
+    No es 'saldo disponible bancario': es flujo + saldo inicial declarado.
+    """
+    try:
+        dias = int(request.query_params.get("dias") or 90)
+    except (TypeError, ValueError):
+        dias = 90
+    dias = max(7, min(dias, 365))
+    today = date.today()
+
+    with connection.cursor() as c:
+        c.execute("SELECT moneda, monto FROM finanzas.saldo_inicial")
+        saldo = {r[0]: _dec(r[1]) for r in c.fetchall()}
+
+    with connection.cursor() as c:
+        c.execute("""
+            SELECT direction, moneda, fecha,
+                   COALESCE(monto_usd, 0) AS monto_usd,
+                   COALESCE(monto, 0)     AS monto
+              FROM finance.payment
+             WHERE is_active = TRUE AND fecha IS NOT NULL
+               AND fecha BETWEEN %s AND %s
+        """, [today, today + timedelta(days=dias)])
+        pagos = c.fetchall()
+
+    def _wk(d):
+        return d - timedelta(days=d.weekday())
+
+    weeks: dict = {}
+    for direction, moneda, fecha, monto_usd, monto in pagos:
+        ws = _wk(fecha)
+        b = weeks.setdefault(ws, {
+            "semana": ws.isoformat(), "fin": (ws + timedelta(days=6)).isoformat(),
+            "entradas_usd": Decimal("0"), "salidas_usd": Decimal("0"),
+            "entradas_crc": Decimal("0"), "salidas_crc": Decimal("0"),
+        })
+        if direction == "IN":
+            b["entradas_usd"] += _dec(monto_usd)
+            if (moneda or "").upper() == "CRC":
+                b["entradas_crc"] += _dec(monto)
+        elif direction == "OUT":
+            b["salidas_usd"] += _dec(monto_usd)
+            if (moneda or "").upper() == "CRC":
+                b["salidas_crc"] += _dec(monto)
+
+    series = []
+    tot = {"entradas_usd": Decimal("0"), "salidas_usd": Decimal("0"),
+           "entradas_crc": Decimal("0"), "salidas_crc": Decimal("0")}
+    for ws in sorted(weeks):
+        b = weeks[ws]
+        for k in ("entradas_usd", "salidas_usd", "entradas_crc", "salidas_crc"):
+            tot[k] += b[k]
+        b["neto_usd"] = str((b["entradas_usd"] - b["salidas_usd"]).quantize(Decimal("0.01")))
+        b["neto_crc"] = str((b["entradas_crc"] - b["salidas_crc"]).quantize(Decimal("0.01")))
+        for k in ("entradas_usd", "salidas_usd", "entradas_crc", "salidas_crc"):
+            b[k] = str(b[k].quantize(Decimal("0.01")))
+        series.append(b)
+
+    neto_usd = tot["entradas_usd"] - tot["salidas_usd"]
+    neto_crc = tot["entradas_crc"] - tot["salidas_crc"]
+    saldo_usd = saldo.get("USD", Decimal("0"))
+    saldo_crc = saldo.get("CRC", Decimal("0"))
+    return Response({
+        "today": today.isoformat(),
+        "dias": dias,
+        "monedas": ["USD", "CRC"],
+        "saldo_inicial": {"USD": str(saldo_usd), "CRC": str(saldo_crc)},
+        "semanas": series,
+        "totales": {
+            "entradas_usd": str(tot["entradas_usd"].quantize(Decimal("0.01"))),
+            "salidas_usd": str(tot["salidas_usd"].quantize(Decimal("0.01"))),
+            "neto_usd": str(neto_usd.quantize(Decimal("0.01"))),
+            "entradas_crc": str(tot["entradas_crc"].quantize(Decimal("0.01"))),
+            "salidas_crc": str(tot["salidas_crc"].quantize(Decimal("0.01"))),
+            "neto_crc": str(neto_crc.quantize(Decimal("0.01"))),
+        },
+        "saldo_final_proyectado": {
+            "USD": str((saldo_usd + neto_usd).quantize(Decimal("0.01"))),
+            "CRC": str((saldo_crc + neto_crc).quantize(Decimal("0.01"))),
+        },
+        "nota": ("Flujo proyectado (entradas − salidas) + saldo inicial declarado. "
+                 "No es saldo bancario disponible."),
+    })
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsCeoOrAdmin])
+def saldo_inicial(request):
+    """GET/POST del saldo inicial por moneda (USD, CRC)."""
+    if request.method == "POST":
+        with connection.cursor() as c:
+            for mon in ("USD", "CRC"):
+                if mon in (request.data or {}):
+                    c.execute("""
+                        INSERT INTO finanzas.saldo_inicial (moneda, monto, notas, updated_at)
+                        VALUES (%s, %s, %s, NOW())
+                        ON CONFLICT (moneda) DO UPDATE
+                          SET monto = EXCLUDED.monto,
+                              notas = EXCLUDED.notas,
+                              updated_at = NOW()
+                    """, [mon, _dec(request.data.get(mon)), request.data.get("notas")])
+    with connection.cursor() as c:
+        c.execute("SELECT moneda, monto, notas, updated_at FROM finanzas.saldo_inicial")
+        cols = [x[0] for x in c.description]
+        rows = [dict(zip(cols, r)) for r in c.fetchall()]
+    for r in rows:
+        r["monto"] = str(r["monto"])
+        r["updated_at"] = r["updated_at"].isoformat() if r.get("updated_at") else None
+    return Response({"results": rows})
+
 
 

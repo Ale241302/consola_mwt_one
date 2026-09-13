@@ -18,4 +18,9 @@ urlpatterns = [
     path("finanzas/cliente/<uuid:client_id>/",       views.cliente_profile,    name="finanzas-cliente"),
     # Etapa 5 · Portada CEO (respuestas pendientes + proximas salidas de produccion)
     path("finanzas/radiografia/",                    views.radiografia_ceo,    name="finanzas-radiografia"),
+    # Etapa 5 · Comisiones por marca + ventana 10–20
+    path("finanzas/comisiones-por-marca/",           views.comisiones_por_marca, name="finanzas-comisiones-marca"),
+    # Etapa 5 · Flujo de dinero (90 dias, USD+CRC) + saldo inicial
+    path("finanzas/flujo/",                           views.flujo,              name="finanzas-flujo"),
+    path("finanzas/saldo-inicial/",                   views.saldo_inicial,      name="finanzas-saldo-inicial"),
 ]

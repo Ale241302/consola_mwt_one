@@ -1009,6 +1009,59 @@ class PortalViewSet(viewsets.ViewSet):
 
         return Response(r)
 
+    @action(detail=False, methods=["post"], url_path="subir_documento")
+    def subir_documento(self, request):
+        """El cliente sube un documento a SU expediente (audience=CLIENT).
+        multipart: expediente_id, file, kind?, codigo?."""
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return _empty_scope()
+        exp_id = (request.data.get("expediente_id") or "").strip()
+        up = request.FILES.get("file")
+        if not exp_id or up is None:
+            return Response({"detail": "expediente_id y file son requeridos"}, status=400)
+        ph = ",".join(["%s"] * len(cids))
+        found = _fetchall(f"""
+            SELECT 1 FROM expedientes.expediente e
+             WHERE e.id = %s AND e.is_active = TRUE
+               AND (lower(e.client_id::text) IN ({ph})
+                    OR lower(e.operating_company_id::text) IN ({ph}))
+             LIMIT 1
+        """, [exp_id] + list(cids) + list(cids))
+        if not found:
+            return Response({"detail": "Expediente no encontrado o fuera de scope."}, status=404)
+
+        kind = (request.data.get("kind") or "OTRO").strip().upper()[:32]
+        codigo = (request.data.get("codigo") or up.name or "").strip()[:96] or None
+        try:
+            import io as _io
+            from apps.storage.services import make_object_key, put_object_stream
+            data_bytes = up.read()
+            key = make_object_key("documento", up.name or "documento.bin")
+            put_object_stream(key, _io.BytesIO(data_bytes),
+                              content_type=up.content_type or "application/octet-stream")
+            size = len(data_bytes)
+            file_ext = up.name.rsplit(".", 1)[-1].lower() if up.name and "." in up.name else None
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning("[portal.subir_documento] minio: %s", exc)
+            return Response({"detail": "No se pudo almacenar el archivo"}, status=500)
+
+        author = (getattr(request.user, "email", None)
+                  or getattr(request.user, "email_plain", None) or "client")
+        doc_id = str(uuid.uuid4())
+        with connection.cursor() as c:
+            c.execute("SELECT oc_id::text FROM expedientes.expediente WHERE id = %s", [exp_id])
+            row = c.fetchone()
+            oc_id = row[0] if row else None
+            c.execute("""
+                INSERT INTO expedientes.documento
+                  (id, oc_id, expediente_id, kind, codigo, file_ext, file_size_bytes,
+                   storage_url, author, fecha, audience, is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE, 'CLIENT', TRUE, NOW(), NOW())
+            """, [doc_id, oc_id, exp_id, kind, codigo, file_ext, size, key, author])
+        return Response({"id": doc_id, "kind": kind, "codigo": codigo,
+                         "file_size_bytes": size, "tiene_archivo": True}, status=201)
+
     @action(detail=False, methods=["get"], url_path="expediente_detail")
     def expediente_detail(self, request):
         """Detalle de un expediente del cliente (scope-checked por client_id).

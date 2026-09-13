@@ -3074,6 +3074,54 @@ def portal_embarque(expediente_id: str) -> Any:
                            "portal_embarque")
 
 
+@mcp.tool()
+def finanzas_comisiones_por_marca() -> Any:
+    """Etapa 5: comisión por MARCA, separada en proyectada/pendiente/devengada,
+    con la ventana de pago 10–20 del mes siguiente al pago del cliente. CEO/Admin."""
+    return _safe_role_read(lambda: api.get("finanzas/comisiones-por-marca/"),
+                           "finanzas_comisiones_por_marca")
+
+
+@mcp.tool()
+def finanzas_flujo(dias: int = 90) -> Any:
+    """Etapa 5: flujo NETO proyectado (entradas − salidas) a `dias` (default 90),
+    agrupado por semana, en USD y CRC, más el saldo inicial declarado.
+    No es saldo bancario disponible."""
+    return _safe_role_read(lambda: api.get("finanzas/flujo/", _params(dias=dias)),
+                           "finanzas_flujo")
+
+
+@mcp.tool()
+@write_tool
+def finanzas_saldo_inicial_set(usd: float | None = None, crc: float | None = None,
+                               notas: str | None = None) -> Any:
+    """Etapa 5: fija el saldo/caja inicial por moneda (USD y/o CRC). CEO/Admin."""
+    g = _wguard()
+    if g:
+        return g
+    body: dict = {}
+    if usd is not None:
+        body["USD"] = usd
+    if crc is not None:
+        body["CRC"] = crc
+    if notas is not None:
+        body["notas"] = notas
+    return _safe_role(lambda: api.post("finanzas/saldo-inicial/", body))
+
+
+@mcp.tool()
+@write_tool
+def portal_subir_documento(expediente_id: str, file_path: str,
+                           kind: str = "OTRO", codigo: str | None = None) -> Any:
+    """Portal cliente: sube un documento (PDF, etc.) a SU expediente con
+    audience=CLIENT. Respeta el scope del token (un cliente solo sube a lo suyo)."""
+    g = _wguard()
+    if g:
+        return g
+    data = _params(expediente_id=expediente_id, kind=kind, codigo=codigo)
+    return _safe_role(lambda: api.post_multipart("portal/subir_documento/", data, file_path))
+
+
 # =========================================================================== #
 # TAREAS — catálogo, agenda por expediente y mesa de trabajo (Etapa 2)
 # =========================================================================== #

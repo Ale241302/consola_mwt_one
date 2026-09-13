@@ -80,6 +80,14 @@ export default function EmbarquesPortada({ lang = "es", clientId }) {
     }
   }, [openId, detalle, clientId]);
 
+  const subir = useCallback(async (expId, file) => {
+    try {
+      await portalApi.subirDocumento(clientId, { expedienteId: expId, file, kind: "OTRO" });
+      const d = await portalApi.embarque(clientId, expId);
+      setDetalle((prev) => ({ ...prev, [expId]: d }));
+    } catch { /* el portal muestra el detalle sin el archivo */ }
+  }, [clientId]);
+
   if (loading) {
     return (
       <div className="card card-pad-lg" style={{ marginBottom: 14 }}>
@@ -188,6 +196,16 @@ export default function EmbarquesPortada({ lang = "es", clientId }) {
                         {det.awb_bl.fecha_arrivo ? ` · ${es ? "arribo" : "arrival"} ${det.awb_bl.fecha_arrivo}` : ""}
                       </div>
                     )}
+
+                    {/* Subir documento (cliente) */}
+                    <div className="micro" style={{ color: "var(--text-tertiary)", margin: "10px 0 4px" }}>
+                      {es ? "SUBIR DOCUMENTO" : "UPLOAD DOCUMENT"}
+                    </div>
+                    <input type="file" onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) subir(it.id, f);
+                      e.target.value = "";
+                    }} />
                   </>
                 )}
               </div>
