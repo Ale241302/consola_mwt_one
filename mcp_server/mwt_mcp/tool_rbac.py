@@ -210,6 +210,31 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "comparar": ("dashboard", "view"),             # genérica
     "exportar_xlsx": ("dashboard", "view"),        # genérica
     "exportar_csv": ("dashboard", "view"),         # genérica
+
+    # Etapa 2 · Tareas (catálogo + agenda + mesa de trabajo)
+    "tarea_catalogo_listar": ("tareas", "view"),
+    "tarea_listar":          ("tareas", "view"),
+    "tarea_obtener":         ("tareas", "view"),
+    "tareas_mesa":           ("tareas", "view"),
+    "tarea_crear":           ("tareas", "create"),
+    "tarea_completar":       ("tareas", "update"),
+    "tarea_reprogramar":     ("tareas", "update"),
+    "tarea_cancelar":        ("tareas", "update"),
+
+    # Etapa 3 · Correo (bandeja + contactos + envíos)
+    "correo_mensaje_listar":   ("correo", "view"),
+    "correo_mensaje_obtener":  ("correo", "view"),
+    "correo_contacto_listar":  ("correo", "view"),
+    "correo_envio_listar":     ("correo", "view"),
+    "correo_contacto_crear":   ("correo", "create"),
+    "correo_envio_crear":      ("correo", "create"),
+    "correo_envio_enviar":     ("correo", "create"),
+    "correo_envio_traducir":   ("correo", "update"),
+    "correo_mensaje_importar": ("correo", "create"),
+
+    # Etapa 1/backlog B8 · anular/recrear expediente
+    "expediente_anular":  ("expedientes", "update"),
+    "expediente_recrear": ("expedientes", "create"),
 }
 
 

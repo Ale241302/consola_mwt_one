@@ -176,7 +176,8 @@ class MensajeViewSet(viewsets.ViewSet):
         if not user_is_ceo_or_admin(request.user):
             return Response({"detail": "Solo admin/CEO"}, status=403)
         return Response({"llm": services.diagnostico_llm(),
-                         "imap": services.diagnostico_imap()})
+                         "imap": services.diagnostico_imap(),
+                         "hostinger_mail": services.diagnostico_hostinger()})
 
 
 class ContactoViewSet(viewsets.ViewSet):

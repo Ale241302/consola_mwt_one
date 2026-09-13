@@ -1680,6 +1680,29 @@ def expediente_eliminar(expediente_id: str) -> Any:
 
 
 @mcp.tool()
+@write_tool
+def expediente_anular(expediente_id: str, motivo: str) -> Any:
+    """B8 · Anula un expediente (conserva la fila y sus documentos). Requiere `motivo`.
+    Bloquea si hay factura emitida o pago registrado (regla de no reasignación)."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/anular/", {"motivo": motivo}))
+
+
+@mcp.tool()
+@write_tool
+def expediente_recrear(expediente_id: str, client_id: str | None = None, motivo: str | None = None) -> Any:
+    """B8 · Recrea el expediente como identidad nueva en REGISTRO (sin SAP), conserva
+    el anterior y enlaza el reemplazo. `client_id` opcional (p. ej. cambio de cliente)."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(f"expedientes/{expediente_id}/recrear/",
+                                       {"client_id": client_id, "motivo": motivo}))
+
+
+@mcp.tool()
 def expediente_edit_full_get(expediente_id: str, campos: str | None = None) -> Any:
     """Lee la edición GENERAL del expediente (todas las líneas y términos).
     `campos`: lista separada por comas para proyectar solo esos atributos."""
@@ -3014,6 +3037,190 @@ def finanzas_cliente(client_id: str) -> Any:
     """Perfil financiero de un cliente: KPIs de su cartera de expedientes
     (comisión, margen, devengo) + detalle. Solo CEO/Admin."""
     return _safe_role_read(lambda: api.get(f"finanzas/cliente/{client_id}/"), "finanzas_cliente")
+
+
+# =========================================================================== #
+# TAREAS — catálogo, agenda por expediente y mesa de trabajo (Etapa 2)
+# =========================================================================== #
+@mcp.tool()
+def tarea_catalogo_listar() -> Any:
+    """Catálogo de plantillas de tareas (código, nombre, tipo y regla de días hábiles)."""
+    return _safe_role_read(lambda: api.get("tareas/catalogo/"), "tarea_catalogo_listar")
+
+
+@mcp.tool()
+def tarea_listar(expediente: str | None = None, estado: str | None = None, tipo: str | None = None,
+                 responsable: str | None = None, vencidas: bool | None = None,
+                 abiertas: bool | None = None, q: str | None = None,
+                 limit: int | None = None, offset: int | None = None, campos: str | None = None) -> Any:
+    """Lista tareas de la agenda. Filtros: `expediente` (UUID), `estado` (coma-separado),
+    `tipo`, `responsable` (UUID), `vencidas=true`, `abiertas=true`, `q`."""
+    lim, off = _paging(limit, offset)
+    data = _safe_role_read(lambda: api.get("tareas/", _params(
+        expediente=expediente, estado=estado, tipo=tipo, responsable=responsable,
+        vencidas=vencidas, abiertas=abiertas, q=q, limit=lim, offset=off)), "tarea_listar")
+    return _project(campos, data)
+
+
+@mcp.tool()
+def tarea_obtener(tarea_id: str) -> Any:
+    """Detalle de una tarea por UUID."""
+    return _safe_role_read(lambda: api.get(f"tareas/{tarea_id}/"), "tarea_obtener")
+
+
+@mcp.tool()
+def tareas_mesa(expediente: str | None = None, estado: str | None = None, tipo: str | None = None,
+                responsable: str | None = None, q: str | None = None) -> Any:
+    """Mesa de trabajo: tareas abiertas con contexto (proforma/SAP/cliente/OC) + KPIs
+    (vencidas, hoy, próximas, sin fecha, esperando, revisión)."""
+    return _safe_role_read(lambda: api.get("tareas/mesa/", _params(
+        expediente=expediente, estado=estado, tipo=tipo, responsable=responsable, q=q)), "tareas_mesa")
+
+
+@mcp.tool()
+@write_tool
+def tarea_crear(titulo: str, expediente_id: str | None = None, catalogo_codigo: str | None = None,
+                descripcion: str | None = None, tipo: str | None = None, prioridad: str | None = None,
+                due_date: str | None = None, dependencia_hito: str | None = None) -> Any:
+    """Crea una tarea en la agenda. Usa `catalogo_codigo` (p.ej. SOLICITAR_DOCUMENTO) o título libre."""
+    g = _wguard()
+    if g:
+        return g
+    body = {"titulo": titulo}
+    for k, v in (("expediente_id", expediente_id), ("catalogo_codigo", catalogo_codigo),
+                 ("descripcion", descripcion), ("tipo", tipo), ("prioridad", prioridad),
+                 ("due_date", due_date), ("depends_on_hito", dependencia_hito)):
+        if v is not None:
+            body[k] = v
+    return _safe_role(lambda: api.post("tareas/", body))
+
+
+@mcp.tool()
+@write_tool
+def tarea_completar(tarea_id: str) -> Any:
+    """Marca una tarea como RESUELTA."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(f"tareas/{tarea_id}/completar/", {}))
+
+
+@mcp.tool()
+@write_tool
+def tarea_reprogramar(tarea_id: str, due_date: str) -> Any:
+    """Reprograma una tarea (YYYY-MM-DD); marca override para que el generador no la pise."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(f"tareas/{tarea_id}/reprogramar/", {"due_date": due_date}))
+
+
+@mcp.tool()
+@write_tool
+def tarea_cancelar(tarea_id: str, motivo: str | None = None) -> Any:
+    """Cancela una tarea (opcional motivo)."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(f"tareas/{tarea_id}/cancelar/", {"motivo": motivo}))
+
+
+# =========================================================================== #
+# CORREO — bandeja, contactos y envíos (Etapa 3)
+# =========================================================================== #
+@mcp.tool()
+def correo_mensaje_listar(direction: str | None = None, expediente: str | None = None,
+                          match_status: str | None = None, q: str | None = None,
+                          por_vincular: bool | None = None, no_leidos: bool | None = None,
+                          limit: int | None = None, offset: int | None = None, campos: str | None = None) -> Any:
+    """Lista mensajes de la bandeja. `direction`=IN|OUT, `expediente`=UUID, `por_vincular`=true."""
+    lim, off = _paging(limit, offset)
+    data = _safe_role_read(lambda: api.get("correo/mensajes/", _params(
+        direction=direction, expediente=expediente, match_status=match_status, q=q,
+        por_vincular=por_vincular, no_leidos=no_leidos, limit=lim, offset=off)), "correo_mensaje_listar")
+    return _project(campos, data)
+
+
+@mcp.tool()
+def correo_mensaje_obtener(mensaje_id: str) -> Any:
+    """Detalle de un mensaje (incluye adjuntos)."""
+    return _safe_role_read(lambda: api.get(f"correo/mensajes/{mensaje_id}/"), "correo_mensaje_obtener")
+
+
+@mcp.tool()
+def correo_contacto_listar(q: str | None = None) -> Any:
+    """Lista la libreta de contactos (q filtra por nombre/email/empresa/marca)."""
+    return _safe_role_read(lambda: api.get("correo/contactos/", _params(q=q)), "correo_contacto_listar")
+
+
+@mcp.tool()
+@write_tool
+def correo_contacto_crear(email: str, nombre: str | None = None, empresa: str | None = None,
+                          marca: str | None = None, idioma: str | None = None) -> Any:
+    """Crea un contacto en la libreta."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post("correo/contactos/", {
+        "email": email, "nombre": nombre, "empresa": empresa, "marca": marca, "idioma": idioma}))
+
+
+@mcp.tool()
+def correo_envio_listar(expediente: str | None = None, estado: str | None = None) -> Any:
+    """Lista borradores/envíos de correo."""
+    return _safe_role_read(lambda: api.get("correo/envios/", _params(expediente=expediente, estado=estado)),
+                           "correo_envio_listar")
+
+
+@mcp.tool()
+@write_tool
+def correo_envio_crear(destinatarios: list[str], subject: str, body_es: str,
+                       expediente_id: str | None = None, cc: list[str] | None = None,
+                       idioma: str | None = None) -> Any:
+    """Crea un borrador de correo (cuerpo en ES). No envía."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post("correo/envios/", {
+        "destinatarios": destinatarios, "subject": subject, "body_es": body_es,
+        "expediente_id": expediente_id, "cc": cc or [], "idioma": idioma}))
+
+
+@mcp.tool()
+@write_tool
+def correo_envio_traducir(envio_id: str, idioma: str) -> Any:
+    """Traduce el borrador al idioma destino (requiere proveedor LLM configurado)."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(f"correo/envios/{envio_id}/traducir/", {"idioma": idioma}))
+
+
+@mcp.tool()
+@write_tool
+def correo_envio_enviar(envio_id: str) -> Any:
+    """Envía el borrador (respeta CORREO_SEND_DRY_RUN: puede simular)."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(f"correo/envios/{envio_id}/enviar/", {}))
+
+
+@mcp.tool()
+@write_tool
+def correo_mensaje_importar(message_id: str | None = None, direction: str = "IN",
+                            from_email: str | None = None, to_emails: list[str] | None = None,
+                            subject: str | None = None, body_text: str | None = None,
+                            sent_at: str | None = None, adjuntos: list | None = None) -> Any:
+    """Importa a la consola un mensaje ya leído (puente MCP→consola). Deduplica por `message_id`
+    y correlaciona con el expediente por proforma/SAP."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post("correo/mensajes/importar/", {
+        "message_id": message_id, "direction": direction, "from_email": from_email,
+        "to_emails": to_emails or [], "subject": subject, "body_text": body_text,
+        "sent_at": sent_at, "adjuntos": adjuntos or []}))
 
 
 # =========================================================================== #

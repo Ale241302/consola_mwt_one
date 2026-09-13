@@ -186,6 +186,12 @@ class Expediente(models.Model):
     fusion_id           = models.UUIDField(null=True, blank=True)
     fusion_label        = models.CharField(max_length=64, null=True, blank=True)
 
+    # B8 · anular/recrear con motivo y vínculo interno al reemplazo.
+    anulado_at              = models.DateTimeField(null=True, blank=True)
+    anulacion_motivo        = models.TextField(null=True, blank=True)
+    replaces_expediente_id      = models.UUIDField(null=True, blank=True)
+    replacement_expediente_id   = models.UUIDField(null=True, blank=True)
+
     cost_corrections    = models.BooleanField(default=False)
     proforma_reviewed   = models.BooleanField(default=False)
     notas               = models.TextField(null=True, blank=True)

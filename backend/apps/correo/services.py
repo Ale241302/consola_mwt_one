@@ -13,6 +13,7 @@ import imaplib
 import io
 import json
 import logging
+import os
 import re
 import smtplib
 import ssl
@@ -329,7 +330,97 @@ def _sync_folder(M, folder, direction, limit, search):
     return out
 
 
+# ── Sync por API de Hostinger Mail (preferido) ──────────────────────
+def _hostinger_get(path, params=None):
+    import httpx
+    base = getattr(settings, "HOSTINGER_MAIL_BASE_URL", "https://api.mail.hostinger.com")
+    key = getattr(settings, "HOSTINGER_MAIL_API_KEY", "") or os.environ.get("HOSTINGER_MAIL_API_KEY", "")
+    r = httpx.get(f"{base}{path}", headers={"Authorization": f"Bearer {key}",
+                                            "Accept": "application/json"},
+                  params=params or {}, timeout=40)
+    r.raise_for_status()
+    return r.json()
+
+
+def _hostinger_mailbox_id():
+    data = _hostinger_get("/api/v1/mailboxes")
+    boxes = (((data.get("data") or {}).get("data") or {}).get("mailboxes")
+             or ((data.get("data") or {}).get("mailboxes")) or [])
+    target = (getattr(settings, "CORREO_HOSTINGER_MAILBOX", "") or "").lower()
+    for b in boxes:
+        if (b.get("address") or "").lower() == target:
+            return b.get("resourceId")
+    return boxes[0].get("resourceId") if boxes else None
+
+
+def _hostinger_folder_messages(mb, folder, limit):
+    data = _hostinger_get(f"/api/v1/mailboxes/{mb}/messages",
+                          {"folder": folder, "per_page": min(max(limit, 1), 100),
+                           "page": 1, "sort": "-uid"})
+    return ((data.get("data") or {}).get("data")) or []
+
+
+def _hostinger_message_text(mb, folder, uid):
+    data = _hostinger_get(f"/api/v1/mailboxes/{mb}/messages/{uid}/text", {"folder": folder})
+    return ((data.get("data") or {}).get("data")) or {}
+
+
+def sync_via_hostinger(limit=25) -> dict:
+    if not (getattr(settings, "HOSTINGER_MAIL_API_KEY", "") or os.environ.get("HOSTINGER_MAIL_API_KEY")):
+        return {"ok": False, "reason": "no_key"}
+    try:
+        mb = _hostinger_mailbox_id()
+        if not mb:
+            return {"ok": False, "reason": "no_mailbox"}
+    except Exception as exc:
+        return {"ok": False, "reason": f"api_error: {str(exc)[:160]}"}
+
+    importados = 0
+    for folder, direction in (
+        (getattr(settings, "CORREO_INBOX_FOLDER", "INBOX"), "IN"),
+        (getattr(settings, "CORREO_SENT_FOLDER", "INBOX.Sent"), "OUT"),
+    ):
+        try:
+            msgs = _hostinger_folder_messages(mb, folder, limit)
+        except Exception as exc:
+            log.warning("[correo.sync] hostinger list %s: %s", folder, exc)
+            continue
+        for m in msgs:
+            uid = m.get("uid")
+            body = {}
+            try:
+                body = _hostinger_message_text(mb, folder, uid)
+            except Exception:
+                pass
+            frm = m.get("from") or {}
+            data = {
+                "message_id": m.get("messageId"),
+                "folder": folder,
+                "direction": direction,
+                "from_email": frm.get("address"),
+                "from_name": frm.get("name"),
+                "to_emails": [x.get("address") for x in (m.get("to") or []) if x.get("address")],
+                "cc_emails": [x.get("address") for x in (m.get("cc") or []) if x.get("address")],
+                "subject": m.get("subject"),
+                "sent_at": m.get("date"),
+                "received_at": m.get("date") if direction == "IN" else None,
+                "body_text": body.get("text"),
+                "body_html": body.get("html"),
+                "adjuntos": [{"filename": a.get("filename"), "mimetype": a.get("contentType"),
+                              "size_bytes": a.get("sizeBytes")}
+                             for a in (m.get("attachments") or [])],
+                "source": "HOSTINGER",
+            }
+            r = upsert_mensaje(data)
+            if r and not r.get("dedup"):
+                importados += 1
+    return {"ok": True, "importados": importados, "mailbox": mb}
+
+
 def sync_mailbox(direction=None, limit=25) -> dict:
+    # Preferir la API de Hostinger Mail si hay key configurada.
+    if getattr(settings, "HOSTINGER_MAIL_API_KEY", "") or os.environ.get("HOSTINGER_MAIL_API_KEY"):
+        return sync_via_hostinger(limit=limit)
     p = _imap_params()
     if not (p["host"] and p["user"] and p["password"]):
         return {"ok": False, "reason": "no_credentials", "importados": 0}
@@ -445,6 +536,21 @@ def diagnostico_llm() -> dict:
     """Prueba las claves LLM (sin exponerlas)."""
     import os
     out = {}
+    dkey = os.environ.get("DEEPSEEK_API_KEY") or getattr(settings, "DEEPSEEK_API_KEY", "")
+    if not dkey:
+        out["deepseek"] = "no_key"
+    else:
+        try:
+            from openai import OpenAI
+            c = OpenAI(api_key=dkey,
+                       base_url=os.environ.get("DEEPSEEK_BASE_URL") or getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+                       timeout=20, max_retries=0)
+            c.chat.completions.create(
+                model=os.environ.get("DEEPSEEK_MODEL") or getattr(settings, "DEEPSEEK_MODEL", "deepseek-chat"),
+                messages=[{"role": "user", "content": "ping"}], max_tokens=3)
+            out["deepseek"] = "ok"
+        except Exception as exc:
+            out["deepseek"] = f"err: {str(exc)[:160]}"
     okey = os.environ.get("OPENAI_API_KEY")
     if not okey:
         out["openai"] = "no_key"
@@ -475,6 +581,18 @@ def diagnostico_llm() -> dict:
         except Exception as exc:
             out["anthropic"] = f"err: {str(exc)[:160]}"
     return out
+
+
+def diagnostico_hostinger() -> dict:
+    key = getattr(settings, "HOSTINGER_MAIL_API_KEY", "") or os.environ.get("HOSTINGER_MAIL_API_KEY", "")
+    if not key:
+        return {"ok": False, "reason": "no_key"}
+    try:
+        mb = _hostinger_mailbox_id()
+        return {"ok": bool(mb), "mailbox_id": mb,
+                "address": getattr(settings, "CORREO_HOSTINGER_MAILBOX", "")}
+    except Exception as exc:
+        return {"ok": False, "reason": f"api_error: {str(exc)[:160]}"}
 
 
 def diagnostico_imap() -> dict:

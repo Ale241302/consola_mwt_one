@@ -779,12 +779,36 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # JSON 500 con detalle, NO como página HTML del Django default.
         # Esto facilita debug en el frontend (la respuesta sigue siendo
         # JSON parseable) y evita que el wizard explote con un parse error.
+        # Etapa 1 · B7 · idempotencia por token (reintentos no duplican).
+        try:
+            token = (request.data.get("idempotence_token") or "").strip()
+        except Exception:
+            token = ""
+        if token:
+            with connection.cursor() as c:
+                c.execute("SELECT expediente_id::text FROM expedientes.create_idempotency WHERE token=%s", [token])
+                row = c.fetchone()
+            if row:
+                e = Expediente.objects.filter(pk=row[0]).first()
+                if e is not None:
+                    resp = Response(ExpedienteSerializer(e, context={"request": request}).data, status=200)
+                    resp["X-Idempotent-Replay"] = "true"
+                    return resp
         try:
             # Etapa 1 · alta atómica: OC + expediente + líneas en una sola
             # transacción. Si algo falla (p. ej. una línea), no queda cabecera
             # huérfana ni expediente parcial.
             with transaction.atomic():
-                return self._do_create(request)
+                resp = self._do_create(request)
+                if token and getattr(resp, "status_code", None) == 201:
+                    new_id = (resp.data or {}).get("id") if isinstance(resp.data, dict) else None
+                    if new_id:
+                        with connection.cursor() as c:
+                            c.execute(
+                                "INSERT INTO expedientes.create_idempotency (token, expediente_id) "
+                                "VALUES (%s, %s) ON CONFLICT (token) DO NOTHING",
+                                [token, str(new_id)])
+                return resp
         except DRFValidationError as ve:
             # Validación (expediente o líneas) → rollback total y 400 con detalle.
             return Response({"detail": "validation_error", "errors": ve.detail}, status=400)
@@ -794,6 +818,85 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 "detail": f"server_error: {type(e).__name__}",
                 "error":  str(e)[:500],
             }, status=500)
+
+    @action(detail=True, methods=["post"], url_path="anular")
+    def anular(self, request, pk=None):
+        """B8 · Anula un expediente (conserva la fila y sus documentos).
+        Requiere `motivo`. Bloquea si hay factura emitida o pago registrado."""
+        denied = _deny_client_mutation(request, action_label="expediente.anular")
+        if denied is not None:
+            return denied
+        e = Expediente.objects.filter(pk=pk, is_active=True).first()
+        if not e:
+            return Response({"detail": "Expediente no existe"}, status=404)
+        motivo = (request.data.get("motivo") or "").strip()
+        if not motivo:
+            return Response({"detail": "motivo requerido"}, status=400)
+        try:
+            inv = Decimal(str(e.total_invoiced or 0))
+            paid = Decimal(str(e.total_paid or 0))
+        except Exception:
+            inv = paid = Decimal("0")
+        if inv > 0 or paid > 0:
+            return Response({"detail": "no_se_puede_anular_con_factura_o_pago"}, status=400)
+        with transaction.atomic():
+            with connection.cursor() as c:
+                c.execute("""
+                    UPDATE expedientes.expediente
+                       SET is_active = FALSE, anulado_at = NOW(),
+                           anulacion_motivo = %s, updated_at = NOW()
+                     WHERE id = %s::uuid
+                """, [motivo, str(e.id)])
+            try:
+                from apps.tareas import services as _tserv
+                for codigo in ("SOLICITAR_FECHA_PRODUCCION", "RECONFIRMAR_PRODUCCION",
+                               "PREPARAR_DESPACHO", "REVISAR_ITINERARIO", "SEGUIMIENTO_SIN_RESPUESTA"):
+                    _tserv.cancelar_auto(e.id, codigo, f"expediente anulado: {motivo}",
+                                         getattr(request.user, "id", None))
+            except Exception:
+                pass
+        return Response({"ok": True, "anulado": str(e.id), "motivo": motivo})
+
+    @action(detail=True, methods=["post"], url_path="recrear")
+    def recrear(self, request, pk=None):
+        """B8 · Recrea el expediente como identidad nueva en REGISTRO (sin SAP),
+        conserva el anterior y enlaza el reemplazo. `client_id` opcional."""
+        denied = _deny_client_mutation(request, action_label="expediente.recrear")
+        if denied is not None:
+            return denied
+        exp = Expediente.objects.filter(pk=pk, is_active=True).first()
+        if not exp:
+            return Response({"detail": "Expediente no existe"}, status=404)
+        new_client_id = request.data.get("client_id") or (str(exp.client_id) if exp.client_id else None)
+        motivo = (request.data.get("motivo") or "").strip() or "recreado"
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT id::text FROM expedientes.linea "
+                    "WHERE expediente_id = %s::uuid AND is_active = TRUE", [str(exp.id)])
+                line_ids = [r[0] for r in cursor.fetchall()]
+                if not line_ids:
+                    return Response({"detail": "expediente_sin_lineas"}, status=400)
+                res = self._split_lines_to_new_expediente(
+                    cursor=cursor, exp=exp, line_ids=line_ids,
+                    new_op=(str(exp.operating_company_id) if exp.operating_company_id else None),
+                    new_client_id=new_client_id,
+                    forma_pago=exp.forma_pago, payment_days=exp.credit_days_cliente,
+                )
+                if not res or not res.get("new_expediente_id"):
+                    return Response({"detail": "no_se_pudo_recrear"}, status=400)
+                new_id = str(res["new_expediente_id"])
+                cursor.execute(
+                    "UPDATE expedientes.expediente SET replaces_expediente_id = %s::uuid, updated_at = NOW() "
+                    "WHERE id = %s::uuid", [str(exp.id), new_id])
+                cursor.execute("""
+                    UPDATE expedientes.expediente
+                       SET replacement_expediente_id = %s::uuid, anulado_at = NOW(),
+                           anulacion_motivo = %s, is_active = FALSE, updated_at = NOW()
+                     WHERE id = %s::uuid
+                """, [new_id, motivo, str(exp.id)])
+        return Response({"ok": True, "new_expediente_id": new_id,
+                         "replaces": str(exp.id), "motivo": motivo}, status=201)
 
     def _do_create(self, request):
         # Sprint Wizard Simplificado (2026-04-29):

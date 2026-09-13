@@ -22,6 +22,27 @@ def _ai_cfg():
 def llm_text(system: str, user: str, *, max_tokens: int = 2000, temperature: float | None = None) -> str | None:
     ai = _ai_cfg()
 
+    # 0) DeepSeek (OpenAI-compatible) — proveedor preferido
+    dkey = os.environ.get("DEEPSEEK_API_KEY") or getattr(settings, "DEEPSEEK_API_KEY", "")
+    if dkey:
+        try:
+            from openai import OpenAI
+            ds = OpenAI(api_key=dkey,
+                        base_url=os.environ.get("DEEPSEEK_BASE_URL") or getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+                        timeout=90, max_retries=1)
+            kwargs = {"model": os.environ.get("DEEPSEEK_MODEL") or getattr(settings, "DEEPSEEK_MODEL", "deepseek-chat"),
+                      "messages": [{"role": "system", "content": system},
+                                   {"role": "user", "content": user}],
+                      "max_tokens": max_tokens}
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            resp = ds.chat.completions.create(**kwargs)
+            out = (resp.choices[0].message.content or "").strip()
+            if out:
+                return out
+        except Exception as exc:
+            log.warning("[llm_text] deepseek fallo: %s", exc)
+
     # 1) OpenAI
     key = os.environ.get("OPENAI_API_KEY") or ai.get("OPENAI_API_KEY")
     if key:

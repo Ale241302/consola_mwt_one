@@ -127,6 +127,15 @@ CORREO_SENT_FOLDER   = os.environ.get("CORREO_SENT_FOLDER", "INBOX.Sent")
 # Seguridad QA: por defecto el envío es SIMULADO (no manda correo real).
 # Pon CORREO_SEND_DRY_RUN=0 para habilitar el envío efectivo.
 CORREO_SEND_DRY_RUN  = os.environ.get("CORREO_SEND_DRY_RUN", "1")
+# Sync por API de Hostinger Mail (preferido si hay HOSTINGER_MAIL_API_KEY).
+HOSTINGER_MAIL_API_KEY   = os.environ.get("HOSTINGER_MAIL_API_KEY", "")
+HOSTINGER_MAIL_BASE_URL  = os.environ.get("HOSTINGER_MAIL_BASE_URL", "https://api.mail.hostinger.com")
+CORREO_HOSTINGER_MAILBOX = os.environ.get("CORREO_HOSTINGER_MAILBOX", "alvaro@muitowork.com")
+
+# LLM: DeepSeek (OpenAI-compatible) es el proveedor preferido.
+DEEPSEEK_API_KEY  = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL    = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 # ─── Upload limits (Excel COMEX hasta 50 MB) ──────────────────
 # Default Django: 2.5 MB en memoria, 2.5 MB en POST. Lo subimos para
