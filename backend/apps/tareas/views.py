@@ -7,6 +7,8 @@ método→acción: GET=view, POST=create, PATCH/PUT=update, DELETE=delete).
 """
 from __future__ import annotations
 
+import io
+import logging
 import uuid
 from datetime import date
 
@@ -15,7 +17,10 @@ from django.db.models import F, Q
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
+
+log = logging.getLogger(__name__)
 
 from apps.core.permissions import user_is_ceo_or_admin
 
@@ -104,6 +109,7 @@ class TareaCatalogoViewSet(viewsets.ViewSet):
 # ── Tareas (agenda) ─────────────────────────────────────────────────
 class TareaViewSet(viewsets.ViewSet):
     required_module = "tareas"
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     # ---- helpers ---------------------------------------------------
     def _get(self, pk):
@@ -181,6 +187,8 @@ class TareaViewSet(viewsets.ViewSet):
         if not data.get("responsable_user_id"):
             data["responsable_user_id"] = services.default_responsable_id()
         data["created_by_id"] = str(getattr(request.user, "id", "") or "") or None
+        if data.get("depends_on_tarea_id") and str(data["depends_on_tarea_id"]) == str(data["id"]):
+            return Response({"detail": "una tarea no puede depender de sí misma"}, status=400)
         s = TareaSerializer(data=data)
         s.is_valid(raise_exception=True)
         # `id` está en read_only_fields → se inyecta explícito (patrón del proyecto).
@@ -196,6 +204,8 @@ class TareaViewSet(viewsets.ViewSet):
         data = dict(request.data or {})
         if "due_date" in data and data.get("due_date") != (t.due_date.isoformat() if t.due_date else None):
             data["is_override"] = True
+        if data.get("depends_on_tarea_id") and str(data["depends_on_tarea_id"]) == str(t.id):
+            return Response({"detail": "una tarea no puede depender de sí misma"}, status=400)
         s = TareaSerializer(t, data=data, partial=True)
         s.is_valid(raise_exception=True)
         s.save()
@@ -213,6 +223,76 @@ class TareaViewSet(viewsets.ViewSet):
         t.save(update_fields=["is_active", "updated_at"])
         services.log_evento(t.id, "ELIMINADA", {}, getattr(request.user, "id", None))
         return Response(status=204)
+
+    # ── Evidencia (documentos) de la tarea ───────────────────────────
+    @action(detail=True, methods=["get", "post"], url_path="adjuntos")
+    def adjuntos(self, request, pk=None):
+        t = self._get(pk)
+        if not t:
+            return Response({"detail": "Tarea no existe"}, status=404)
+        docs = list(t.documentos or [])
+        if request.method == "GET":
+            return Response(docs)
+        f = request.FILES.get("file")
+        if not f:
+            return Response({"detail": "file requerido"}, status=400)
+        data = f.read()
+        key = None
+        try:
+            from apps.storage.services import make_object_key, put_object_stream
+            key = make_object_key("tarea-evidencias", f.name)
+            put_object_stream(key, io.BytesIO(data),
+                              content_type=f.content_type or "application/octet-stream")
+        except Exception as exc:
+            log.warning("[tarea.adjuntos] no pude subir: %s", exc)
+        docs.append({"key": key, "name": f.name, "mime": f.content_type, "size": len(data)})
+        t.documentos = docs
+        t.save(update_fields=["documentos", "updated_at"])
+        services.log_evento(t.id, "EVIDENCIA_AGREGADA", {"name": f.name},
+                            getattr(request.user, "id", None))
+        return Response(docs, status=201)
+
+    @action(detail=True, methods=["post"], url_path=r"adjuntos/(?P<idx>[0-9]+)/eliminar")
+    def adjunto_eliminar(self, request, pk=None, idx=None):
+        t = self._get(pk)
+        if not t:
+            return Response({"detail": "Tarea no existe"}, status=404)
+        docs = list(t.documentos or [])
+        try:
+            i = int(idx)
+        except (TypeError, ValueError):
+            i = -1
+        if 0 <= i < len(docs):
+            docs.pop(i)
+            t.documentos = docs
+            t.save(update_fields=["documentos", "updated_at"])
+        return Response(docs)
+
+    @action(detail=True, methods=["post"])
+    def asignar(self, request, pk=None):
+        """Cambia el responsable de la tarea (UI)."""
+        t = self._get(pk)
+        if not t:
+            return Response({"detail": "Tarea no existe"}, status=404)
+        rid = request.data.get("responsable_user_id") or None
+        t.responsable_user_id = rid
+        t.save(update_fields=["responsable_user_id", "updated_at"])
+        services.log_evento(t.id, "ASIGNADA", {"responsable_user_id": rid},
+                            getattr(request.user, "id", None))
+        return Response(TareaSerializer(t).data)
+
+    @action(detail=False, methods=["get"], url_path="select-usuarios")
+    def select_usuarios(self, request):
+        """Usuarios internos asignables (para el selector de responsable)."""
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT id::text, COALESCE(full_name, email_plain), email_plain, role_default
+                  FROM users.mwtuser
+                 WHERE is_active AND COALESCE(role_default, '') NOT ILIKE 'client%'
+                 ORDER BY 2 LIMIT 500
+            """)
+            return Response([{"id": r[0], "nombre": r[1], "email": r[2], "role": r[3]}
+                             for r in c.fetchall()])
 
     # ---- acciones --------------------------------------------------
     @action(detail=True, methods=["post"])
@@ -323,9 +403,15 @@ class TareaViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def select_responsables(self, request):
-        qs = (Tarea.objects.filter(is_active=True, responsable_user_id__isnull=False)
-              .values_list("responsable_user_id", flat=True).distinct())
-        return Response([{"id": str(x)} for x in qs if x])
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT DISTINCT u.id::text, COALESCE(u.full_name, u.email_plain)
+                  FROM tareas.tarea t
+                  JOIN users.mwtuser u ON u.id = t.responsable_user_id
+                 WHERE t.is_active AND t.responsable_user_id IS NOT NULL
+                 ORDER BY 2
+            """)
+            return Response([{"id": r[0], "nombre": r[1]} for r in c.fetchall()])
 
     @action(detail=False, methods=["get"])
     def select_catalogos(self, request):
@@ -373,10 +459,16 @@ class TareaViewSet(viewsets.ViewSet):
                    (SELECT STRING_AGG(DISTINCT l.sap, ', ')
                       FROM expedientes.linea l
                      WHERE l.expediente_id = t.expediente_id AND l.is_active = TRUE
-                       AND COALESCE(l.sap,'') <> '') AS sap
+                       AND COALESCE(l.sap,'') <> '') AS sap,
+                   u.full_name AS responsable,
+                   dep.catalogo_codigo AS depende_de_codigo,
+                   dep.titulo AS depende_de_titulo,
+                   t.depends_on_tarea_id::text AS depends_on_tarea_id
               FROM tareas.tarea t
               LEFT JOIN clientes.cliente cl ON cl.id = t.client_id
               LEFT JOIN expedientes.expediente e ON e.id = t.expediente_id
+              LEFT JOIN users.mwtuser u ON u.id = t.responsable_user_id
+              LEFT JOIN tareas.tarea dep ON dep.id = t.depends_on_tarea_id
              WHERE {' AND '.join(where)}
              ORDER BY t.due_date NULLS LAST, t.created_at
         """

@@ -135,8 +135,8 @@ export default function App() {
             AdminOnlyRoute bloquea CLIENT_* redirigiendolos a /ai.
             El backend ademas hace 403 si el rol no es admin (defense in depth). */}
         <Route path="/finanzas" element={<CeoAdminOnlyRoute><ScreenFinanzas /></CeoAdminOnlyRoute>} />
-        {/* Sprint 2026-07-20 · Mesa de trabajo — CEO/Admin/superadmin. */}
-        <Route path="/mesa-trabajo" element={<CeoAdminOnlyRoute><ScreenMesaTrabajo /></CeoAdminOnlyRoute>} />
+        {/* Mesa de trabajo unificada (Tareas + Atención) — Etapa 2. */}
+        <Route path="/mesa-trabajo" element={<InternalOnlyRoute><ScreenTareas /></InternalOnlyRoute>} />
         {/* Etapa 2 · Tareas (catálogo + agenda + mesa de trabajo) — staff interno,
             visible según el módulo RBAC `tareas`. */}
         <Route path="/tareas" element={<InternalOnlyRoute><ScreenTareas /></InternalOnlyRoute>} />

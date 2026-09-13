@@ -67,10 +67,8 @@ const KEY_TO_PATH = {
   roles:       '/roles',
   // F6 · Bitácora histórica
   'price-history': '/historial-precios',
-  // Sprint 2026-07-20 · Mesa de trabajo (admin/CEO/superadmin)
-  'mesa-trabajo': '/mesa-trabajo',
-  // Etapa 2 · Tareas (catálogo + agenda + mesa de trabajo)
-  tareas:      '/tareas',
+  // Mesa de trabajo unificada (tareas + atención) — Etapa 2.
+  'mesa-trabajo': '/tareas',
   // Etapa 3 · Correo (bandeja + contactos + editor)
   correo:      '/correo',
 };
@@ -104,8 +102,7 @@ function screenFromPath(pathname) {
   if (pathname.startsWith('/notificaciones')) return 'history';
   if (pathname.startsWith('/cobros')) return 'collections';
   if (pathname.startsWith('/historial-precios')) return 'price-history';
-  if (pathname.startsWith('/mesa-trabajo')) return 'mesa-trabajo';
-  if (pathname.startsWith('/tareas')) return 'tareas';
+  if (pathname.startsWith('/tareas') || pathname.startsWith('/mesa-trabajo')) return 'mesa-trabajo';
   if (pathname.startsWith('/correo')) return 'correo';
   if (pathname.startsWith('/wizard')) return 'wizard';
   if (pathname.startsWith('/ai/governance')) return 'ai-governance';
@@ -191,9 +188,8 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'expedientes',    icon: <IconFolder/>,     label: expedientesLabel,         group: 'core', counter: expedientesCount },
     // Sprint 2026-07-20 · Mesa de trabajo: expedientes que requieren
     // atención. adminOnly → solo admin/CEO/superadmin (no staff MWT, no client).
-    { key: 'mesa-trabajo',   icon: <IconClipboard/>,  label: lang === 'en' ? 'Workbench' : 'Mesa de trabajo', group: 'core', adminOnly: true },
-    // Etapa 2 · Tareas: catálogo + agenda + mesa de trabajo (módulo `tareas`).
-    { key: 'tareas',         icon: <IconClipboard/>,  label: lang === 'en' ? 'Tasks' : 'Tareas', group: 'core' },
+    // Mesa de trabajo unificada (Tareas + Atención). Visible según módulo `tareas`.
+    { key: 'mesa-trabajo',   icon: <IconClipboard/>,  label: lang === 'en' ? 'Workbench' : 'Mesa de trabajo', group: 'core' },
     { key: 'cronograma',     icon: <IconHistory/>,    label: lang === 'en' ? 'Timeline' : 'Cronograma', group: 'core' },
     { key: 'portal',         icon: <IconBuilding/>,   label: tr(lang,'portal'),        group: 'core' },
     // Almacén & Logística

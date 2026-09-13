@@ -16,6 +16,7 @@ import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom
 import { tareasApi } from "../lib/api.js";
 import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 import { useRole } from "../context/RoleContext.jsx";
+import AtencionExpedientes from "../components/tareas/AtencionExpedientes.jsx";
 
 const ESTADOS = ["PENDIENTE", "BORRADOR_LISTO", "ESPERANDO_RESPUESTA",
                  "REQUIERE_REVISION", "RESUELTA", "CANCELADA"];
@@ -70,11 +71,12 @@ function Kpi({ label, value, tone }) {
 }
 
 // ── Modal crear tarea ──────────────────────────────────────────────
-function TareaModal({ lang, catalogo, defaultExpediente, onClose, onSaved }) {
+function TareaModal({ lang, catalogo, usuarios = [], defaultExpediente, onClose, onSaved }) {
   const es = lang === "es";
   const [form, setForm] = useState({
     catalogo_codigo: "", titulo: "", descripcion: "",
-    tipo: "OPERATIVO", prioridad: "MEDIA", due_date: "", expediente_id: defaultExpediente || "", notes: "",
+    tipo: "OPERATIVO", prioridad: "MEDIA", due_date: "", expediente_id: defaultExpediente || "",
+    responsable_user_id: "", depends_on_tarea_id: "", notes: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -96,6 +98,8 @@ function TareaModal({ lang, catalogo, defaultExpediente, onClose, onSaved }) {
       if (!body.catalogo_codigo) delete body.catalogo_codigo;
       if (!body.expediente_id) delete body.expediente_id;
       if (!body.due_date) delete body.due_date;
+      if (!body.responsable_user_id) delete body.responsable_user_id;
+      if (!body.depends_on_tarea_id) delete body.depends_on_tarea_id;
       if (!body.titulo) { setError(es ? "El título es obligatorio." : "Title is required."); setSaving(false); return; }
       await tareasApi.create(body);
       onSaved?.();
@@ -153,6 +157,21 @@ function TareaModal({ lang, catalogo, defaultExpediente, onClose, onSaved }) {
             <input style={inp} value={form.expediente_id} placeholder="00000000-0000-0000-0000-000000000000"
                    onChange={(e) => setForm({ ...form, expediente_id: e.target.value })} />
           </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label style={lbl}>{es ? "Responsable" : "Assignee"}</label>
+              <select style={inp} value={form.responsable_user_id}
+                      onChange={(e) => setForm({ ...form, responsable_user_id: e.target.value })}>
+                <option value="">—</option>
+                {usuarios.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={lbl}>{es ? "Depende de (UUID tarea)" : "Depends on (task UUID)"}</label>
+              <input style={inp} value={form.depends_on_tarea_id} placeholder={es ? "opcional" : "optional"}
+                     onChange={(e) => setForm({ ...form, depends_on_tarea_id: e.target.value })} />
+            </div>
+          </div>
           <div>
             <label style={lbl}>{es ? "Descripción" : "Description"}</label>
             <textarea style={{ ...inp, minHeight: 70 }} value={form.descripcion}
@@ -180,17 +199,22 @@ export default function Tareas() {
   const expFilter = searchParams.get("expediente") || "";
 
   const [view, setView] = useState("mesa");        // mesa | catalogo
+  const [vista, setVista] = useState("tareas");    // tareas | atencion
   const [mesa, setMesa] = useState({ kpis: {}, items: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [catalogo, setCatalogo] = useState([]);
+  const [usuarios, setUsuarios] = useState([]);
+  const [evidencia, setEvidencia] = useState(null);   // tarea del drawer de evidencia
+  const [adjuntos, setAdjuntos] = useState([]);
 
   // filtros
   const [q, setQ] = useState("");
   const [fEstado, setFEstado] = useState("");
   const [fTipo, setFTipo] = useState("");
+  const [fResponsable, setFResponsable] = useState("");
 
   const loadMesa = useCallback(async () => {
     setLoading(true); setError(null);
@@ -199,21 +223,23 @@ export default function Tareas() {
       if (q) params.q = q;
       if (fEstado) params.estado = fEstado;
       if (fTipo) params.tipo = fTipo;
+      if (fResponsable) params.responsable = fResponsable;
       if (expFilter) params.expediente = expFilter;
       const d = await tareasApi.mesa(params);
       setMesa({ kpis: d?.kpis || {}, items: Array.isArray(d?.items) ? d.items : [] });
     } catch (e) {
       setError(e?.body?.detail || e?.message || "Error");
     } finally { setLoading(false); }
-  }, [q, fEstado, fTipo, expFilter]);
+  }, [q, fEstado, fTipo, fResponsable, expFilter]);
 
   useEffect(() => { loadMesa(); }, [loadMesa]);
   useEffect(() => { tareasApi.catalogo.list().then((d) => setCatalogo(Array.isArray(d) ? d : [])).catch(() => {}); }, []);
+  useEffect(() => { tareasApi.selectUsuarios().then((d) => setUsuarios(Array.isArray(d) ? d : [])).catch(() => {}); }, []);
 
   const {
     pageItems, page, setPage, perPage, setPerPage, totalPages, total,
   } = usePagination(mesa.items, { defaultPerPage: 20 });
-  useEffect(() => { setPage(1); }, [q, fEstado, fTipo, setPage]);
+  useEffect(() => { setPage(1); }, [q, fEstado, fTipo, fResponsable, setPage]);
 
   const flash = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2500); };
 
@@ -236,6 +262,24 @@ export default function Tareas() {
 
   const k = mesa.kpis || {};
 
+  const asignar = (t, rid) => act(() => tareasApi.asignar(t.id, { responsable_user_id: rid || null }),
+                                  es ? "Responsable actualizado" : "Assignee updated");
+  const abrirEvidencia = async (t) => {
+    setEvidencia(t);
+    try { setAdjuntos(await tareasApi.adjuntos(t.id)); } catch { setAdjuntos([]); }
+  };
+  const subirEvidencia = async (file) => {
+    if (!file || !evidencia) return;
+    try { setAdjuntos(await tareasApi.subirAdjunto(evidencia.id, file)); flash(es ? "Evidencia agregada" : "Evidence added"); }
+    catch (e) { flash(e?.body?.detail || "Error"); }
+  };
+  const borrarEvidencia = async (idx) => {
+    if (!evidencia) return;
+    try { setAdjuntos(await tareasApi.adjuntoEliminar(evidencia.id, idx)); }
+    catch (e) { flash(e?.body?.detail || "Error"); }
+  };
+  const nombreUsuario = (id) => usuarios.find((u) => u.id === id)?.nombre || (id ? String(id).slice(0, 8) : "—");
+
   const selStyle = { padding: "6px 10px", border: "1px solid var(--border, #CBD5E1)", borderRadius: 6,
                      fontSize: 12, fontWeight: 600, background: "var(--surface, #fff)" };
 
@@ -252,20 +296,33 @@ export default function Tareas() {
         </div>
         <div className="flex ai-center gap-2">
           <div className="seg">
-            <button data-active={view === "mesa"} onClick={() => setView("mesa")}>{es ? "Mesa" : "Workbench"}</button>
-            <button data-active={view === "catalogo"} onClick={() => setView("catalogo")}>{es ? "Catálogo" : "Catalog"}</button>
+            <button data-active={vista === "tareas"} onClick={() => setVista("tareas")}>{es ? "Tareas" : "Tasks"}</button>
+            {isAdmin && (
+              <button data-active={vista === "atencion"} onClick={() => setVista("atencion")}>{es ? "Atención" : "Attention"}</button>
+            )}
           </div>
-          <button className="btn btn-primary" onClick={() => setShowNew(true)}>
-            + {es ? "Nueva tarea" : "New task"}
-          </button>
-          {isAdmin && (
-            <button className="btn btn-ghost" onClick={generar} title={es ? "Regenerar tareas automáticas" : "Regenerate auto tasks"}>
-              {es ? "Generar" : "Generate"}
-            </button>
+          {vista === "tareas" && (
+            <>
+              <div className="seg">
+                <button data-active={view === "mesa"} onClick={() => setView("mesa")}>{es ? "Mesa" : "Workbench"}</button>
+                <button data-active={view === "catalogo"} onClick={() => setView("catalogo")}>{es ? "Catálogo" : "Catalog"}</button>
+              </div>
+              <button className="btn btn-primary" onClick={() => setShowNew(true)}>
+                + {es ? "Nueva tarea" : "New task"}
+              </button>
+              {isAdmin && (
+                <button className="btn btn-ghost" onClick={generar} title={es ? "Regenerar tareas automáticas" : "Regenerate auto tasks"}>
+                  {es ? "Generar" : "Generate"}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
 
+      {vista === "atencion" ? (
+        <AtencionExpedientes lang={lang} />
+      ) : (<>
       {view === "mesa" && (
         <>
           {expFilter && (
@@ -301,6 +358,10 @@ export default function Tareas() {
               <option value="">{es ? "Tipo: todos" : "Type: all"}</option>
               {TIPOS.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
+            <select value={fResponsable} onChange={(e) => setFResponsable(e.target.value)} style={{ ...selStyle, maxWidth: 200 }}>
+              <option value="">{es ? "Responsable: todos" : "Assignee: all"}</option>
+              {usuarios.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+            </select>
             <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary, #94A3B8)", alignSelf: "center" }}>
               {mesa.items.length} {es ? "tareas" : "tasks"}
             </span>
@@ -316,20 +377,21 @@ export default function Tareas() {
                   <Th>{es ? "Tipo" : "Type"}</Th>
                   <Th>{es ? "Expediente" : "File"}</Th>
                   <Th>{es ? "Estado" : "Status"}</Th>
+                  <Th>{es ? "Responsable" : "Assignee"}</Th>
                   <Th right>{es ? "Acciones" : "Actions"}</Th>
                 </tr>
               </thead>
               <tbody>
                 {loading && (
-                  <tr><td colSpan={6} style={{ padding: 30, textAlign: "center", color: "var(--text-tertiary, #94A3B8)" }}>
+                  <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: "var(--text-tertiary, #94A3B8)" }}>
                     {es ? "Cargando tareas…" : "Loading tasks…"}
                   </td></tr>
                 )}
                 {!loading && error && (
-                  <tr><td colSpan={6} style={{ padding: 30, textAlign: "center", color: "#B91C1C" }}>{error}</td></tr>
+                  <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: "#B91C1C" }}>{error}</td></tr>
                 )}
                 {!loading && !error && pageItems.length === 0 && (
-                  <tr><td colSpan={6} style={{ padding: 30, textAlign: "center", color: "var(--text-tertiary, #94A3B8)" }}>
+                  <tr><td colSpan={7} style={{ padding: 30, textAlign: "center", color: "var(--text-tertiary, #94A3B8)" }}>
                     {es ? "No hay tareas con estos filtros." : "No tasks match these filters."}
                   </td></tr>
                 )}
@@ -361,8 +423,18 @@ export default function Tareas() {
                       </div>
                     </Td>
                     <Td><EstadoBadge estado={t.estado} /></Td>
+                    <Td>
+                      <select value={t.responsable_user_id || ""} onChange={(e) => asignar(t, e.target.value)}
+                              style={{ ...selStyle, fontWeight: 400, maxWidth: 170 }}>
+                        <option value="">—</option>
+                        {usuarios.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+                      </select>
+                    </Td>
                     <Td right>
                       <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                        <button className="btn btn-sm btn-ghost" onClick={() => abrirEvidencia(t)}>
+                          {es ? "Evidencia" : "Evidence"}
+                        </button>
                         {t.estado !== "ESPERANDO_RESPUESTA" && (
                           <button className="btn btn-sm" onClick={() => act(() => tareasApi.enviar(t.id), es ? "Marcada enviada" : "Sent")}>
                             {es ? "Enviar" : "Send"}
@@ -397,9 +469,38 @@ export default function Tareas() {
         <CatalogoPanel lang={lang} catalogo={catalogo} isAdmin={isAdmin}
                        reload={() => tareasApi.catalogo.list().then((d) => setCatalogo(Array.isArray(d) ? d : []))} />
       )}
+      </>)}
+
+      {evidencia && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(15,23,42,0.45)",
+                      display: "flex", justifyContent: "flex-end" }} onClick={() => setEvidencia(null)}>
+          <div style={{ background: "var(--surface,#fff)", width: 460, maxWidth: "92%", height: "100%",
+                        overflow: "auto", padding: 20 }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <h3 style={{ margin: 0 }}>{es ? "Evidencia" : "Evidence"}</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setEvidencia(null)}>✕</button>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0 12px" }}>
+              {evidencia.titulo}
+            </div>
+            <input type="file" onChange={(e) => subirEvidencia(e.target.files?.[0])} style={{ fontSize: 12 }} />
+            <div style={{ marginTop: 12 }}>
+              {(adjuntos || []).map((a, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginTop: 4 }}>
+                  <span>• {a.name} ({a.size} B)</span>
+                  <button className="btn btn-sm btn-ghost" onClick={() => borrarEvidencia(i)}>✕</button>
+                </div>
+              ))}
+              {(!adjuntos || adjuntos.length === 0) && (
+                <div style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "Sin evidencia." : "No evidence."}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showNew && (
-        <TareaModal lang={lang} catalogo={catalogo} defaultExpediente={expFilter}
+        <TareaModal lang={lang} catalogo={catalogo} usuarios={usuarios} defaultExpediente={expFilter}
                     onClose={() => setShowNew(false)}
                     onSaved={() => flash(es ? "Tarea creada" : "Task created")} />
       )}

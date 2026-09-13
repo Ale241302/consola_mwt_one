@@ -638,6 +638,15 @@ export const tareasApi = {
   reactivar:   (id)          => apiFetch(`/tareas/${id}/reactivar/`, { method: "POST", token: getToken() }),
   reprogramar: (id, body)    => apiFetch(`/tareas/${id}/reprogramar/`, { method: "POST", body, token: getToken() }),
   eventos:     (id)          => apiFetch(`/tareas/${id}/eventos/`, { token: getToken() }),
+  adjuntos:    (id)          => apiFetch(`/tareas/${id}/adjuntos/`, { token: getToken() }),
+  subirAdjunto: (id, file)   => {
+    const fd = new FormData(); fd.append("file", file);
+    return apiFetch(`/tareas/${id}/adjuntos/`, { method: "POST", body: fd, token: getToken() });
+  },
+  adjuntoEliminar: (id, idx) => apiFetch(`/tareas/${id}/adjuntos/${idx}/eliminar/`, { method: "POST", token: getToken() }),
+  asignar:     (id, body)    => apiFetch(`/tareas/${id}/asignar/`, { method: "POST", body, token: getToken() }),
+  selectUsuarios: ()         => apiFetch(`/tareas/select-usuarios/`, { token: getToken() }),
+  selectResponsables: ()     => apiFetch(`/tareas/select_responsables/`, { token: getToken() }),
   catalogo: {
     list:   ()          => apiFetch(`/tareas/catalogo/`, { token: getToken() }),
     create: (body)      => apiFetch(`/tareas/catalogo/`, { method: "POST", body, token: getToken() }),

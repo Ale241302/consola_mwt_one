@@ -47,6 +47,7 @@ class Tarea(models.Model):
     origen              = models.CharField(max_length=12, default="MANUAL")
     due_date            = models.DateField(null=True, blank=True)
     depends_on_hito     = models.CharField(max_length=24, null=True, blank=True)
+    depends_on_tarea_id = models.UUIDField(null=True, blank=True)
     last_sent_at        = models.DateTimeField(null=True, blank=True)
     responded_at        = models.DateTimeField(null=True, blank=True)
     completed_at        = models.DateTimeField(null=True, blank=True)

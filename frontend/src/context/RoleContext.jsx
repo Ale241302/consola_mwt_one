@@ -101,7 +101,7 @@ const SIDEBAR_KEY_TO_MODULE = {
   collections:     "cartera",
   usuarios:        "usuarios",
   roles:           "roles",
-  "mesa-trabajo":  "expedientes",
+  "mesa-trabajo":  "tareas",
   tareas:          "tareas",
   correo:          "correo",
   sizing:          "sizing",
