@@ -659,6 +659,9 @@ export const correoApi = {
     porExpediente: (exp)    => apiFetch(`/correo/mensajes/por-expediente/?expediente=${encodeURIComponent(exp)}`, { token: getToken() }),
     importar:      (body)   => apiFetch(`/correo/mensajes/importar/`, { method: "POST", body, token: getToken() }),
     sync:          (body)   => apiFetch(`/correo/mensajes/sync/`, { method: "POST", body: body || {}, token: getToken() }),
+    adjuntos:      (id)     => apiFetch(`/correo/mensajes/${id}/adjuntos/`, { token: getToken() }),
+    adjuntoUrl:    (id, aid) => apiFetch(`/correo/mensajes/${id}/adjuntos/${aid}/url/`, { token: getToken() }),
+    diagnostico:   ()       => apiFetch(`/correo/mensajes/diagnostico/`, { token: getToken() }),
   },
   contactos: {
     list:   (params)    => apiFetch(`/correo/contactos/${qs(params)}`, { token: getToken() }),

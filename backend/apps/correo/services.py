@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import imaplib
+import io
 import json
 import logging
 import re
@@ -110,6 +111,7 @@ def _attachments(msg):
             "mimetype": part.get_content_type(),
             "size_bytes": len(payload),
             "sha256": hashlib.sha256(payload).hexdigest(),
+            "data": payload,
         })
     return out
 
@@ -177,6 +179,42 @@ def _notify_tarea_seguimiento(expediente_id, subject, user_id=None):
 
 
 # ── Persistencia ────────────────────────────────────────────────────
+def _subir_adjunto(mensaje_id, a: dict):
+    """Sube el binario a MinIO (si hay data) y crea la fila de adjunto."""
+    data = a.get("data")
+    key = a.get("storage_key")
+    if data and not key:
+        try:
+            from apps.storage.services import make_object_key, put_object_stream
+            key = make_object_key("correo-adjuntos", a.get("filename") or "adjunto.bin")
+            put_object_stream(key, io.BytesIO(data),
+                              content_type=a.get("mimetype") or "application/octet-stream")
+        except Exception as exc:
+            log.warning("[correo] no pude subir adjunto %s: %s", a.get("filename"), exc)
+            key = None
+    try:
+        Adjunto.objects.create(
+            id=uuid.uuid4(), mensaje_id=mensaje_id,
+            filename=a.get("filename"), mimetype=a.get("mimetype"),
+            size_bytes=a.get("size_bytes"), storage_key=key, sha256=a.get("sha256"),
+        )
+    except Exception:
+        pass
+
+
+def adjunto_signed_url(adjunto_id):
+    """URL firmada (ttl 15 min) para descargar un adjunto."""
+    a = Adjunto.objects.filter(pk=adjunto_id).first()
+    if not a or not a.storage_key:
+        return None
+    try:
+        from apps.storage.services import generate_signed_url
+        return generate_signed_url(a.storage_key, kind="get", ttl=900)
+    except Exception as exc:
+        log.warning("[correo] signed url fallo: %s", exc)
+        return None
+
+
 def upsert_mensaje(data: dict) -> dict | None:
     """Inserta/actualiza un mensaje deduplicando por message_id. Devuelve el dict."""
     mid = (data.get("message_id") or "").strip() or None
@@ -222,15 +260,7 @@ def upsert_mensaje(data: dict) -> dict | None:
     except IntegrityError:
         return None
     for a in (data.get("adjuntos") or []):
-        try:
-            Adjunto.objects.create(
-                id=uuid.uuid4(), mensaje_id=new_id,
-                filename=a.get("filename"), mimetype=a.get("mimetype"),
-                size_bytes=a.get("size_bytes"), storage_key=a.get("storage_key"),
-                sha256=a.get("sha256"),
-            )
-        except Exception:
-            pass
+        _subir_adjunto(new_id, a)
     return {"id": new_id, "dedup": False, "expediente_id": exp_id, "match_status": status}
 
 
@@ -350,7 +380,14 @@ def traducir(texto: str, idioma_destino: str, idioma_origen: str = "es") -> str 
 
 
 # ── Envío SMTP ──────────────────────────────────────────────────────
+def _send_dry_run() -> bool:
+    return str(getattr(settings, "CORREO_SEND_DRY_RUN", "1")).lower() in ("1", "true", "yes", "on")
+
+
 def enviar_envio(envio: Envio, user_id=None) -> dict:
+    # Seguridad QA: por defecto NO envía; requiere CORREO_SEND_DRY_RUN=0.
+    if _send_dry_run():
+        return {"ok": True, "dry_run": True, "reason": "dry_run_activo"}
     s = _smtp_params()
     if not (s["host"] and s["user"] and s["password"]):
         return {"ok": False, "reason": "no_credentials"}
@@ -401,3 +438,64 @@ def enviar_envio(envio: Envio, user_id=None) -> dict:
         "source": "ENVIO", "folder": "Enviados",
     })
     return {"ok": True, "message_id": envio.message_id}
+
+
+# ── Diagnóstico (B1/B2) ─────────────────────────────────────────────
+def diagnostico_llm() -> dict:
+    """Prueba las claves LLM (sin exponerlas)."""
+    import os
+    out = {}
+    okey = os.environ.get("OPENAI_API_KEY")
+    if not okey:
+        out["openai"] = "no_key"
+    else:
+        try:
+            from openai import OpenAI
+            c = OpenAI(api_key=okey, timeout=15, max_retries=0)
+            c.chat.completions.create(
+                model=os.environ.get("OPENAI_OCR_MODEL") or "gpt-4o-mini",
+                messages=[{"role": "user", "content": "ping"}], max_tokens=3)
+            out["openai"] = "ok"
+        except Exception as exc:
+            out["openai"] = f"err: {str(exc)[:160]}"
+    akey = os.environ.get("ANTHROPIC_API_KEY")
+    if not akey:
+        out["anthropic"] = "no_key"
+    else:
+        try:
+            import httpx
+            r = httpx.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": akey, "anthropic-version": "2023-06-01",
+                         "content-type": "application/json"},
+                json={"model": (_cfg("AI_HUB", {}) or {}).get("DEFAULT_MODEL") or "claude-sonnet-4-6",
+                      "max_tokens": 3, "messages": [{"role": "user", "content": "ping"}]},
+                timeout=20)
+            out["anthropic"] = "ok" if r.status_code == 200 else f"err: HTTP {r.status_code}"
+        except Exception as exc:
+            out["anthropic"] = f"err: {str(exc)[:160]}"
+    return out
+
+
+def diagnostico_imap() -> dict:
+    """Prueba la conexión IMAP y lista carpetas (sin exponer credenciales)."""
+    p = _imap_params()
+    if not (p["host"] and p["user"] and p["password"]):
+        return {"ok": False, "reason": "no_credentials"}
+    try:
+        M = _imap_connect(p)
+    except Exception as exc:
+        return {"ok": False, "reason": f"imap_error: {str(exc)[:160]}"}
+    try:
+        typ, _ = M.select(_cfg("CORREO_INBOX_FOLDER", "INBOX"))
+        _, data = M.list()
+        return {"ok": typ == "OK", "host": p["host"], "folders": len(data or []),
+                "sent_folder": _cfg("CORREO_SENT_FOLDER", "INBOX.Sent"),
+                "send_dry_run": _send_dry_run()}
+    except Exception as exc:
+        return {"ok": False, "reason": f"imap_error: {str(exc)[:160]}"}
+    finally:
+        try:
+            M.logout()
+        except Exception:
+            pass

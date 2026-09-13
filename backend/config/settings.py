@@ -124,6 +124,9 @@ CORREO_SMTP_PASSWORD = os.environ.get("CORREO_SMTP_PASSWORD", CORREO_IMAP_PASSWO
 CORREO_FROM          = os.environ.get("CORREO_FROM", os.environ.get("DEFAULT_FROM_EMAIL", CORREO_SMTP_USER))
 CORREO_INBOX_FOLDER  = os.environ.get("CORREO_INBOX_FOLDER", "INBOX")
 CORREO_SENT_FOLDER   = os.environ.get("CORREO_SENT_FOLDER", "INBOX.Sent")
+# Seguridad QA: por defecto el envío es SIMULADO (no manda correo real).
+# Pon CORREO_SEND_DRY_RUN=0 para habilitar el envío efectivo.
+CORREO_SEND_DRY_RUN  = os.environ.get("CORREO_SEND_DRY_RUN", "1")
 
 # ─── Upload limits (Excel COMEX hasta 50 MB) ──────────────────
 # Default Django: 2.5 MB en memoria, 2.5 MB en POST. Lo subimos para

@@ -6,6 +6,7 @@ RBAC: required_module="correo".
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 from django.db import connection
@@ -13,7 +14,10 @@ from django.db.models import Q
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
+
+from apps.core.permissions import user_is_ceo_or_admin
 
 from . import services
 from .models import Adjunto, Contacto, Envio, Estilo, Grupo, Mensaje
@@ -37,6 +41,7 @@ def _paging(request):
 
 class MensajeViewSet(viewsets.ViewSet):
     required_module = "correo"
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def list(self, request):
         qs = Mensaje.objects.filter(is_active=True)
@@ -133,6 +138,45 @@ class MensajeViewSet(viewsets.ViewSet):
     def buscar(self, request):
         """Alias de búsqueda sobre la bandeja."""
         return self.list(request)
+
+    @action(detail=True, methods=["get", "post"], url_path="adjuntos")
+    def adjuntos(self, request, pk=None):
+        m = Mensaje.objects.filter(pk=pk, is_active=True).first()
+        if not m:
+            return Response({"detail": "Mensaje no existe"}, status=404)
+        if request.method == "GET":
+            qs = Adjunto.objects.filter(mensaje_id=m.id)
+            return Response(AdjuntoSerializer(qs, many=True).data)
+        f = request.FILES.get("file")
+        if not f:
+            return Response({"detail": "file requerido"}, status=400)
+        data = f.read()
+        services._subir_adjunto(m.id, {
+            "filename": f.name,
+            "mimetype": f.content_type or "application/octet-stream",
+            "size_bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "data": data,
+        })
+        m.has_attachments = True
+        m.save(update_fields=["has_attachments", "updated_at"])
+        return Response(AdjuntoSerializer(Adjunto.objects.filter(mensaje_id=m.id), many=True).data,
+                        status=201)
+
+    @action(detail=True, methods=["get"], url_path=r"adjuntos/(?P<aid>[^/.]+)/url")
+    def adjunto_url(self, request, pk=None, aid=None):
+        info = services.adjunto_signed_url(aid)
+        if not info:
+            return Response({"detail": "Adjunto sin archivo almacenado"}, status=404)
+        return Response(info)
+
+    @action(detail=False, methods=["get"])
+    def diagnostico(self, request):
+        """B1/B2 · prueba claves LLM y conexión IMAP (admin/CEO)."""
+        if not user_is_ceo_or_admin(request.user):
+            return Response({"detail": "Solo admin/CEO"}, status=403)
+        return Response({"llm": services.diagnostico_llm(),
+                         "imap": services.diagnostico_imap()})
 
 
 class ContactoViewSet(viewsets.ViewSet):

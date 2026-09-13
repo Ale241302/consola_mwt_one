@@ -175,7 +175,19 @@ function Bandeja({ es, selStyle, flash }) {
             {detalle.adjuntos?.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <div className="micro">{es ? "ADJUNTOS" : "ATTACHMENTS"}</div>
-                {detalle.adjuntos.map((a) => <div key={a.id} style={{ fontSize: 12 }}>• {a.filename} ({a.size_bytes} B)</div>)}
+                {detalle.adjuntos.map((a) => (
+                  <div key={a.id} style={{ fontSize: 12, display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
+                    <span>• {a.filename} ({a.size_bytes} B)</span>
+                    {a.storage_key ? (
+                      <button className="btn btn-sm btn-ghost" onClick={async () => {
+                        try {
+                          const r = await correoApi.mensajes.adjuntoUrl(detalle.id, a.id);
+                          if (r?.url) window.open(r.url, "_blank");
+                        } catch { flash(es ? "Sin archivo" : "No file"); }
+                      }}>{es ? "Descargar" : "Download"}</button>
+                    ) : <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>({es ? "sin binario" : "no binary"})</span>}
+                  </div>
+                ))}
               </div>
             )}
             <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, color: "var(--text-primary)" }}>
@@ -308,7 +320,11 @@ function Redactar({ es, inp, selStyle, flash }) {
   const enviar = async () => {
     if (!envio) return;
     if (!window.confirm(es ? "¿Enviar ahora?" : "Send now?")) return;
-    try { const r = await correoApi.envios.enviar(envio.id); flash(r?.ok ? "Enviado" : (r?.reason || "Error")); }
+    try {
+      const r = await correoApi.envios.enviar(envio.id);
+      flash(r?.dry_run ? (es ? "Simulado (dry-run activo)" : "Simulated (dry-run on)")
+                       : (r?.ok ? (es ? "Enviado" : "Sent") : (r?.reason || "Error")));
+    }
     catch (e) { flash(e?.body?.detail || "Error"); }
   };
   return (
