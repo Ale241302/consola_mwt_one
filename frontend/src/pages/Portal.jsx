@@ -776,6 +776,11 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
     EN_DESTINO: lang==='es' ? 'En destino' : 'At destination',
     CERRADO: lang==='es' ? 'Cerrado' : 'Closed',
   };
+  const nameById = useMemo(() => {
+    const m = {};
+    (clientOpts || []).forEach((c) => { m[c.id] = c.name; });
+    return m;
+  }, [clientOpts]);
   const rows = useMemo(() => visibleOcs.map((o) => {
     const relatedExps = expedientes.filter((e) => e.oc_id === o.id);
     const leadExp = relatedExps[0];
@@ -783,12 +788,12 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
       id: o.id,
       ref: o.client_ref || o.codigo || o.po_code || '—',
       proforma: o.proforma,
-      cliente: o.client_name || '—',
+      cliente: o.client_name || nameById[o.client_id] || (clientOpts[0]?.name) || '—',
       rawStatus: leadExp?.estado || o.estado || null,
       expCount: relatedExps.length,
       fusion: leadExp?.fusion_label || null,
     };
-  }), [visibleOcs, expedientes]);
+  }), [visibleOcs, expedientes, nameById, clientOpts]);
   const { pageItems, page, setPage, perPage, setPerPage, totalPages, total } =
     usePagination(rows, { defaultPerPage: 20 });
   const kanbanCols = useMemo(() => {
@@ -864,7 +869,13 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
       {vista === 'tabla' ? (
         <>
           <div className="table-scroll">
-            <table className="table-sticky" style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+            <table className="table table-sticky" style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'separate', borderSpacing: 0 }}>
+              <colgroup>
+                <col style={{ width: '34%' }} />
+                <col style={{ width: '40%' }} />
+                <col style={{ width: '22%' }} />
+                <col style={{ width: 44 }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th>{lang==='es' ? 'REF' : 'REF'}</th>
