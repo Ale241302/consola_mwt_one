@@ -598,3 +598,212 @@ def cliente_profile(request, client_id):
     })
 
 
+# ---------------------------------------------------------------------
+# Etapa 5 · PORTADA CEO — respuestas pendientes + proximas salidas
+# ---------------------------------------------------------------------
+def _query(sql: str, params=None) -> list[dict]:
+    with connection.cursor() as c:
+        c.execute(sql, params)
+        cols = [c0[0] for c0 in c.description]
+        return [dict(zip(cols, row)) for row in c.fetchall()]
+
+
+# Sub-select reutilizable: codigo de la proforma vigente del expediente.
+_PROFORMA_SUBSELECT = """
+    (
+        SELECT d.codigo
+          FROM expedientes.documento d
+         WHERE d.expediente_id = e.id
+           AND d.kind = 'PROFORMA'
+           AND d.is_active = TRUE
+           AND d.codigo IS NOT NULL
+           AND d.codigo <> ''
+         ORDER BY d.created_at DESC
+         LIMIT 1
+    )
+"""
+
+
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def radiografia_ceo(request):
+    """Etapa 5 · Portada CEO.
+
+    Devuelve, anclado a datos reales (nada inventado):
+      · respuestas_pendientes: correos IN cuyo ultimo mensaje del hilo no fue
+        respondido (sin OUT posterior) y no estan ignorados.
+      · borradores_por_revisar: Envios en estado BORRADOR.
+      · proximas_salidas: fechas PRODUCCION/ETD publicadas dentro de la ventana
+        (default 21 dias, configurable con ?window_days=). Clasifica la certeza:
+        RECONFIRMADA (exacta), POR_RECONFIRMAR (mes/rango), CAMBIO (conflicto).
+      · sin_fecha: expedientes en REGISTRO/PRODUCCION sin fecha publicada.
+      · bloqueos: cambios de fecha pendientes de revisar + tareas REQUIERE_REVISION.
+
+    NO expone saldo disponible: el plan deja abierta la fuente del saldo inicial.
+    """
+    try:
+        window_days = int(request.query_params.get("window_days") or 21)
+    except (TypeError, ValueError):
+        window_days = 21
+    window_days = max(1, min(window_days, 180))
+    today = date.today()
+
+    # ── Respuestas pendientes ─────────────────────────────────────────
+    respuestas = _query(f"""
+        WITH ranked AS (
+            SELECT m.id::text AS mensaje_id, m.thread_key, m.message_id, m.subject,
+                   m.from_email, m.from_name, m.sent_at, m.received_at, m.created_at,
+                   m.expediente_id::text AS expediente_id, m.match_status, m.folder,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY COALESCE(m.thread_key, m.message_id, m.id::text)
+                       ORDER BY COALESCE(m.sent_at, m.received_at, m.created_at) DESC
+                   ) AS rn
+              FROM correo.mensaje m
+             WHERE m.is_active = TRUE AND m.direction = 'IN'
+        )
+        SELECT r.mensaje_id, r.subject, r.from_email, r.from_name, r.match_status, r.folder,
+               COALESCE(r.sent_at, r.received_at, r.created_at) AS fecha,
+               r.expediente_id, e.codigo AS exp_codigo, e.estado AS exp_estado,
+               cl.razon_social AS cliente,
+               {_PROFORMA_SUBSELECT} AS proforma_codigo
+          FROM ranked r
+          LEFT JOIN expedientes.expediente e ON e.id::text = r.expediente_id
+          LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+         WHERE r.rn = 1
+           AND r.match_status <> 'IGNORADO'
+           AND NOT EXISTS (
+                 SELECT 1 FROM correo.mensaje o
+                  WHERE o.is_active = TRUE AND o.direction = 'OUT'
+                    AND COALESCE(o.thread_key, o.message_id, o.id::text)
+                        = COALESCE(r.thread_key, r.message_id, r.mensaje_id)
+                    AND COALESCE(o.sent_at, o.received_at, o.created_at)
+                        > COALESCE(r.sent_at, r.received_at, r.created_at)
+               )
+         ORDER BY fecha ASC
+         LIMIT 50
+    """)
+    for r in respuestas:
+        r["display_id"] = _resolve_display_id(r.get("exp_codigo"), r.get("proforma_codigo"))
+        r["fecha"] = r["fecha"].isoformat() if r.get("fecha") else None
+
+    # ── Borradores por revisar ────────────────────────────────────────
+    borradores = _query(f"""
+        SELECT v.id::text AS envio_id, v.expediente_id::text AS expediente_id,
+               v.subject, v.destinatarios, v.estado, v.updated_at,
+               e.codigo AS exp_codigo, cl.razon_social AS cliente,
+               {_PROFORMA_SUBSELECT} AS proforma_codigo
+          FROM correo.envio v
+          LEFT JOIN expedientes.expediente e ON e.id = v.expediente_id
+          LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+         WHERE v.estado = 'BORRADOR'
+         ORDER BY v.updated_at DESC
+         LIMIT 50
+    """)
+    for b in borradores:
+        b["display_id"] = _resolve_display_id(b.get("exp_codigo"), b.get("proforma_codigo"))
+        b["updated_at"] = b["updated_at"].isoformat() if b.get("updated_at") else None
+
+    # ── Proximas salidas de produccion ────────────────────────────────
+    salidas = _query(f"""
+        SELECT ef.expediente_id::text AS expediente_id, ef.campo, ef.valor_raw,
+               ef.valor_fecha, ef.precision, ef.updated_at,
+               e.codigo AS exp_codigo, e.estado AS exp_estado,
+               cl.razon_social AS cliente,
+               {_PROFORMA_SUBSELECT} AS proforma_codigo,
+               EXISTS (
+                   SELECT 1 FROM correo.extraccion x
+                    WHERE x.expediente_id = ef.expediente_id
+                      AND x.campo = ef.campo
+                      AND x.conflicto = TRUE
+                      AND x.estado = 'PROPUESTO'
+               ) AS conflicto
+          FROM correo.expediente_fecha ef
+          JOIN expedientes.expediente e ON e.id = ef.expediente_id AND e.is_active = TRUE
+          LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+         WHERE ef.publicado = TRUE
+           AND ef.campo IN ('PRODUCCION', 'ETD')
+           AND ef.valor_fecha IS NOT NULL
+           AND ef.valor_fecha BETWEEN CURRENT_DATE AND (CURRENT_DATE + %s::int)
+         ORDER BY ef.valor_fecha ASC
+         LIMIT 100
+    """, [window_days])
+    for s in salidas:
+        s["display_id"] = _resolve_display_id(s.get("exp_codigo"), s.get("proforma_codigo"))
+        s["valor_fecha"] = s["valor_fecha"].isoformat() if s.get("valor_fecha") else None
+        s["ultima_actualizacion"] = s["updated_at"].isoformat() if s.get("updated_at") else None
+        s.pop("updated_at", None)
+        if s.get("conflicto"):
+            s["estado_fecha"] = "CAMBIO"
+        elif (s.get("precision") or "EXACTA") != "EXACTA":
+            s["estado_fecha"] = "POR_RECONFIRMAR"
+        else:
+            s["estado_fecha"] = "RECONFIRMADA"
+
+    # ── Sin fecha concreta (en registro/produccion sin fecha publicada) ─
+    sin_fecha = _query(f"""
+        SELECT e.id::text AS expediente_id, e.codigo AS exp_codigo, e.estado AS exp_estado,
+               e.shipment_date, e.eta, cl.razon_social AS cliente,
+               {_PROFORMA_SUBSELECT} AS proforma_codigo
+          FROM expedientes.expediente e
+          LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+         WHERE e.is_active = TRUE
+           AND e.estado IN ('REGISTRO', 'PRODUCCION')
+           AND NOT EXISTS (
+                 SELECT 1 FROM correo.expediente_fecha ef
+                  WHERE ef.expediente_id = e.id
+                    AND ef.publicado = TRUE
+                    AND ef.campo IN ('PRODUCCION', 'ETD')
+                    AND ef.valor_fecha IS NOT NULL
+               )
+         ORDER BY e.codigo ASC
+         LIMIT 100
+    """)
+    for s in sin_fecha:
+        s["display_id"] = _resolve_display_id(s.get("exp_codigo"), s.get("proforma_codigo"))
+
+    # ── Bloqueos (cambios de fecha + tareas de revision) ──────────────
+    cambios = _query(f"""
+        SELECT x.id::text AS extraccion_id, x.campo, x.valor_fecha, x.conflicto,
+               x.created_at, x.expediente_id::text AS expediente_id,
+               e.codigo AS exp_codigo, cl.razon_social AS cliente,
+               {_PROFORMA_SUBSELECT} AS proforma_codigo
+          FROM correo.extraccion x
+          LEFT JOIN expedientes.expediente e ON e.id = x.expediente_id
+          LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+         WHERE x.estado = 'PROPUESTO' AND x.conflicto = TRUE
+         ORDER BY x.created_at DESC
+         LIMIT 50
+    """)
+    for x in cambios:
+        x["display_id"] = _resolve_display_id(x.get("exp_codigo"), x.get("proforma_codigo"))
+        x["valor_fecha"] = x["valor_fecha"].isoformat() if x.get("valor_fecha") else None
+        x["created_at"] = x["created_at"].isoformat() if x.get("created_at") else None
+
+    tareas_rev = _query("""
+        SELECT t.id::text AS tarea_id, t.titulo, t.estado, t.due_date,
+               t.expediente_id::text AS expediente_id, e.codigo AS exp_codigo,
+               cl.razon_social AS cliente
+          FROM tareas.tarea t
+          LEFT JOIN expedientes.expediente e ON e.id = t.expediente_id
+          LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+         WHERE t.is_active = TRUE AND t.estado = 'REQUIERE_REVISION'
+         ORDER BY t.due_date ASC NULLS LAST
+         LIMIT 50
+    """)
+    for t in tareas_rev:
+        t["due_date"] = t["due_date"].isoformat() if t.get("due_date") else None
+
+    return Response({
+        "today": today.isoformat(),
+        "window_days": window_days,
+        "respuestas_pendientes": respuestas,
+        "borradores_por_revisar": borradores,
+        "proximas_salidas": salidas,
+        "sin_fecha": sin_fecha,
+        "bloqueos": {
+            "cambios_fecha": cambios,
+            "tareas_revision": tareas_rev,
+        },
+    })
+
+

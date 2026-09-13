@@ -39,6 +39,8 @@ import { expedientesApi } from "../lib/api.js";
 import ClientDashboard from "../components/dashboard/ClientDashboard.jsx";
 // Sprint 2026-08-02 · grid personalizable ADMIN/CEO (scope por widget).
 import AdminDashboard from "../components/dashboard/AdminDashboard.jsx";
+// Etapa 5 · Portada CEO (respuestas pendientes + próximas salidas de producción).
+import PortadaCEO from "../components/dashboard/PortadaCEO.jsx";
 import { FxToggle } from "../components/dashboard/DashboardPrimitives.jsx";
 
 const LS_CCY = "mwt:dashboard-fx-display";
@@ -172,13 +174,16 @@ export default function ScreenDashboard() {
       {/* Sprint 2026-08-02 · ADMIN/CEO: grid personalizable con scope por
           widget. CLIENT: su dashboard propio (intacto). */}
       {isAdmin
-        ? <AdminDashboard
-            lang={lang}
-            fmtAmount={fmtAmount}
-            secondaryBrl={secondaryBrl}
-            refreshNonce={refreshNonce}
-            onOpenExpediente={onOpenExpediente}
-          />
+        ? <>
+            <PortadaCEO lang={lang} onOpenExpediente={onOpenExpediente} />
+            <AdminDashboard
+              lang={lang}
+              fmtAmount={fmtAmount}
+              secondaryBrl={secondaryBrl}
+              refreshNonce={refreshNonce}
+              onOpenExpediente={onOpenExpediente}
+            />
+          </>
         : <ClientDashboard lang={lang}/>}
 
       {/* Footer informativo */}

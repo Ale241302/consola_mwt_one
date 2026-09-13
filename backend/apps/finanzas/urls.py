@@ -16,4 +16,6 @@ urlpatterns = [
     path("finanzas/commission-by-month/",            views.commission_by_month, name="finanzas-commission-by-month"),
     path("finanzas/margin-scatter/",                 views.margin_scatter,      name="finanzas-margin-scatter"),
     path("finanzas/cliente/<uuid:client_id>/",       views.cliente_profile,    name="finanzas-cliente"),
+    # Etapa 5 · Portada CEO (respuestas pendientes + proximas salidas de produccion)
+    path("finanzas/radiografia/",                    views.radiografia_ceo,    name="finanzas-radiografia"),
 ]

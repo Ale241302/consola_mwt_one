@@ -3039,6 +3039,18 @@ def finanzas_cliente(client_id: str) -> Any:
     return _safe_role_read(lambda: api.get(f"finanzas/cliente/{client_id}/"), "finanzas_cliente")
 
 
+@mcp.tool()
+def ceo_radiografia(window_days: int = 21) -> Any:
+    """Portada CEO (Etapa 5): correos que requieren respuesta, borradores por revisar,
+    próximas salidas de producción (fechas publicadas dentro de `window_days`, con su
+    certeza RECONFIRMADA/POR_RECONFIRMAR/CAMBIO), expedientes sin fecha y bloqueos
+    (cambios de fecha y tareas en revisión). Solo CEO/Admin.
+    No incluye 'saldo disponible' (fuente del saldo inicial aún no definida)."""
+    return _safe_role_read(lambda: api.get("finanzas/radiografia/",
+                                           _params(window_days=window_days)),
+                           "ceo_radiografia")
+
+
 # =========================================================================== #
 # TAREAS — catálogo, agenda por expediente y mesa de trabajo (Etapa 2)
 # =========================================================================== #

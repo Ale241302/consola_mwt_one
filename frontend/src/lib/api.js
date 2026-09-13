@@ -499,19 +499,25 @@ export function storageUrl(keyOrUrl, { token, forceToken } = {}) {
 //   resource("nodos")    → { list, get, create, update, remove, select }
 // Cumple "cero hardcode": cada dropdown del FE consume select("nombre_cat").
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// Query-string helper a nivel de MÓDULO. Los objetos Api declarados a
+// nivel de módulo (correoApi, finanzasApi, …) usan `qs(...)`; antes solo
+// existía dentro de resource() → ReferenceError en runtime. (bugfix E5)
+// ---------------------------------------------------------------------
+const qs = (params) => {
+  if (!params) return "";
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null && v !== "") usp.set(k, v);
+  }
+  const s = usp.toString();
+  return s ? `?${s}` : "";
+};
+
 export function resource(name) {
   const base = `/${name}/`;
   const tokenOpt = () => ({ token: getToken() });
 
-  const qs = (params) => {
-    if (!params) return "";
-    const usp = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== null && v !== "") usp.set(k, v);
-    }
-    const s = usp.toString();
-    return s ? `?${s}` : "";
-  };
   const withQs = (path, params) => `${path}${qs(params)}`;
   const isParamsObject = (value) => (
     value &&
@@ -796,6 +802,14 @@ export const builderTemplatesApi = {
 
 export const pagosApi          = resource("pagos");
 export const conciliacionesApi = resource("conciliaciones");
+
+// Etapa 5 · Finanzas / Portada CEO (solo lectura, CEO/Admin).
+export const finanzasApi = {
+  overview:  ()      => apiFetch(`/finanzas/overview/`, { token: getToken() }),
+  comisiones: (params) => apiFetch(`/finanzas/comisiones/${qs(params)}`, { token: getToken() }),
+  radiografia: (windowDays) =>
+    apiFetch(`/finanzas/radiografia/${qs(windowDays ? { window_days: windowDays } : null)}`, { token: getToken() }),
+};
 
 // ---------------------------------------------------------------------
 // Artefactos por nodo (sprint 2026-05-11 · Fase 2).

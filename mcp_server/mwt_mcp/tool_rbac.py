@@ -187,6 +187,7 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "finanzas_commission_by_month": ("finanzas", "view"),
     "finanzas_margin_scatter": ("finanzas", "view"),
     "finanzas_cliente": ("finanzas", "view"),
+    "ceo_radiografia": ("finanzas", "view"),
     # ── Storage ────────────────────────────────────────────────────────────
     "storage_subir_archivo": ("storage", "create"),
     "artefacto_archivo_descargar": ("storage", "download_doc"),
