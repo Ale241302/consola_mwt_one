@@ -63,6 +63,7 @@ const ScreenProfilePage = lazy(() => import("./pages/ProfilePage.jsx"));
 const ScreenTickets = lazy(() => import("./pages/Tickets.jsx"));
 const ScreenTicketDetail = lazy(() => import("./pages/TicketDetail.jsx"));
 const ScreenTareas = lazy(() => import("./pages/Tareas.jsx"));
+const ScreenCorreo = lazy(() => import("./pages/Correo.jsx"));
 
 function PageFallback() {
   return (
@@ -139,6 +140,8 @@ export default function App() {
         {/* Etapa 2 · Tareas (catálogo + agenda + mesa de trabajo) — staff interno,
             visible según el módulo RBAC `tareas`. */}
         <Route path="/tareas" element={<InternalOnlyRoute><ScreenTareas /></InternalOnlyRoute>} />
+        {/* Etapa 3 · Correo (bandeja + contactos + editor + envío) — staff interno. */}
+        <Route path="/correo" element={<InternalOnlyRoute><ScreenCorreo /></InternalOnlyRoute>} />
         <Route path="/inventario" element={<InternalOnlyRoute><ScreenInventario /></InternalOnlyRoute>} />
         {/* Sprint Inbound Engine v1 (2026-04-29) — wizard full-page */}
         <Route path="/inventario/recepcion" element={<InternalOnlyRoute><InboundReceptionWizard /></InternalOnlyRoute>} />

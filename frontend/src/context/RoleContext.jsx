@@ -103,6 +103,7 @@ const SIDEBAR_KEY_TO_MODULE = {
   roles:           "roles",
   "mesa-trabajo":  "expedientes",
   tareas:          "tareas",
+  correo:          "correo",
   sizing:          "sizing",
 };
 

@@ -93,6 +93,7 @@ LOCAL_APPS = [
     "apps.finance",         # Finance v2.0 · "Registrar Pago" + IA + audit append-only
     "apps.finanzas",        # Sprint 2026-05-24 · Modulo Finanzas CEO-ONLY (comisiones, margen, devengo)
     "apps.tareas",          # Etapa 2 · Catálogo + agenda de tareas + mesa de trabajo
+    "apps.correo",          # Etapa 3 · Correo (bandeja + contactos + editor + envío)
     # Los siguientes módulos se irán activando cuando cada app tenga su
     # apps.py + views.py correspondiente. Dejarlos comentados evita que
     # Django falle al arrancar por ImportError durante INSTALLED_APPS.
@@ -106,6 +107,22 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY + LOCAL_APPS
 # Etapa 2 · Tareas: responsable por defecto (se resuelve por email a su UUID).
 TAREAS_DEFAULT_RESPONSABLE_EMAIL = os.environ.get(
     "TAREAS_DEFAULT_RESPONSABLE_EMAIL", "alvaro@muitowork.com")
+
+# Etapa 3 · Correo: cuenta operativa (IMAP/SMTP). Si faltan credenciales, el
+# sync es no-op (y la bandeja se puede alimentar por /api/correo/mensajes/importar/).
+CORREO_IMAP_HOST     = os.environ.get("CORREO_IMAP_HOST", os.environ.get("EMAIL_HOST", "mail.mwt.one"))
+CORREO_IMAP_PORT     = os.environ.get("CORREO_IMAP_PORT", "993")
+CORREO_IMAP_SSL      = os.environ.get("CORREO_IMAP_SSL", "1")
+CORREO_IMAP_USER     = os.environ.get("CORREO_IMAP_USER", os.environ.get("EMAIL_HOST_USER", ""))
+CORREO_IMAP_PASSWORD = os.environ.get("CORREO_IMAP_PASSWORD", os.environ.get("EMAIL_HOST_PASSWORD", ""))
+CORREO_SMTP_HOST     = os.environ.get("CORREO_SMTP_HOST", os.environ.get("EMAIL_HOST", "mail.mwt.one"))
+CORREO_SMTP_PORT     = os.environ.get("CORREO_SMTP_PORT", "465")
+CORREO_SMTP_STARTTLS = os.environ.get("CORREO_SMTP_STARTTLS", "0")
+CORREO_SMTP_USER     = os.environ.get("CORREO_SMTP_USER", CORREO_IMAP_USER)
+CORREO_SMTP_PASSWORD = os.environ.get("CORREO_SMTP_PASSWORD", CORREO_IMAP_PASSWORD)
+CORREO_FROM          = os.environ.get("CORREO_FROM", os.environ.get("DEFAULT_FROM_EMAIL", CORREO_SMTP_USER))
+CORREO_INBOX_FOLDER  = os.environ.get("CORREO_INBOX_FOLDER", "INBOX")
+CORREO_SENT_FOLDER   = os.environ.get("CORREO_SENT_FOLDER", "INBOX.Sent")
 
 # ─── Upload limits (Excel COMEX hasta 50 MB) ──────────────────
 # Default Django: 2.5 MB en memoria, 2.5 MB en POST. Lo subimos para
@@ -149,7 +166,7 @@ DATABASES = {
         "OPTIONS":  {"options": "-c search_path=core,clientes,expedientes,pipeline,"
                                 "financiero,transfers,nodos,brands,productos,"
                                 "proveedores,inventario,portal,email_templates,"
-                                "notifications,cobros,dashboard,ai,tareas,public"},
+                                "notifications,cobros,dashboard,ai,tareas,correo,public"},
     }
 }
 
@@ -353,6 +370,13 @@ CELERY_BEAT_SCHEDULE = {
         "task":     "tareas.generar_agenda",
         "schedule": _crontab(hour=8, minute=0),
         "options":  {"queue": "default", "expires": 3600},
+    },
+    # Etapa 3 · sincroniza la bandeja de correo (recibidos no leídos +
+    # enviados) cada 5 minutos. No-op sin credenciales IMAP.
+    "correo_sync": {
+        "task":     "correo.sync",
+        "schedule": 300.0,
+        "options":  {"queue": "default", "expires": 240},
     },
     # Archival a S3 Glacier — Fase 5C (placeholder; el task se crea
     # en una sub-fase posterior. Comentado hasta que esté implementado).

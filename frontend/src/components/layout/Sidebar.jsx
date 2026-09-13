@@ -71,6 +71,8 @@ const KEY_TO_PATH = {
   'mesa-trabajo': '/mesa-trabajo',
   // Etapa 2 · Tareas (catálogo + agenda + mesa de trabajo)
   tareas:      '/tareas',
+  // Etapa 3 · Correo (bandeja + contactos + editor)
+  correo:      '/correo',
 };
 
 // derive currentScreen key from the URL pathname
@@ -104,6 +106,7 @@ function screenFromPath(pathname) {
   if (pathname.startsWith('/historial-precios')) return 'price-history';
   if (pathname.startsWith('/mesa-trabajo')) return 'mesa-trabajo';
   if (pathname.startsWith('/tareas')) return 'tareas';
+  if (pathname.startsWith('/correo')) return 'correo';
   if (pathname.startsWith('/wizard')) return 'wizard';
   if (pathname.startsWith('/ai/governance')) return 'ai-governance';
   if (pathname.startsWith('/ai')) return 'ai-hub';
@@ -208,6 +211,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'finanzas',       icon: <IconDollar/>,     label: lang === 'en' ? 'Finance' : 'Finanzas',                  group: 'commercial' },
     // Comunicaciones
     { key: 'history',        icon: <IconHistory/>,    label: lang === 'en' ? 'Notifications' : 'Notificaciones', group: 'communications' },
+    { key: 'correo',         icon: <IconMail/>,       label: lang === 'en' ? 'Mail'          : 'Correo',         group: 'communications' },
     { key: 'collections',    icon: <IconCreditCard/>, label: lang === 'en' ? 'Portfolio'     : 'Cartera',        group: 'communications' },
     // Soporte
     { key: 'tickets',        icon: <IconClipboard/>,  label: tr(lang,'tickets')  || 'Gestor de Tickets', group: 'support' },

@@ -647,6 +647,47 @@ export const tareasApi = {
 };
 
 // ---------------------------------------------------------------------
+// Etapa 3 · Correo: bandeja (mensajes), contactos, grupos, estilo y envíos.
+// ---------------------------------------------------------------------
+export const correoApi = {
+  mensajes: {
+    list:          (params) => apiFetch(`/correo/mensajes/${qs(params)}`, { token: getToken() }),
+    get:           (id)     => apiFetch(`/correo/mensajes/${id}/`, { token: getToken() }),
+    vincular:      (id, body) => apiFetch(`/correo/mensajes/${id}/vincular/`, { method: "POST", body, token: getToken() }),
+    ignorar:       (id)     => apiFetch(`/correo/mensajes/${id}/ignorar/`, { method: "POST", token: getToken() }),
+    marcarLeido:   (id)     => apiFetch(`/correo/mensajes/${id}/marcar-leido/`, { method: "POST", token: getToken() }),
+    porExpediente: (exp)    => apiFetch(`/correo/mensajes/por-expediente/?expediente=${encodeURIComponent(exp)}`, { token: getToken() }),
+    importar:      (body)   => apiFetch(`/correo/mensajes/importar/`, { method: "POST", body, token: getToken() }),
+    sync:          (body)   => apiFetch(`/correo/mensajes/sync/`, { method: "POST", body: body || {}, token: getToken() }),
+  },
+  contactos: {
+    list:   (params)    => apiFetch(`/correo/contactos/${qs(params)}`, { token: getToken() }),
+    create: (body)      => apiFetch(`/correo/contactos/`, { method: "POST", body, token: getToken() }),
+    update: (id, body)  => apiFetch(`/correo/contactos/${id}/`, { method: "PATCH", body, token: getToken() }),
+    remove: (id)        => apiFetch(`/correo/contactos/${id}/`, { method: "DELETE", token: getToken() }),
+  },
+  grupos: {
+    list:   ()          => apiFetch(`/correo/grupos/`, { token: getToken() }),
+    create: (body)      => apiFetch(`/correo/grupos/`, { method: "POST", body, token: getToken() }),
+    update: (id, body)  => apiFetch(`/correo/grupos/${id}/`, { method: "PATCH", body, token: getToken() }),
+    remove: (id)        => apiFetch(`/correo/grupos/${id}/`, { method: "DELETE", token: getToken() }),
+  },
+  estilos: {
+    list:     ()        => apiFetch(`/correo/estilos/`, { token: getToken() }),
+    actual:   ()        => apiFetch(`/correo/estilos/actual/`, { token: getToken() }),
+    publicar: (body)    => apiFetch(`/correo/estilos/publicar/`, { method: "POST", body, token: getToken() }),
+  },
+  envios: {
+    list:     (params)  => apiFetch(`/correo/envios/${qs(params)}`, { token: getToken() }),
+    get:      (id)      => apiFetch(`/correo/envios/${id}/`, { token: getToken() }),
+    create:   (body)    => apiFetch(`/correo/envios/`, { method: "POST", body, token: getToken() }),
+    update:   (id, body) => apiFetch(`/correo/envios/${id}/`, { method: "PATCH", body, token: getToken() }),
+    traducir: (id, body) => apiFetch(`/correo/envios/${id}/traducir/`, { method: "POST", body, token: getToken() }),
+    enviar:   (id)      => apiFetch(`/correo/envios/${id}/enviar/`, { method: "POST", token: getToken() }),
+  },
+};
+
+// ---------------------------------------------------------------------
 // Inbound Engine v1 (sprint 2026-04-29)
 //   POST /api/inventory/ocr-receipt/    (multipart: file)
 //   POST /api/inventory/receive/        (json: cabecera + lines[])
