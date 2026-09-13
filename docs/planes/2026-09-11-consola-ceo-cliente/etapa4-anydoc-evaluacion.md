@@ -1,115 +1,126 @@
 # Etapa 4 · Evaluación comparativa de extracción documental (AnyDoc vs extractor MWT)
 
-Fecha: 2026-09-13 · Estado del arte relacionado: `apps/correo/extraccion.py`
+Fecha: 2026-09-13 · Motor MWT: `apps/correo/extraccion.py` (vivo en producción)
 
 ## 1. Objetivo
 
 Cerrar el bullet de Etapa 4 «Procesamiento de correos/adjuntos y evaluación
 comparativa AnyDoc» (plan §12) con evidencia real, no supuesta. El plan deja la
-selección de AnyDoc como decisión abierta (§14: «Selección de AnyDoc tras
-evaluación»).
+selección como decisión abierta (§14).
+
+AnyDoc = [`github.com/firecrawl/anydoc`](https://github.com/firecrawl/anydoc):
+librería en Rust (bindings Node/Python/WASM) que convierte Word, PowerPoint,
+Excel, OpenDocument, RTF, EPUB, CSV y PDF a Markdown limpio, local y sin OCR.
 
 ## 2. Muestra autorizada
 
-Se usó la carpeta real **`01 Marluvas`** (documentos operativos de MWT con
-Marluvas): 2 206 archivos (1 259 PDF, 510 XLSX, 102 EML, 71 DOC, 37 XLS, 31 DOCX,
-etc.), organizados por país/cliente/año con subcarpetas DUA, Factura, Guía,
-OC del Cliente, Packing List, Proforma y SAP.
-
-Muestra determinista (semilla 42), ver `etapa4-anydoc-muestra.json`:
-
-| Extensión | Tomados |
-|---|---|
-| .pdf | 30 |
-| .xlsx | 20 |
-| .xls | 10 |
-| .docx | 8 |
-| **Total** | **68** |
+Carpeta real **`01 Marluvas`**: 2 206 archivos (1 259 PDF, 510 XLSX, 102 EML, 71
+DOC, 37 XLS, 31 DOCX…), organizados por país/cliente/año (DUA, Factura, Guía,
+OC del Cliente, Packing List, Proforma, SAP).
 
 ## 3. Método
 
-Arnés: `backend/scripts/eval_anydoc_extraction.py` (corre con el venv del
-backend). Reutiliza **el mismo extractor de texto** que producción
-(`apps.ai_hub.document_extractor._to_text_payload`: PyMuPDF → pypdf → openpyxl →
-docx) y **el mismo motor de fechas** (`apps.correo.extraccion.extraer_de_texto`).
-No hay caja negra: es exactamente el código que corre en el VPS.
+Dos arneses reproducibles (semilla 42), sobre documentos reales:
 
-Medimos: cobertura de texto por tipo, fechas detectadas (campo/precisión/tipo de
-mención) y tiempo por documento.
+| Arnés | Venv | Qué hace |
+|---|---|---|
+| `backend/scripts/eval_anydoc_extraction.py` | backend | Extractor MWT sobre 68 docs (30 pdf, 20 xlsx, 10 xls, 8 docx) |
+| `backend/scripts/probe_anydoc.py` | anydoc | AnyDoc sobre 43 docs (15 pdf, 10 xlsx, 8 xls, 5 docx, 5 doc) |
+| `backend/scripts/compare_anydoc_extract.py` | backend | Mismo motor de fechas sobre el texto de MWT y sobre el Markdown de AnyDoc |
 
-## 4. Resultados medidos (extractor MWT, 100 % local)
+Evidencia: `etapa4-anydoc-muestra.json`, `etapa4-anydoc-probe.json`,
+`etapa4-anydoc-compare.json`.
+
+## 4. Extractor MWT (baseline)
 
 | Métrica | Valor |
 |---|---|
 | Documentos procesados | 68 |
-| Con texto extraíble | **65 (95,6 %)** |
+| Con texto extraíble | 65 (95,6 %) |
 | Sin texto (PDF escaneado) | 3 |
-| Errores | 0 |
-| Tiempo total | 16,6 s (**≈ 0,24 s/doc**) |
+| Tiempo | 16,6 s (**≈ 0,24 s/doc**) |
 | Fechas propuestas (tras ajuste) | 4 |
 | Correctas (verificación manual) | **4 / 4** |
 
-Campos detectados: `ETD` ×3, `DUE` ×1. Precisión: `EXACTA` ×4.
+### 4.1 Hallazgo y corrección
 
-### 4.1 Hallazgo principal de la evaluación (y corrección aplicada)
+La primera corrida dio 50 propuestas, en su mayoría **falsos positivos** por
+subcadenas sin límites de palabra: «**Bl**oqueado»→BL_AWB, «Forma de **Pago**»→DUE,
+«**llegada** a puerto»→ETA, «conocimiento de **embarque**»→ETD. Se reescribieron
+las keywords como regex con límites de palabra y orden BL_AWB antes de ETD. Tras
+el ajuste: 4 propuestas, 4/4 correctas. Regresión cubierta por el arnés.
 
-La **primera corrida** produjo 50 propuestas, en su mayoría **falsos positivos**
-por coincidencia de subcadenas sin límites de palabra:
+### 4.2 Límites
 
-| Falso positivo | Causa | Ejemplo real |
+- `.xls` y `.doc` legacy: **no parseables** (se omiten en producción).
+- PDF escaneado/imagen: sin texto → requieren OCR/visión (no disponibles).
+
+## 5. AnyDoc — ejecución real
+
+`pip install firecrawl-anydoc` y conversión local de los documentos de la muestra.
+
+### 5.1 Cobertura y velocidad (43 docs)
+
+| Métrica | AnyDoc | Extractor MWT |
 |---|---|---|
-| `BL_AWB` | substring `bl` | «**Bl**oqueado» (xlsx 262746) |
-| `DUE` | substring `pago` / `due` | «Forma de **Pago**», documento aduanero «**DUE** 26BR…» |
-| `ETA` | substring `llegada` | «90 días desde la **llegada** a puerto» |
-| `ETD` | substring `embarque` | «conocimiento de **embarque**» (es BL) |
+| Convertidos OK | **40 / 43** | 27 / 43 |
+| Formatos legacy (`.xls`, `.doc`) | **13 / 13** | **0 / 13** |
+| Necesitan OCR | 2 (PDF escaneados) | 3 sin texto |
+| Error real | 1 (*Malformed*: DANFE) | 0 |
+| Velocidad | **≈ 24 ms/doc** | ≈ 240 ms/doc |
 
-**Corrección** (`extraccion.py`): keywords reescritas como regex con límites de
-palabra, sinónimos específicos y orden que prioriza `BL_AWB` sobre `ETD`. Tras el
-ajuste, las 4 propuestas son correctas y desaparecen los falsos positivos de
-proforma/bloqueado/términos de pago. Regresión cubierta por el arnés.
+### 5.2 Fechas (mismo motor, distinta entrada)
 
-### 4.2 Límites confirmados
+Sobre los mismos 43 documentos, alimentando el mismo `extraer_de_texto`:
 
-- **`.xls` y `.doc` legacy**: no parseables por los extractores actuales (se
-  decodifican como binario). En producción se **omiten** en `extraer_de_adjuntos`.
-- **PDF escaneado / imagen**: sin texto embebido → requieren OCR/visión, no
-  disponibles (solo `DEEPSEEK` activo, sin visión). 3/68 en la muestra.
+| | Valor |
+|---|---|
+| Propuestas con texto MWT | 3 |
+| Propuestas con Markdown AnyDoc | **9** |
+| Docs donde **solo AnyDoc** ve la fecha | **3** |
+| Docs con ambas | 0 |
 
-## 5. Comparativa con AnyDoc
+Documentos que AnyDoc desbloquea (que el texto propio de MWT no lograba):
 
-**No se pudo correr AnyDoc en vivo**: no hay credenciales/API de AnyDoc en el
-entorno y el proyecto no la integra. Inventar métricas suyas sería exactamente lo
-que el plan prohíbe. Lo que sí queda listo es la **batería y el criterio**.
+- `Invoice 2414-2026.pdf` → `DOCUMENTO 2026-02-11`
+- `Carta Dian Mayo 2024.docx` → `DOCUMENTO 2024-06-18`
+- `Carta de retraso hospital mexico 2023….doc` → `PRODUCCION` (un **`.doc` legacy** que MWT no puede leer)
 
-### 5.1 Batería lista para correr AnyDoc
+### 5.3 Lo que **no** resuelve AnyDoc
 
-1. Muestra: los 68 documentos de `etapa4-anydoc-muestra.json` + los 3 escaneados
-   (justo el caso donde AnyDoc aportaría).
-2. Verdad de referencia: anotar por documento los campos del plan (producción,
-   BL/AWB, vencimiento, ETD/ETA) con fecha y precisión.
-3. Métricas a comparar: exactitud por campo, cobertura en escaneados, latencia
-   por documento y costo por 1 000 documentos.
-4. Criterio de selección (§14): AnyDoc solo se adopta si gana en **escaneados y
-   documentos complejos** sin perder exactitud, y si el envío de documentos fuera
-   del VPS es aceptable para datos de MWT.
+- **Escaneados**: los mismos PDF sin texto fallan con `NeedsOcr`. Hay que optar
+  por OCR alojado (Firecrawl Parse) — eso **sí** envía el documento fuera de la
+  máquina. Muestra: `MWT_Proforma_2468-2026_Sondel v2.pdf`, `MELEXA …Or. Compra`.
+- `Malformed` en un DANFE (PDF atípico).
+- No hace seguimiento de correo, tareas ni actualización de expedientes (§10).
 
-### 5.2 Decisión provisional (fundada)
+## 6. Decisión
 
-**Mantener el extractor MWT** para texto nativo: es gratis, local (los
-documentos no salen de la infraestructura), determinista y verificable
-(4/4 correctas, 0,24 s/doc). **Reevaluar AnyDoc** cuando (a) se aporten
-credenciales y (b) el cuello de botella sean escaneados/complejos — hoy el 95,6 %
-se resuelve sin proveedor externo.
+**Adoptar AnyDoc como conversor de documentos → Markdown** dentro del pipeline,
+**conservando** el motor de fechas/clasificación de MWT (que es lo que publica,
+marca conflictos y crea tareas):
 
-## 6. Qué quedó implementado (cierre Etapa 4)
+1. AnyDoc dobla la cobertura (40 vs 27) y es ~10× más rápido; elimina la deuda de
+   `.xls/.doc` y mejora el texto de PDF/DOCX.
+2. El valor está en la **conversión**, no en la extracción: el mismo motor de
+   fechas sube de 3 a 9 propuestas con la entrada de AnyDoc.
+3. **OCR alojado**: decisión aparte, condicionada a que el envío de documentos
+   fuera del VPS sea aceptable. Recomendado solo para escaneados, con
+   `FIRECRAWL_API_KEY` y registro de qué archivos salen.
+4. Costo: local **gratis**; el OCR alojado tiene costo/red (a medir si se activa).
 
-- Extracción de fechas **desde adjuntos** (PDF/XLSX/DOCX/TXT), reusando el
-  extractor del ai_hub; `.xls/.doc` y escaneados se omiten explícitamente.
+## 7. Qué quedó implementado (cierre Etapa 4)
+
+- Extracción de fechas **desde adjuntos**, hoy con texto propio
+  (`_to_text_payload`); se omiten `.xls/.doc` y escaneos.
 - Clasificación **CONSULTA / PROPUESTA / CONFIRMACIÓN**; solo CONFIRMACIÓN
   dispara conflicto/revisión.
 - «No hay fecha» → **tarea de insistencia** (día hábil +5).
-- Precisión MES/RANGO → **tarea de reconfirmación** (últimos días del mes).
+- Precisión MES/RANGO → **tarea de reconfirmación** (día 25 del mes literal).
 - Fecha confirmada → **artefacto Builder AWB/BL (ART-05)**: `ETD`→Fecha de
-  Despacho, `ETA`→Fecha de Arrivo, `BL_AWB`→Tracking; «no hay fecha» deja nota
-  pendiente solo si el campo está vacío.
-- Arnés reproducible `backend/scripts/eval_anydoc_extraction.py`.
+  Despacho, `ETA`→Fecha de Arrivo, `BL_AWB`→Tracking.
+- Arneses `eval_anydoc_extraction.py`, `probe_anydoc.py`, `compare_anydoc_extract.py`.
+
+**Siguiente paso propuesto (no bloqueante):** integrar `firecrawl-anydoc` como
+convertidor en `extraer_de_adjuntos` (fallback cuando el texto propio es pobre),
+con feature-flag; deja fuera de alcance el OCR alojado hasta que se apruebe.

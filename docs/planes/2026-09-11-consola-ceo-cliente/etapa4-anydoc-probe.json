@@ -1,0 +1,449 @@
+﻿{
+    "root":  "01 Marluvas",
+    "seleccion":  {
+                      ".pdf":  15,
+                      ".xlsx":  10,
+                      ".xls":  8,
+                      ".docx":  5,
+                      ".doc":  5
+                  },
+    "por_ext":  {
+                    ".pdf":  {
+                                 "docs":  15,
+                                 "ok":  12,
+                                 "needs_ocr":  2,
+                                 "error":  1,
+                                 "ms":  136.7473602294922,
+                                 "chars":  37602
+                             },
+                    ".xlsx":  {
+                                  "docs":  10,
+                                  "ok":  10,
+                                  "needs_ocr":  0,
+                                  "error":  0,
+                                  "ms":  595.4251289367676,
+                                  "chars":  1668570
+                              },
+                    ".xls":  {
+                                 "docs":  8,
+                                 "ok":  8,
+                                 "needs_ocr":  0,
+                                 "error":  0,
+                                 "ms":  332.4153423309326,
+                                 "chars":  1425106
+                             },
+                    ".docx":  {
+                                  "docs":  5,
+                                  "ok":  5,
+                                  "needs_ocr":  0,
+                                  "error":  0,
+                                  "ms":  19.62423324584961,
+                                  "chars":  8704
+                              },
+                    ".doc":  {
+                                 "docs":  5,
+                                 "ok":  5,
+                                 "needs_ocr":  0,
+                                 "error":  0,
+                                 "ms":  8.46099853515625,
+                                 "chars":  5730
+                             }
+                },
+    "total":  {
+                  "docs":  43,
+                  "ok":  40,
+                  "needs_ocr":  2,
+                  "error":  1,
+                  "ms":  1092.6730632781982,
+                  "chars":  3145712
+              },
+    "items":  [
+                  {
+                      "file":  "Proforma 2024-2022 SAP 95846.pdf",
+                      "ext":  ".pdf",
+                      "size":  107554,
+                      "ok":  true,
+                      "ms":  15.2,
+                      "chars":  5452,
+                      "error":  null
+                  },
+                  {
+                      "file":  "MWT_Proforma_2468-2026_Sondel  v2.pdf",
+                      "ext":  ".pdf",
+                      "size":  380507,
+                      "ok":  false,
+                      "ms":  45.3,
+                      "chars":  null,
+                      "error":  "NeedsOcrError"
+                  },
+                  {
+                      "file":  "Pedido 1936143.pdf",
+                      "ext":  ".pdf",
+                      "size":  21095,
+                      "ok":  true,
+                      "ms":  7.5,
+                      "chars":  2727,
+                      "error":  null
+                  },
+                  {
+                      "file":  "DANFE_000270176_1_0001074791.pdf",
+                      "ext":  ".pdf",
+                      "size":  55363,
+                      "ok":  false,
+                      "ms":  1.0,
+                      "chars":  null,
+                      "error":  "MalformedError"
+                  },
+                  {
+                      "file":  "uid49_000276005.pdf",
+                      "ext":  ".pdf",
+                      "size":  48070,
+                      "ok":  true,
+                      "ms":  5.1,
+                      "chars":  3948,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 2349-2025  SAP                PO 504299 504330.pdf",
+                      "ext":  ".pdf",
+                      "size":  106330,
+                      "ok":  true,
+                      "ms":  12.7,
+                      "chars":  5889,
+                      "error":  null
+                  },
+                  {
+                      "file":  "EspecificaciÃ³n 70T18 C CO.pdf",
+                      "ext":  ".pdf",
+                      "size":  364170,
+                      "ok":  true,
+                      "ms":  11.1,
+                      "chars":  1752,
+                      "error":  null
+                  },
+                  {
+                      "file":  "BL SSZ1769794 (HBL JMVIX00082026).pdf",
+                      "ext":  ".pdf",
+                      "size":  241083,
+                      "ok":  true,
+                      "ms":  7.8,
+                      "chars":  2316,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma Marzo GT0001-2018.pdf",
+                      "ext":  ".pdf",
+                      "size":  65230,
+                      "ok":  true,
+                      "ms":  2.7,
+                      "chars":  2030,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Invoice 2414-2026.pdf",
+                      "ext":  ".pdf",
+                      "size":  27056,
+                      "ok":  true,
+                      "ms":  27.3,
+                      "chars":  1514,
+                      "error":  null
+                  },
+                  {
+                      "file":  "MELEXA S.A.S Orden de Compra 110010811.pdf",
+                      "ext":  ".pdf",
+                      "size":  4292759,
+                      "ok":  false,
+                      "ms":  900.4,
+                      "chars":  null,
+                      "error":  "NeedsOcrError"
+                  },
+                  {
+                      "file":  "MW_AppendixB_SSZ1811398A.pdf",
+                      "ext":  ".pdf",
+                      "size":  503911,
+                      "ok":  true,
+                      "ms":  5.2,
+                      "chars":  933,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 1818-2021 SAP 138291 restante.pdf",
+                      "ext":  ".pdf",
+                      "size":  105148,
+                      "ok":  true,
+                      "ms":  13.6,
+                      "chars":  5459,
+                      "error":  null
+                  },
+                  {
+                      "file":  "PO 505200 MARLUVAS CALCADOS PROFISSIONAIS.pdf",
+                      "ext":  ".pdf",
+                      "size":  364618,
+                      "ok":  true,
+                      "ms":  7.2,
+                      "chars":  1670,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Pedido 1902351.pdf",
+                      "ext":  ".pdf",
+                      "size":  33856,
+                      "ok":  true,
+                      "ms":  21.2,
+                      "chars":  3912,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 2260-2024 SAP 200020 solo 75BPR.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  290221,
+                      "ok":  true,
+                      "ms":  74.8,
+                      "chars":  114807,
+                      "error":  null
+                  },
+                  {
+                      "file":  "262746.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  6976,
+                      "ok":  true,
+                      "ms":  3.0,
+                      "chars":  4884,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 1683-2020.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  264584,
+                      "ok":  true,
+                      "ms":  72.5,
+                      "chars":  238262,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 2190-2024 solo preto.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  295897,
+                      "ok":  true,
+                      "ms":  91.0,
+                      "chars":  281487,
+                      "error":  null
+                  },
+                  {
+                      "file":  "263360.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  11167,
+                      "ok":  true,
+                      "ms":  2.6,
+                      "chars":  6383,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 2275-2025 SAP        OC 2548 2549.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  341574,
+                      "ok":  true,
+                      "ms":  91.0,
+                      "chars":  296034,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 1450-2019 ajustado sin 70c32 PET.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  240562,
+                      "ok":  true,
+                      "ms":  95.6,
+                      "chars":  360869,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma Brascuba.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  265463,
+                      "ok":  true,
+                      "ms":  78.5,
+                      "chars":  238439,
+                      "error":  null
+                  },
+                  {
+                      "file":  "286650.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  8020,
+                      "ok":  true,
+                      "ms":  3.8,
+                      "chars":  7106,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 2337-2025  OC504069.xlsx",
+                      "ext":  ".xlsx",
+                      "size":  317881,
+                      "ok":  true,
+                      "ms":  82.7,
+                      "chars":  120299,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma Empaques tÃ©cnicos 1183-2017 - ProducciÃ³n.xls",
+                      "ext":  ".xls",
+                      "size":  80384,
+                      "ok":  true,
+                      "ms":  0.9,
+                      "chars":  8719,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 1262-2018.xls",
+                      "ext":  ".xls",
+                      "size":  1230848,
+                      "ok":  true,
+                      "ms":  68.1,
+                      "chars":  276722,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 1273-2018.xls",
+                      "ext":  ".xls",
+                      "size":  1232896,
+                      "ok":  true,
+                      "ms":  68.7,
+                      "chars":  277600,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 1340-2018 Ajusto.xls",
+                      "ext":  ".xls",
+                      "size":  1244160,
+                      "ok":  true,
+                      "ms":  67.1,
+                      "chars":  281454,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma 50b22 y variaciones.xls",
+                      "ext":  ".xls",
+                      "size":  1233408,
+                      "ok":  true,
+                      "ms":  58.4,
+                      "chars":  278628,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma Agosto.xls",
+                      "ext":  ".xls",
+                      "size":  1245184,
+                      "ok":  true,
+                      "ms":  64.7,
+                      "chars":  282524,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Copy of Flujo_de_Efectivo_Proyectado_de_Muito_Work.xls",
+                      "ext":  ".xls",
+                      "size":  52224,
+                      "ok":  true,
+                      "ms":  1.1,
+                      "chars":  7019,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Proforma Marzo GT0002-2018.xls",
+                      "ext":  ".xls",
+                      "size":  91136,
+                      "ok":  true,
+                      "ms":  3.4,
+                      "chars":  12440,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Carta de tiempos de entrega Importaciones y comrpas Honduras 2025.docx",
+                      "ext":  ".docx",
+                      "size":  271985,
+                      "ok":  true,
+                      "ms":  4.4,
+                      "chars":  2149,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Carta Dian Mayo 2024.docx",
+                      "ext":  ".docx",
+                      "size":  281261,
+                      "ok":  true,
+                      "ms":  3.8,
+                      "chars":  735,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Carta Muito Work ESPH.docx",
+                      "ext":  ".docx",
+                      "size":  1337846,
+                      "ok":  true,
+                      "ms":  5.4,
+                      "chars":  1965,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Carta aclaracion de componentes DIAN 7 de Mayo de 2025.docx",
+                      "ext":  ".docx",
+                      "size":  138941,
+                      "ok":  true,
+                      "ms":  2.2,
+                      "chars":  1314,
+                      "error":  null
+                  },
+                  {
+                      "file":  "MARLUVAS 2058-2023 invoice.docx",
+                      "ext":  ".docx",
+                      "size":  63612,
+                      "ok":  true,
+                      "ms":  3.8,
+                      "chars":  2541,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Carta de distribuciÃ³n Importaciones y Compras.doc",
+                      "ext":  ".doc",
+                      "size":  360960,
+                      "ok":  true,
+                      "ms":  1.7,
+                      "chars":  561,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Carta Fritos Lay.doc",
+                      "ext":  ".doc",
+                      "size":  670720,
+                      "ok":  true,
+                      "ms":  3.4,
+                      "chars":  1200,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Ejemplo de sello marluvas.doc",
+                      "ext":  ".doc",
+                      "size":  388608,
+                      "ok":  true,
+                      "ms":  1.3,
+                      "chars":  174,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Carta de presentacion a ACP.doc",
+                      "ext":  ".doc",
+                      "size":  497664,
+                      "ok":  true,
+                      "ms":  1.3,
+                      "chars":  3047,
+                      "error":  null
+                  },
+                  {
+                      "file":  "Carta de retraso hospital mexico 2023LD-000026-0001102104.doc",
+                      "ext":  ".doc",
+                      "size":  357888,
+                      "ok":  true,
+                      "ms":  0.8,
+                      "chars":  748,
+                      "error":  null
+                  }
+              ]
+}
