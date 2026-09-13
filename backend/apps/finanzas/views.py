@@ -367,6 +367,7 @@ def _build_item(row: dict, today: date) -> dict:
         "fecha_pago_aprox_fin":      fpa_fin.isoformat() if fpa_fin else None,
         "brand_id":                  row.get("brand_id"),
         "brand_name":                row.get("brand_name"),
+        "operating_company_id":      row.get("operating_company_id"),
         "ventana_comision_inicio":   vc_ini.isoformat() if vc_ini else None,
         "ventana_comision_fin":      vc_fin.isoformat() if vc_fin else None,
         "mes_comision":              vc_mes,
@@ -1082,8 +1083,8 @@ def arbitraje(request):
         })
 
     results.sort(key=lambda x: (x["desfase_dias"] is None, -(x["desfase_dias"] or 0)))
-    tot_arb = sum(_dec(x["arbitraje_bruto"]) for x in results)
-    en_riesgo = sum(_dec(x["total_mwt"]) for x in results if x["requiere_financiacion"])
+    tot_arb = sum((_dec(x["arbitraje_bruto"]) for x in results), Decimal("0"))
+    en_riesgo = sum((_dec(x["total_mwt"]) for x in results if x["requiere_financiacion"]), Decimal("0"))
     return Response({
         "results": results,
         "today": today.isoformat(),
