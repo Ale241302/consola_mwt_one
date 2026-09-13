@@ -914,7 +914,7 @@ class PortalViewSet(viewsets.ViewSet):
         if not exp_id:
             return Response({"detail": "Falta query param 'id'"}, status=400)
         ph = ",".join(["%s"] * len(cids))
-        r = _fetchone(f"""
+        _rows = _fetchall(f"""
             SELECT e.id, e.codigo, e.estado, e.origin, e.destination,
                    e.freight_mode, e.eta, e.last_event_at,
                    o.codigo AS oc_codigo, o.display_label AS oc_display, o.proforma AS oc_proforma,
@@ -940,6 +940,7 @@ class PortalViewSet(viewsets.ViewSet):
                AND (lower(e.client_id::text) IN ({ph})
                     OR lower(e.operating_company_id::text) IN ({ph}))
         """, [exp_id] + list(cids) + list(cids))
+        r = _rows[0] if _rows else None
         if not r:
             return Response({"detail": "Embarque no encontrado o fuera de scope."}, status=404)
 
@@ -992,7 +993,7 @@ class PortalViewSet(viewsets.ViewSet):
              WHERE expediente_id = %s AND is_active = TRUE AND audience = 'CLIENT'
              ORDER BY created_at DESC
         """, [exp_id])
-        art = _fetchone("""
+        _art = _fetchall("""
             SELECT i.data->'field-1778637230655' AS awb_file,
                    i.data->>'field-1780150662711' AS fecha_despacho,
                    i.data->>'field-1780150673285' AS fecha_arrivo,
@@ -1004,7 +1005,7 @@ class PortalViewSet(viewsets.ViewSet):
              ORDER BY i.updated_at DESC NULLS LAST LIMIT 1
         """, [exp_id])
         r["documentos"] = docs
-        r["awb_bl"] = art or None
+        r["awb_bl"] = _art[0] if _art else None
 
         return Response(r)
 
