@@ -133,7 +133,7 @@ def extraer_de_texto(texto: str) -> list[dict]:
     if not texto:
         return []
     out = []
-    for sentence in re.split(r"[\n\.;]+", texto):
+    for sentence in re.split(r"[\n\.;?!¿¡]+", texto):
         campo = _campo_de_sentence(sentence)
         if not campo:
             continue
