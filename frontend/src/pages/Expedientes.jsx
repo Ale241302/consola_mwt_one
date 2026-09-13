@@ -798,7 +798,7 @@ export default function ScreenExpedientes() {
                     )}
                     <td>
                       <div className="flex ai-center gap-2" style={{ flexWrap: 'wrap' }}>
-                        {sts.map(s => <StatusBadge key={s} status={s} lang={lang}/>)}
+                        {sts.map(s => <StatusBadge key={s} status={displayStage(s)} lang={lang}/>)}
                       </div>
                     </td>
                     {effectiveView === 'ops' && <>
@@ -940,7 +940,7 @@ export default function ScreenExpedientes() {
                       </td>
                     )}
                     {/* Columna MARCA eliminada (header y body). */}
-                    <td><StatusBadge status={e.status} lang={lang}/></td>
+                    <td><StatusBadge status={displayStage(e.status)} lang={lang}/></td>
 
                     {effectiveView === 'ops' && <>
                       <td>
