@@ -333,31 +333,53 @@ def sync_mailbox(direction=None, limit=25) -> dict:
 
 # ── Traducción ──────────────────────────────────────────────────────
 def traducir(texto: str, idioma_destino: str, idioma_origen: str = "es") -> str | None:
-    """Traduce con OpenAI si hay API key; None si no está disponible."""
+    """Traduce con OpenAI y, si falla, con Anthropic. None si no hay proveedor."""
     if not texto or not idioma_destino:
         return None
     import os
-    key = os.environ.get("OPENAI_API_KEY") or (_cfg("AI_HUB", {}) or {}).get("OPENAI_API_KEY")
-    if not key:
-        return None
-    model = os.environ.get("OPENAI_OCR_MODEL") or "gpt-5-nano"
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=key, timeout=60, max_retries=1)
-        resp = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content":
-                 f"Traduce el correo del {idioma_origen} al {idioma_destino}. "
-                 "Conserva el formato, la firma y los datos (precios, fechas, referencias) EXACTOS. "
-                 "Devuelve SOLO la traducción, sin comentarios."},
-                {"role": "user", "content": texto},
-            ],
-        )
-        return (resp.choices[0].message.content or "").strip() or None
-    except Exception as exc:
-        log.warning("[correo.traducir] fallo: %s", exc)
-        return None
+    sys_prompt = (
+        f"Traduce el correo del {idioma_origen} al {idioma_destino}. "
+        "Conserva el formato, la firma y los datos (precios, fechas, referencias) EXACTOS. "
+        "Devuelve SOLO la traducción, sin comentarios."
+    )
+    ai = _cfg("AI_HUB", {}) or {}
+
+    # 1) OpenAI
+    key = os.environ.get("OPENAI_API_KEY") or ai.get("OPENAI_API_KEY")
+    if key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=key, timeout=60, max_retries=1)
+            resp = client.chat.completions.create(
+                model=os.environ.get("OPENAI_OCR_MODEL") or "gpt-4o-mini",
+                messages=[{"role": "system", "content": sys_prompt},
+                          {"role": "user", "content": texto}],
+            )
+            out = (resp.choices[0].message.content or "").strip()
+            if out:
+                return out
+        except Exception as exc:
+            log.warning("[correo.traducir] openai fallo: %s", exc)
+
+    # 2) Anthropic (fallback)
+    akey = os.environ.get("ANTHROPIC_API_KEY") or ai.get("ANTHROPIC_API_KEY")
+    if akey:
+        try:
+            import anthropic
+            cli = anthropic.Anthropic(api_key=akey)
+            resp = cli.messages.create(
+                model=ai.get("DEFAULT_MODEL") or "claude-sonnet-4-6",
+                max_tokens=2000,
+                system=sys_prompt,
+                messages=[{"role": "user", "content": texto}],
+            )
+            parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
+            out = "\n".join(parts).strip()
+            if out:
+                return out
+        except Exception as exc:
+            log.warning("[correo.traducir] anthropic fallo: %s", exc)
+    return None
 
 
 # ── Envío SMTP ──────────────────────────────────────────────────────
