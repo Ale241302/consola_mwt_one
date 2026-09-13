@@ -358,12 +358,18 @@ def _hostinger_mailbox_id():
 def _hostinger_folder_messages(mb, folder, limit):
     data = _hostinger_get(f"/api/v1/mailboxes/{mb}/folders/{folder}/messages",
                           {"perPage": min(max(limit, 1), 100), "page": 1, "sort": "-uid"})
-    return ((data.get("data") or {}).get("data")) or []
+    d = data.get("data")
+    if isinstance(d, dict):
+        d = d.get("data")
+    return d if isinstance(d, list) else []
 
 
 def _hostinger_message_text(mb, folder, uid):
     data = _hostinger_get(f"/api/v1/mailboxes/{mb}/folders/{folder}/messages/{int(uid)}/text")
-    return ((data.get("data") or {}).get("data")) or {}
+    d = data.get("data")
+    if isinstance(d, dict) and isinstance(d.get("data"), dict):
+        d = d["data"]
+    return d if isinstance(d, dict) else {}
 
 
 def sync_via_hostinger(limit=25) -> dict:
