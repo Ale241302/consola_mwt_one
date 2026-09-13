@@ -850,6 +850,13 @@ export default function CreateExpedienteWizardLite() {
                   : "Pure order intake. Commercial/logistics data is filled later in the detail view.")}
           </div>
         </div>
+        {/* B6 · Unificación: el interno también puede subir la OC y extraer
+            SKU/talla/cantidad por OCR (mismo wizard que usa el cliente B2B). */}
+        {!isEditMode && isAdmin && (
+          <button className="btn btn-primary" onClick={() => navigate("/expedientes/nuevo-completo")}>
+            {lang === "es" ? "📄 Subir OC (OCR)" : "📄 Upload PO (OCR)"}
+          </button>
+        )}
       </div>
 
       {/* â”€â”€ Stepper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
