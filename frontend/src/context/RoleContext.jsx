@@ -232,11 +232,11 @@ export function RoleProvider({ children }) {
   // Si no (login legacy sin permissions), caemos a la whitelist por viewport.
   const canSeeModule = useCallback((moduleKey) => {
     if (isAdmin) return true;
-    if (!hasRealMatrix) return CLIENT_ALLOWED_MODULES.has(moduleKey);
-    if (matrixHasWildcard) return true;
-    const moduleSlug = SIDEBAR_KEY_TO_MODULE[moduleKey] || moduleKey;
-    return rolePerms.modules.includes(moduleSlug);
-  }, [isAdmin, hasRealMatrix, matrixHasWildcard, rolePerms.modules]);
+    // Cliente B2B: WHITELIST DURA. Aunque su matriz de rol incluya otros
+    // módulos (Productos, Inventario, Cartera…), el cliente solo ve lo suyo.
+    // Productos ya está dentro de /portal; Tickets se auto-scopea al usuario.
+    return CLIENT_ALLOWED_MODULES.has(moduleKey);
+  }, [isAdmin]);
 
   // Acción granular (create/update/delete/view_doc/download_doc/upload_doc).
   // fallback: si no hay matriz real, ADMIN=true / CLIENT=false para acciones
