@@ -133,6 +133,13 @@ CORREO_SEND_DRY_RUN  = os.environ.get("CORREO_SEND_DRY_RUN", "1")
 # los adjuntos (PDF/Word/Excel/…); si falla o no está, cae al texto propio.
 CORREO_ANYDOC_ENABLED   = os.environ.get("CORREO_ANYDOC_ENABLED", "1") == "1"
 CORREO_ANYDOC_MIN_CHARS = int(os.environ.get("CORREO_ANYDOC_MIN_CHARS", "20"))
+
+# Etapa 4 · OCR LOCAL (Tesseract) para adjuntos escaneados. "local" | "off".
+# No envía nada a servicios externos; renderiza con PyMuPDF y OCR-ea on-premise.
+CORREO_OCR            = os.environ.get("CORREO_OCR", "local")
+CORREO_OCR_LANGS      = os.environ.get("CORREO_OCR_LANGS", "spa+por+eng")
+CORREO_OCR_DPI        = int(os.environ.get("CORREO_OCR_DPI", "200"))
+CORREO_OCR_MAX_PAGES  = int(os.environ.get("CORREO_OCR_MAX_PAGES", "10"))
 # Sync por API de Hostinger Mail (preferido si hay HOSTINGER_MAIL_API_KEY).
 HOSTINGER_MAIL_API_KEY   = os.environ.get("HOSTINGER_MAIL_API_KEY", "")
 HOSTINGER_MAIL_BASE_URL  = os.environ.get("HOSTINGER_MAIL_BASE_URL", "https://api.mail.hostinger.com")

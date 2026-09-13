@@ -11,6 +11,7 @@ Regla: una fecha que CAMBIA respecto de la publicada es CONFLICTO → revisión
 from __future__ import annotations
 
 import json
+import io
 import logging
 import re
 import uuid
@@ -353,6 +354,53 @@ _ADJ_BASE_EXT = (".pdf", ".xlsx", ".xlsm", ".docx", ".txt", ".csv", ".tsv")
 # Formatos adicionales que AnyDoc sí convierte (incluye legacy .xls/.doc).
 _ADJ_ANYDOC_EXT = (".pdf", ".xlsx", ".xlsm", ".xls", ".docx", ".doc", ".docm",
                    ".pptx", ".rtf", ".odt", ".ods", ".odp", ".txt", ".csv", ".tsv")
+# Imágenes/escaneos: solo útiles si el OCR local está activo.
+_ADJ_IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff")
+
+
+def _ocr_local(data: bytes, is_pdf: bool) -> str:
+    """OCR LOCAL con Tesseract (sin red). PDF → PyMuPDF renderiza páginas;
+    imagen → PIL directo. Devuelve texto o ''."""
+    from django.conf import settings
+    try:
+        import pytesseract
+        from PIL import Image
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[extraccion.ocr] sin pytesseract/PIL: %s", exc)
+        return ""
+    langs = getattr(settings, "CORREO_OCR_LANGS", "spa+por+eng")
+    parts = []
+
+    def _ocr_img(img) -> str:
+        try:
+            return pytesseract.image_to_string(img, lang=langs) or ""
+        except Exception:
+            # Idioma no instalado u otro fallo: reintenta con el default.
+            try:
+                return pytesseract.image_to_string(img) or ""
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[extraccion.ocr] tesseract: %s", exc)
+                return ""
+
+    try:
+        if is_pdf:
+            import fitz  # PyMuPDF
+            dpi = int(getattr(settings, "CORREO_OCR_DPI", 200) or 200)
+            maxp = int(getattr(settings, "CORREO_OCR_MAX_PAGES", 10) or 10)
+            with fitz.open(stream=data, filetype="pdf") as doc:
+                for i, page in enumerate(doc):
+                    if i >= maxp:
+                        break
+                    pix = page.get_pixmap(dpi=dpi)
+                    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    parts.append(_ocr_img(img))
+        else:
+            img = Image.open(io.BytesIO(data))
+            parts.append(_ocr_img(img))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[extraccion.ocr] %s", exc)
+        return ""
+    return "\n".join(p for p in parts if p.strip())
 
 
 def _to_markdown_anydoc(data: bytes, filename: str):
@@ -391,6 +439,14 @@ def _texto_de_adjunto(data: bytes, mime: str, filename: str, anydoc_enabled: boo
         return md, "anydoc-md"
     if own_text and len(own_text.strip()) >= 10 and not (fname.endswith((".xls", ".doc"))):
         return own_text, own_kind
+    # OCR local (Tesseract) para escaneados/imágenes sin texto.
+    ocr_mode = (getattr(settings, "CORREO_OCR", "off") or "off").lower()
+    if ocr_mode == "local" and len((own_text or "").strip()) < 10:
+        is_pdf = fname.endswith(".pdf") or mime == "application/pdf"
+        if is_pdf or is_image:
+            ocr_text = _ocr_local(data, is_pdf)
+            if ocr_text and len(ocr_text.strip()) >= 10:
+                return ocr_text, "ocr-local"
     return None, None
 
 
@@ -401,7 +457,10 @@ def extraer_de_adjuntos(mensaje_id, expediente_id, user_id=None) -> list:
     from django.conf import settings
     from .models import Adjunto
     anydoc_enabled = bool(getattr(settings, "CORREO_ANYDOC_ENABLED", True))
+    ocr_mode = (getattr(settings, "CORREO_OCR", "off") or "off").lower()
     permitidos = _ADJ_ANYDOC_EXT if anydoc_enabled else _ADJ_BASE_EXT
+    if ocr_mode == "local":
+        permitidos = tuple(permitidos) + _ADJ_IMAGE_EXT
     creadas = []
     for a in Adjunto.objects.filter(mensaje_id=mensaje_id):
         if not a.storage_key:

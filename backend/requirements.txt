@@ -44,3 +44,7 @@ cryptography>=42.0
 # Etapa 4 - AnyDoc (firecrawl-anydoc): convierte PDF/Word/Excel a Markdown.
 # Conversor de adjuntos en apps.correo.extraccion; fallback al texto propio.
 firecrawl-anydoc
+
+# Etapa 4 - OCR local (Tesseract) para adjuntos escaneados. El binario
+# tesseract-ocr (+ idiomas) se instala en el Dockerfile; aqui solo el wrapper.
+pytesseract==0.3.13

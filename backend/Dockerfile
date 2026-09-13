@@ -23,6 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpango-1.0-0 \
         libpangoft2-1.0-0 \
         libcairo2 \
+        tesseract-ocr \
+        tesseract-ocr-spa \
+        tesseract-ocr-por \
+        tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
