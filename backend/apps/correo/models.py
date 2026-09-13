@@ -4,6 +4,7 @@ Bandeja (mensajes + adjuntos), libreta de contactos, grupos, estilo y envíos.
 
 managed=False, PK UUID lógica (esquema `correo`, ver backend/sql/L1_correo.sql).
 """
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
 
@@ -16,7 +17,7 @@ class Contacto(models.Model):
     funcion       = models.CharField(max_length=120, null=True, blank=True)
     idioma        = models.CharField(max_length=8, null=True, blank=True)
     idioma_source = models.CharField(max_length=24, null=True, blank=True)
-    grupos        = models.JSONField(default=list, blank=True)
+    grupos        = ArrayField(models.TextField(), default=list, blank=True)
     notas         = models.TextField(null=True, blank=True)
     perfil        = models.JSONField(default=dict, blank=True)
     is_active     = models.BooleanField(default=True)
@@ -34,9 +35,9 @@ class Grupo(models.Model):
     codigo      = models.CharField(max_length=48, unique=True)
     nombre      = models.CharField(max_length=160)
     descripcion = models.TextField(null=True, blank=True)
-    emails      = models.JSONField(default=list, blank=True)
-    para        = models.JSONField(default=list, blank=True)
-    cc          = models.JSONField(default=list, blank=True)
+    emails      = ArrayField(models.TextField(), default=list, blank=True)
+    para        = ArrayField(models.TextField(), default=list, blank=True)
+    cc          = ArrayField(models.TextField(), default=list, blank=True)
     is_active   = models.BooleanField(default=True)
     created_at  = models.DateTimeField(auto_now_add=True)
     updated_at  = models.DateTimeField(auto_now=True)
@@ -70,8 +71,8 @@ class Mensaje(models.Model):
     direction       = models.CharField(max_length=3, default="IN")
     from_email      = models.TextField(null=True, blank=True)
     from_name       = models.TextField(null=True, blank=True)
-    to_emails       = models.JSONField(default=list, blank=True)
-    cc_emails       = models.JSONField(default=list, blank=True)
+    to_emails       = ArrayField(models.TextField(), default=list, blank=True)
+    cc_emails       = ArrayField(models.TextField(), default=list, blank=True)
     subject         = models.TextField(null=True, blank=True)
     sent_at         = models.DateTimeField(null=True, blank=True)
     received_at     = models.DateTimeField(null=True, blank=True)
@@ -117,9 +118,9 @@ class Envio(models.Model):
     id             = models.UUIDField(primary_key=True)
     expediente_id  = models.UUIDField(null=True, blank=True)
     oc_id          = models.UUIDField(null=True, blank=True)
-    destinatarios  = models.JSONField(default=list, blank=True)
-    cc             = models.JSONField(default=list, blank=True)
-    bcc            = models.JSONField(default=list, blank=True)
+    destinatarios  = ArrayField(models.TextField(), default=list, blank=True)
+    cc             = ArrayField(models.TextField(), default=list, blank=True)
+    bcc            = ArrayField(models.TextField(), default=list, blank=True)
     subject        = models.TextField(null=True, blank=True)
     body_es        = models.TextField(null=True, blank=True)
     body_traducido = models.TextField(null=True, blank=True)

@@ -52,6 +52,7 @@ DJANGO_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",   # ArrayField (correo: text[] de emails/grupos)
 ]
 
 THIRD_PARTY = [
