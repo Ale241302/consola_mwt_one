@@ -343,9 +343,11 @@ def _hostinger_get(path, params=None):
 
 
 def _hostinger_mailbox_id():
-    data = _hostinger_get("/api/v1/mailboxes")
-    boxes = (((data.get("data") or {}).get("data") or {}).get("mailboxes")
-             or ((data.get("data") or {}).get("mailboxes")) or [])
+    data = _hostinger_get("/api/v1/me")
+    d = data.get("data") or {}
+    if isinstance(d.get("data"), dict):
+        d = d["data"]
+    boxes = d.get("mailboxes") or []
     target = (getattr(settings, "CORREO_HOSTINGER_MAILBOX", "") or "").lower()
     for b in boxes:
         if (b.get("address") or "").lower() == target:
@@ -354,14 +356,13 @@ def _hostinger_mailbox_id():
 
 
 def _hostinger_folder_messages(mb, folder, limit):
-    data = _hostinger_get(f"/api/v1/mailboxes/{mb}/messages",
-                          {"folder": folder, "per_page": min(max(limit, 1), 100),
-                           "page": 1, "sort": "-uid"})
+    data = _hostinger_get(f"/api/v1/mailboxes/{mb}/folders/{folder}/messages",
+                          {"perPage": min(max(limit, 1), 100), "page": 1, "sort": "-uid"})
     return ((data.get("data") or {}).get("data")) or []
 
 
 def _hostinger_message_text(mb, folder, uid):
-    data = _hostinger_get(f"/api/v1/mailboxes/{mb}/messages/{uid}/text", {"folder": folder})
+    data = _hostinger_get(f"/api/v1/mailboxes/{mb}/folders/{folder}/messages/{int(uid)}/text")
     return ((data.get("data") or {}).get("data")) or {}
 
 
