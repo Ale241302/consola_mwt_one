@@ -790,12 +790,15 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
   const rows = useMemo(() => visibleOcs.map((o) => {
     const relatedExps = expedientes.filter((e) => e.oc_id === o.id);
     const leadExp = relatedExps[0];
+    const raw = leadExp?.estado || o.estado || null;
     return {
       id: o.id,
       ref: o.client_ref || o.codigo || o.po_code || '—',
       proforma: o.proforma,
       cliente: o.client_name || clientName || nameById[o.client_id] || '—',
-      rawStatus: leadExp?.estado || o.estado || null,
+      rawStatus: raw,
+      // Fase VISUAL (une PREPARACION+DESPACHO) → mismo color/label en el badge.
+      dispStatus: raw ? displayStage(raw) : null,
       expCount: relatedExps.length,
       fusion: leadExp?.fusion_label || null,
     };
@@ -901,7 +904,7 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
                       </div>
                     </td>
                     <td><span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{r.cliente}</span></td>
-                    <td>{r.rawStatus ? <StatusBadge status={r.rawStatus} lang={lang}/> : <span className="caption">—</span>}</td>
+                    <td>{r.rawStatus ? <StatusBadge status={r.dispStatus} lang={lang}/> : <span className="caption">—</span>}</td>
                     <td><IconChevRight size={14} style={{ color:'var(--text-tertiary)' }}/></td>
                   </tr>
                 ))}
@@ -943,7 +946,7 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
                     <div style={{ font:'700 12px/1.2 var(--font-mono)', color:'var(--brand-primary)' }}>{r.ref}</div>
                     <div className="caption" style={{ margin: '3px 0 8px', color: 'var(--text-secondary)' }}>{r.cliente}</div>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                      {r.rawStatus ? <StatusBadge status={r.rawStatus} lang={lang}/> : <span/>}
+                      {r.rawStatus ? <StatusBadge status={r.dispStatus} lang={lang}/> : <span/>}
                       <span className="caption">{r.expCount} {lang==='es'?'envíos':'shipments'}</span>
                     </div>
                   </div>
