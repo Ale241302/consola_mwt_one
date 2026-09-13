@@ -133,7 +133,7 @@ def extraer_de_texto(texto: str) -> list[dict]:
     if not texto:
         return []
     out = []
-    for sentence in re.split(r"[\n\.;?!¿¡]+", texto):
+    for sentence in re.split(r"[\n\.;?!]+", texto):
         campo = _campo_de_sentence(sentence)
         if not campo:
             continue
@@ -242,16 +242,29 @@ def _crear_tarea_insistencia(ex, user_id=None):
     )
 
 
+def _mes_de_raw(raw):
+    """Infiere el día 25 del mes/año mencionado (para reconfirmar un MES)."""
+    if not raw:
+        return None
+    m = re.search(r"\b(" + _MES_RE + r")\b(?:\s+(?:de\s+)?(\d{4}))?", raw, re.I)
+    if not m:
+        return None
+    mes = _MESES.get(m.group(1).lower())
+    if not mes:
+        return None
+    anio = int(m.group(2)) if m.group(2) else date.today().year
+    try:
+        return date(anio, mes, 25)
+    except ValueError:
+        return None
+
+
 def _crear_tarea_reconfirmacion(ex, user_id=None):
     """Mes/rango impreciso -> reconfirmar la última semana del mes (día hábil)."""
     from datetime import timedelta
-    base = ex.valor_fecha
-    if base is None:
-        # No tenemos día: usamos el 25 del mes/año en curso como referencia.
-        anio = date.today().year
-        base = date(anio, date.today().month, 25)
-    # Últimos días del mes: día 25 (o el viernes anterior si cae fin de semana).
-    ref = base.replace(day=25) if base.day != 25 else base
+    # Referencia: fecha (si hay) o el mes/año literal del texto; si no, mes actual.
+    base = ex.valor_fecha or _mes_de_raw(ex.valor_raw) or date(date.today().year, date.today().month, 25)
+    ref = base.replace(day=25)
     while ref.weekday() >= 5:
         ref = ref - timedelta(days=1)
     return _crear_tarea_seguimiento(
