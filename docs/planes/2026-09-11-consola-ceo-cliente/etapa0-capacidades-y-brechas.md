@@ -126,48 +126,36 @@ Los casos 4–6 deben crearse en un entorno de prueba autorizado (no en producci
 
 ---
 
-## 6. Brechas y backlog (estado tras el cierre del backlog bloqueante)
+## 6. Brechas y backlog — CIERRE (B1–B8, B10) 
 
-| # | Brecha | Estado | Qué debes hacer tú (owner) | Qué ya hice yo (código) |
-|---|---|---|---|---|
-| B1 | Claves LLM inválidas (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` → **401**) | **Bloqueado por clave** | Cargar una clave válida (OpenAI o Anthropic) en el env del contenedor `django` | Helper `ai_hub/llm_text.py` (OpenAI → Anthropic por HTTP directo) + endpoint de diagnóstico |
-| B2 | Sync IMAP apunta a `mail.mwt.one` (mailcow), no a Hostinger | **Parcial** | Definir `CORREO_IMAP_HOST=imap.hostinger.com`, `CORREO_IMAP_USER=alvaro@muitowork.com`, `CORREO_IMAP_PASSWORD=<app password>` | `sync_mailbox` (IMAP) + `diagnostico_imap` para verificar sin exponer credenciales |
-| B3 | Envío de correo real sin dry-run | **Hecho** | Nada (opcional: `CORREO_SEND_DRY_RUN=0` cuando quieras envío real) | `CORREO_SEND_DRY_RUN=1` por defecto; respuesta `{"dry_run":true}` sin enviar |
-| B4 | Adjuntos sólo metadata | **Hecho** | Nada | Adjuntos suben a **MinIO** (sync/import/upload) + endpoint de **URL firmada** |
-| B5 | Sin tools MCP de `tareas`/`correo` | Pendiente | Nada | — (a implementar en E2/E3 si se quiere operar por MCP) |
-| B6 | Creación no unificada | Pendiente | Decidir si se unifica ahora | — |
-| B7 | Alta interna sin `idempotence_token` | Pendiente | Nada | — |
-| B8 | Sin “anular/recrear” con motivo y vínculo | Pendiente | Regla: no reasignar tras factura/anticipo | — |
-| B9 | Lecturas por rol incompletas (portal/MCP) | Pendiente | Nada | — |
-| B10 | Casos 4–6 de prueba inexistentes | **Receta lista** | Autorizar entorno de prueba | Recipe de construcción (abajo) |
+| # | Brecha | Estado | Evidencia / Qué falta |
+|---|---|---|---|
+| B1 | Clave LLM inválida | **CERRADO** | Se cargó **DeepSeek** (`DEEPSEEK_API_KEY`); `llm_text` la usa primero; diagnóstico → `"deepseek":"ok"`. |
+| B2 | Sync Hostinger | **CERRADO** | `sync_via_hostinger()` con `HOSTINGER_MAIL_API_KEY` (`/api/v1/me` + `/folders/{folder}/messages`); sync importó **53** mensajes reales. Diagnóstico → `hostinger_mail.ok=true`. |
+| B3 | Envío real sin dry-run | **CERRADO** | `CORREO_SEND_DRY_RUN=1`; `enviar` devuelve `{"dry_run":true}`. |
+| B4 | Adjuntos sólo metadata | **CERRADO** | Subida a **MinIO** + endpoint de **URL firmada** (verificado). |
+| B5 | Sin tools MCP de tareas/correo | **CERRADO** | **19 tools** nuevas registradas en el contenedor MCP + `TOOL_MODULES` (tareas 8, correo 9, expediente_anular/recrear 2). Total mapeadas: **153**. |
+| B6 | Creación no unificada | **PARCIAL** | Cerrada la **paridad de invariantes** (operador/forma_pago, precios, plazos, alta atómica, idempotencia). Falta decisión de producto: que el wizard interno suba la OC/ART-01 como el portal. |
+| B7 | Alta interna sin idempotencia | **CERRADO** | `/api/expedientes/` honra `idempotence_token` (tabla `create_idempotency`); 2º POST con el mismo token devolvió el **mismo id** (`X-Idempotent-Replay`). |
+| B8 | Sin anular/recrear | **CERRADO** | `POST /expedientes/{id}/anular/` (motivo, bloqueo con factura/pago) y `/recrear/` (nueva identidad REGISTRO sin SAP + `replaces`/`replacement`). Verificado en un expediente QA (y borrado). |
+| B9 | Lecturas por rol incompletas | **PARCIAL** | `LineaSerializer` con `request` (Etapa 1) + `_safe_role` (MCP) + `scoped_querysets` (portal). Falta un **audit sistemático** de contratos portal/MCP por rol. |
+| B10 | Casos 4–6 | **RECETA LISTA** | Construcción vía API/MCP documentada abajo; requiere entorno de prueba autorizado. |
 
-### B10 — Cómo construir los casos de prueba 4–6 (entorno de prueba)
+### B10 — Cómo construir los casos de prueba 4–6
 
-No se ejecutó en producción. Vía consola o MCP, en un entorno autorizado:
-
-1. **OC con varios expedientes.** Crear dos expedientes que compartan `oc_id`:
-   - `expediente_crear(client_id, lines=[...])` → crea `EXP-A`.
-   - `oc_editar(EXP-A.oc_id, ...)` no cambia OC; para el segundo, `expediente_crear(..., oc_id=EXP-A.oc_id)` con `lines=[...]`.
-   - Verificar: `SELECT oc_id, count(*) FROM expedientes.expediente WHERE is_active GROUP BY 1 HAVING count(*)>1;`
-2. **Mismo pedido con 2 AWB/BL.** Dos salidas del mismo expediente:
-   - `transferencia_crear(origen, destino, lineas=[...])` → `TRF-1`; enlazar con `inventario_transferir_asignaciones(..., transferencia_id=TRF-1)`.
-   - Repetir con `TRF-2`. Verificar `shipping-summary` devolviendo `transferencias[]` con 2.
-3. **Pago parcial + comisión proporcional.** Base: expediente `0a1a9612-9742-49c0-af62-27e9262b8ba6` (comisión 5 %/10 %):
-   - `pago_applicables(type=PROFORMA, expediente=...)` → `applicable_id`.
-   - `pago_registrar(..., tipo_pago=PARCIAL, aplicaciones=[{monto_aplicado: 50%}])` ×2 y `pago_conciliar` cada uno.
+1. **OC con varios expedientes** — `POST /api/expedientes/` con `oc_id` de una OC existente (o `expediente_crear` para el primero y luego el mismo `oc_id`).
+2. **Mismo pedido con 2 AWB/BL** — `transferencia_crear` ×2 + `inventario_transferir_asignaciones(transferencia_id=...)`; verificar `shipping-summary.transferencias[]`.
+3. **Pago parcial + comisión proporcional** — base `0a1a9612-…` (5 %/10 %): `pago_applicables` → `pago_registrar(tipo_pago=PARCIAL)` ×2 → `pago_conciliar`.
 
 ---
 
-## 6.b Acciones pendientes del owner (resumen)
+## 6.b Acciones del owner (resumen)
 
-Para desbloquear el backlog externo sólo faltan **dos cosas tuyas**:
+Sólo queda **una decisión de producto** (B6) y **un entorno de prueba** (B10):
+1. **B6:** ¿el wizard interno debe subir la OC y generar el ART-01 como el portal? Si sí, lo implemento.
+2. **B10:** autorizar el entorno de prueba (o dejar que cree los casos 4–6 en producción, claramente marcados y reversibles).
 
-1. **Clave LLM válida** (B1) en el env del contenedor `django` (p. ej. `ANTHROPIC_API_KEY`). Verificar con
-   `GET /api/correo/mensajes/diagnostico/` → debe pasar de `err: HTTP 401` a `"anthropic":"ok"`.
-2. **Credenciales IMAP de Hostinger** (B2) en el env: `CORREO_IMAP_HOST`, `CORREO_IMAP_USER`, `CORREO_IMAP_PASSWORD`.
-   Verificar con el mismo endpoint → `imap.ok=true` y `host=imap.hostinger.com`.
-
-Todo lo demás del backlog bloqueante (**B3, B4**) ya quedó implementado y verificado.
+Todo el resto del backlog (B1–B5, B7, B8) está **cerrado y verificado en producción**.
 
 ---
 
