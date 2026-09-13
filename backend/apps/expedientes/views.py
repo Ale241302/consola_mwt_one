@@ -808,8 +808,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
         except Exception:
             pass
         try:
-            from apps.expedientes.views_wizard import create_from_oc
-            resp = create_from_oc(request)
+            from apps.expedientes.views_wizard import create_from_oc_impl
+            resp = create_from_oc_impl(request)
         except DRFValidationError as ve:
             return Response({"detail": "validation_error", "errors": ve.detail}, status=400)
         except Exception as e:

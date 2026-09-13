@@ -923,10 +923,7 @@ def _next_oc_correlativo(client_id) -> Optional[str]:
 # ═════════════════════════════════════════════════════════════════════
 # POST /api/expedientes/create-from-oc/
 # ═════════════════════════════════════════════════════════════════════
-@api_view(["POST"])
-@parser_classes([MultiPartParser, FormParser, JSONParser])
-@permission_classes([IsAuthenticated])
-def create_from_oc(request):
+def create_from_oc_impl(request):
     """Orchestrator atómico del Wizard de Creación. Ver docstring del módulo.
 
     AUTORIZACIÓN:
@@ -1657,3 +1654,15 @@ def create_from_oc(request):
         "submission_id":  str(submission_id),
         "requires_ceo_review": is_client,
     }, status=201)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+@permission_classes([IsAuthenticated])
+def create_from_oc(request):
+    """Endpoint HTTP de creación (wizard interno / portal / MCP).
+
+    Envuelve `create_from_oc_impl` para que también pueda invocarse
+    directamente (p. ej. desde /api/expedientes/ con un Request de DRF).
+    """
+    return create_from_oc_impl(request)
