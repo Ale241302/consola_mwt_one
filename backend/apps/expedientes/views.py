@@ -817,15 +817,18 @@ class ExpedienteViewSet(viewsets.ViewSet):
             return Response({"detail": f"server_error: {type(e).__name__}",
                              "error": str(e)[:500]}, status=500)
         # Adaptar la respuesta al contrato legacy (expediente serializado).
-        if getattr(resp, "status_code", None) == 201:
-            exp_id = (((resp.data or {}).get("expediente") or {}).get("id"))
-            if exp_id:
-                e = Expediente.objects.filter(pk=exp_id).first()
-                if e is not None:
-                    out = Response(ExpedienteSerializer(e, context={"request": request}).data, status=201)
-                    if "X-Idempotent-Replay" in resp:
-                        out["X-Idempotent-Replay"] = resp["X-Idempotent-Replay"]
-                    return out
+        data = resp.data if isinstance(resp.data, dict) else {}
+        exp_id = (((data.get("expediente") or {}).get("id")) or data.get("expediente_id"))
+        if getattr(resp, "status_code", None) in (200, 201) and exp_id:
+            e = Expediente.objects.filter(pk=exp_id).first()
+            if e is not None:
+                out = Response(ExpedienteSerializer(e, context={"request": request}).data,
+                               status=getattr(resp, "status_code", 201))
+                if "X-Idempotent-Replay" in resp:
+                    out["X-Idempotent-Replay"] = resp["X-Idempotent-Replay"]
+                elif getattr(resp, "status_code", None) == 200:
+                    out["X-Idempotent-Replay"] = "true"
+                return out
         return resp
 
     @action(detail=True, methods=["post"], url_path="anular")
