@@ -126,6 +126,17 @@ marca conflictos y crea tareas):
 como fallback, con flag `CORREO_ANYDOC_ENABLED` (default `1`) y
 `CORREO_ANYDOC_MIN_CHARS`. Verificado en producción con `.doc` legacy
 (`Carta de retraso hospital mexico …`) → `PRODUCCION` y `Invoice 2414-2026.pdf`
-→ `DOCUMENTO 2026-02-11`, ambos `kind=anydoc-md`. El OCR alojado (Firecrawl
-Parse) queda fuera de alcance hasta que se apruebe el envío de documentos fuera
-del VPS.
+→ `DOCUMENTO 2026-02-11`, ambos `kind=anydoc-md`.
+
+**OCR local integrado (2026-09-13):** Tesseract 5.5.0 (spa+por+eng) on-premise,
+sin salida de red. Fallback automático cuando el adjunto no trae texto y AnyDoc
+no convierte (escaneo): flag `CORREO_OCR=local`. Verificado con
+`MWT_Proforma_2468-2026_Sondel v2.pdf` (escaneado real): recuperó el literal
+`19/mar/2026` → `DOCUMENTO 2026-03-19`, `kind=ocr-local`, en 7 s.
+
+**OCR alojado (Firecrawl Parse): descartado.** Se probó: `POST /v2/parse`
+devuelve **HTTP 403 keyless** («IP sospechosa, requiere API key»). No hay
+`FIRECRAWL_API_KEY` en el proyecto y no se aporta. Se resuelve con Tesseract
+local, que además evita enviar documentos fuera del VPS. Si en el futuro se
+quiere OCR de mayor calidad en escaneos difíciles, basta aportar
+`FIRECRAWL_API_KEY` y activar `CORREO_OCR=hosted` (no implementado).
