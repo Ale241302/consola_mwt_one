@@ -126,20 +126,48 @@ Los casos 4–6 deben crearse en un entorno de prueba autorizado (no en producci
 
 ---
 
-## 6. Brechas y backlog con alcance
+## 6. Brechas y backlog (estado tras el cierre del backlog bloqueante)
 
-| # | Brecha | Etapa | Alcance |
-|---|---|---|---|
-| B1 | Claves LLM inválidas en prod (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` → 401) | 3–4 | Cargar clave válida; el código de traducción/extracción ya está listo. |
-| B2 | Sync IMAP no configurado (no-op) | 3 | Cargar `CORREO_IMAP_*` de Hostinger o usar el puente MCP→import. |
-| B3 | Envío de correo real sin dry-run | 3 | Flag `CORREO_SEND_DRY_RUN` para QA (evita correos como el de prueba). |
-| B4 | Adjuntos sólo como metadata (sin binario/MinIO) | 3 | `storage_subir_archivo` + descarga; hoy no persiste el archivo. |
-| B5 | Sin tools MCP de `tareas` y `correo` | 2–3 | Añadir tools + `TOOL_MODULES`. |
-| B6 | Creación no unificada (wizard interno vs portal/MCP) | 1 | Una operación con adaptadores por canal. |
-| B7 | Alta interna sin `idempotence_token` | 1 | Aceptar y honrar token (como portal). |
-| B8 | No existe “anular/recrear” con motivo y vínculo al reemplazo | 1 | Operación guiada + trazas. |
-| B9 | Lecturas por rol incompletas (portal/MCP) | 1 | Audiencia en serializers y scope. |
-| B10 | Casos 4–6 de prueba inexistentes | 0/5 | Construir fixtures autorizadas. |
+| # | Brecha | Estado | Qué debes hacer tú (owner) | Qué ya hice yo (código) |
+|---|---|---|---|---|
+| B1 | Claves LLM inválidas (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` → **401**) | **Bloqueado por clave** | Cargar una clave válida (OpenAI o Anthropic) en el env del contenedor `django` | Helper `ai_hub/llm_text.py` (OpenAI → Anthropic por HTTP directo) + endpoint de diagnóstico |
+| B2 | Sync IMAP apunta a `mail.mwt.one` (mailcow), no a Hostinger | **Parcial** | Definir `CORREO_IMAP_HOST=imap.hostinger.com`, `CORREO_IMAP_USER=alvaro@muitowork.com`, `CORREO_IMAP_PASSWORD=<app password>` | `sync_mailbox` (IMAP) + `diagnostico_imap` para verificar sin exponer credenciales |
+| B3 | Envío de correo real sin dry-run | **Hecho** | Nada (opcional: `CORREO_SEND_DRY_RUN=0` cuando quieras envío real) | `CORREO_SEND_DRY_RUN=1` por defecto; respuesta `{"dry_run":true}` sin enviar |
+| B4 | Adjuntos sólo metadata | **Hecho** | Nada | Adjuntos suben a **MinIO** (sync/import/upload) + endpoint de **URL firmada** |
+| B5 | Sin tools MCP de `tareas`/`correo` | Pendiente | Nada | — (a implementar en E2/E3 si se quiere operar por MCP) |
+| B6 | Creación no unificada | Pendiente | Decidir si se unifica ahora | — |
+| B7 | Alta interna sin `idempotence_token` | Pendiente | Nada | — |
+| B8 | Sin “anular/recrear” con motivo y vínculo | Pendiente | Regla: no reasignar tras factura/anticipo | — |
+| B9 | Lecturas por rol incompletas (portal/MCP) | Pendiente | Nada | — |
+| B10 | Casos 4–6 de prueba inexistentes | **Receta lista** | Autorizar entorno de prueba | Recipe de construcción (abajo) |
+
+### B10 — Cómo construir los casos de prueba 4–6 (entorno de prueba)
+
+No se ejecutó en producción. Vía consola o MCP, en un entorno autorizado:
+
+1. **OC con varios expedientes.** Crear dos expedientes que compartan `oc_id`:
+   - `expediente_crear(client_id, lines=[...])` → crea `EXP-A`.
+   - `oc_editar(EXP-A.oc_id, ...)` no cambia OC; para el segundo, `expediente_crear(..., oc_id=EXP-A.oc_id)` con `lines=[...]`.
+   - Verificar: `SELECT oc_id, count(*) FROM expedientes.expediente WHERE is_active GROUP BY 1 HAVING count(*)>1;`
+2. **Mismo pedido con 2 AWB/BL.** Dos salidas del mismo expediente:
+   - `transferencia_crear(origen, destino, lineas=[...])` → `TRF-1`; enlazar con `inventario_transferir_asignaciones(..., transferencia_id=TRF-1)`.
+   - Repetir con `TRF-2`. Verificar `shipping-summary` devolviendo `transferencias[]` con 2.
+3. **Pago parcial + comisión proporcional.** Base: expediente `0a1a9612-9742-49c0-af62-27e9262b8ba6` (comisión 5 %/10 %):
+   - `pago_applicables(type=PROFORMA, expediente=...)` → `applicable_id`.
+   - `pago_registrar(..., tipo_pago=PARCIAL, aplicaciones=[{monto_aplicado: 50%}])` ×2 y `pago_conciliar` cada uno.
+
+---
+
+## 6.b Acciones pendientes del owner (resumen)
+
+Para desbloquear el backlog externo sólo faltan **dos cosas tuyas**:
+
+1. **Clave LLM válida** (B1) en el env del contenedor `django` (p. ej. `ANTHROPIC_API_KEY`). Verificar con
+   `GET /api/correo/mensajes/diagnostico/` → debe pasar de `err: HTTP 401` a `"anthropic":"ok"`.
+2. **Credenciales IMAP de Hostinger** (B2) en el env: `CORREO_IMAP_HOST`, `CORREO_IMAP_USER`, `CORREO_IMAP_PASSWORD`.
+   Verificar con el mismo endpoint → `imap.ok=true` y `host=imap.hostinger.com`.
+
+Todo lo demás del backlog bloqueante (**B3, B4**) ya quedó implementado y verificado.
 
 ---
 
