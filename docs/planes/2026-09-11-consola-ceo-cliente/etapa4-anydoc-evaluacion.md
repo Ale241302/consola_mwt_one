@@ -121,6 +121,11 @@ marca conflictos y crea tareas):
   Despacho, `ETA`→Fecha de Arrivo, `BL_AWB`→Tracking.
 - Arneses `eval_anydoc_extraction.py`, `probe_anydoc.py`, `compare_anydoc_extract.py`.
 
-**Siguiente paso propuesto (no bloqueante):** integrar `firecrawl-anydoc` como
-convertidor en `extraer_de_adjuntos` (fallback cuando el texto propio es pobre),
-con feature-flag; deja fuera de alcance el OCR alojado hasta que se apruebe.
+**Integrado (2026-09-13):** `firecrawl-anydoc==0.2.4` en el backend. En
+`extraer_de_adjuntos` se usa AnyDoc como conversor (Markdown) y el texto propio
+como fallback, con flag `CORREO_ANYDOC_ENABLED` (default `1`) y
+`CORREO_ANYDOC_MIN_CHARS`. Verificado en producción con `.doc` legacy
+(`Carta de retraso hospital mexico …`) → `PRODUCCION` y `Invoice 2414-2026.pdf`
+→ `DOCUMENTO 2026-02-11`, ambos `kind=anydoc-md`. El OCR alojado (Firecrawl
+Parse) queda fuera de alcance hasta que se apruebe el envío de documentos fuera
+del VPS.
