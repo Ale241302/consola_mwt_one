@@ -1099,4 +1099,235 @@ def arbitraje(request):
     })
 
 
+# ---------------------------------------------------------------------
+# Etapa 6 · OBJETIVOS Y EVOLUCIÓN DE CLIENTES
+#   Radiografía real (compras, pedidos, margen, comisiones, pagos,
+#   entregas, recurrencia) + metas configurables por periodo. El semáforo
+#   SOLO aparece cuando el CEO definió una meta (no se inventan metas).
+# ---------------------------------------------------------------------
+_DIMENSIONES = ("COMPRAS", "PEDIDOS", "MARGEN", "COMISIONES", "PAGOS", "ENTREGAS")
+
+
+def _bucket_periodo(mes: str, tipo: str) -> str:
+    """'2026-09' -> '2026-09' (MES) | '2026-Q3' | '2026'."""
+    try:
+        y, mo = mes.split("-")
+        mo = int(mo)
+    except (ValueError, AttributeError):
+        return mes
+    if tipo == "ANIO":
+        return y
+    if tipo == "TRIMESTRE":
+        return f"{y}-Q{(mo - 1) // 3 + 1}"
+    return f"{y}-{mo:02d}"
+
+
+def _evolucion_cliente(client_id: str, tipo: str = "MES") -> dict:
+    """Serie de evolución por periodo (real, sin metas)."""
+    by_mes: dict[str, dict] = {}
+
+    def _b(m):
+        return by_mes.setdefault(m, {
+            "pedidos": 0, "compras": Decimal("0"), "margen": Decimal("0"),
+            "comisiones": Decimal("0"), "pagos": Decimal("0"), "entregas": Decimal("0"),
+        })
+
+    today = date.today()
+    rows = [r for r in _fetch_expedientes()
+            if str(r.get("client_id")) == str(client_id)
+            or str(r.get("operating_company_id")) == str(client_id)]
+    for r in rows:
+        it = _build_item(r, today)
+        d = r.get("created_at_date")
+        if not d:
+            continue
+        b = _b(d.strftime("%Y-%m"))
+        b["pedidos"] += 1
+        b["compras"] += _dec(it["total_client"])
+        b["margen"] += _dec(it["delta_total"])
+        if it["commission_amount"] is not None:
+            b["comisiones"] += _dec(it["commission_amount"])
+
+    with connection.cursor() as c:
+        c.execute("""
+            SELECT to_char(date_trunc('month', fecha), 'YYYY-MM') AS m,
+                   COALESCE(SUM(monto_usd), 0)
+              FROM finance.payment
+             WHERE is_active = TRUE AND direction = 'IN' AND client_id = %s AND fecha IS NOT NULL
+             GROUP BY 1
+        """, [client_id])
+        for m, v in c.fetchall():
+            _b(m)["pagos"] += _dec(v)
+        c.execute("""
+            SELECT to_char(date_trunc('month', t.received_at), 'YYYY-MM') AS m,
+                   COALESCE(SUM(a.qty_asignada), 0)
+              FROM inventario.expediente_nodo_assignment a
+              JOIN transfers.transferencia t ON t.id = a.transferencia_id
+              JOIN expedientes.expediente e ON e.id = a.expediente_id
+             WHERE a.is_active = TRUE
+               AND t.estado IN ('RECEIVED', 'RECONCILED', 'CLOSED')
+               AND t.received_at IS NOT NULL
+               AND (e.client_id = %s OR e.operating_company_id = %s)
+             GROUP BY 1
+        """, [client_id, client_id])
+        for m, v in c.fetchall():
+            _b(m)["entregas"] += _dec(v)
+
+    # Agregar meses al periodo pedido
+    agg: dict[str, dict] = {}
+    for mes, b in by_mes.items():
+        p = _bucket_periodo(mes, tipo)
+        t = agg.setdefault(p, {k: (0 if k == "pedidos" else Decimal("0"))
+                               for k in ("pedidos", "compras", "margen", "comisiones", "pagos", "entregas")})
+        for k in t:
+            t[k] += b[k]
+    series = []
+    for p in sorted(agg):
+        b = agg[p]
+        series.append({
+            "periodo": p,
+            "pedidos": int(b["pedidos"]),
+            "compras": str(b["compras"].quantize(Decimal("0.01"))),
+            "margen": str(b["margen"].quantize(Decimal("0.01"))),
+            "comisiones": str(b["comisiones"].quantize(Decimal("0.01"))),
+            "pagos": str(b["pagos"].quantize(Decimal("0.01"))),
+            "entregas": int(b["entregas"]),
+        })
+    # Recurrencia: meses con pedidos / meses con actividad (transcurridos)
+    meses_pedido = {m for m, b in by_mes.items() if b["pedidos"] > 0}
+    meses_act = sorted(by_mes)
+    recurrencia = {
+        "meses_con_pedidos": len(meses_pedido),
+        "meses_con_actividad": len(meses_act),
+        "pct": (round(len(meses_pedido) * 100.0 / len(meses_act), 1) if meses_act else None),
+    }
+    return {"series": series, "recurrencia": recurrencia}
+
+
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def cliente_evolucion(request):
+    """Radiografía de evolución de un cliente (sin metas)."""
+    client_id = (request.query_params.get("client_id") or "").strip()
+    if not client_id:
+        return Response({"detail": "client_id requerido"}, status=400)
+    tipo = (request.query_params.get("periodo") or "MES").upper()
+    if tipo not in ("MES", "TRIMESTRE", "ANIO"):
+        tipo = "MES"
+    data = _evolucion_cliente(client_id, tipo)
+    return Response({"client_id": client_id, "periodo_tipo": tipo, **data,
+                     "today": date.today().isoformat()})
+
+
+@api_view(["GET", "POST", "DELETE"])
+@permission_classes([IsCeoOrAdmin])
+def meta_cliente(request):
+    """CRUD de metas por cliente/dimensión/periodo (CEO)."""
+    if request.method == "POST":
+        body = request.data or {}
+        try:
+            cid = str(body["client_id"])
+            dim = str(body["dimension"]).upper()
+            ptipo = str(body.get("periodo_tipo", "MES")).upper()
+            periodo = str(body["periodo"])
+            monto = _dec(body.get("monto"))
+        except KeyError as exc:
+            return Response({"detail": f"falta {exc}"}, status=400)
+        if dim not in _DIMENSIONES or ptipo not in ("MES", "TRIMESTRE", "ANIO"):
+            return Response({"detail": "dimension o periodo_tipo inválido"}, status=400)
+        with connection.cursor() as c:
+            c.execute("""
+                INSERT INTO finanzas.meta_cliente
+                  (client_id, dimension, periodo_tipo, periodo, monto, notas, created_by_id,
+                   is_active, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, NOW(), NOW())
+                ON CONFLICT (client_id, dimension, periodo_tipo, periodo) WHERE is_active
+                DO UPDATE SET monto = EXCLUDED.monto, notas = EXCLUDED.notas, updated_at = NOW()
+            """, [cid, dim, ptipo, periodo, monto,
+                  body.get("notas"), getattr(request.user, "id", None)])
+
+    # GET / DELETE → list (filtrable por client_id)
+    cid = (request.query_params.get("client_id") or "").strip()
+    if request.method == "DELETE":
+        mid = (request.data or {}).get("id") or request.query_params.get("id")
+        if not mid:
+            return Response({"detail": "id requerido"}, status=400)
+        with connection.cursor() as c:
+            c.execute("UPDATE finanzas.meta_cliente SET is_active=FALSE, updated_at=NOW() WHERE id=%s", [mid])
+        return Response({"ok": True})
+    sql = ("SELECT id::text, client_id::text, dimension, periodo_tipo, periodo, monto, notas, updated_at "
+           "FROM finanzas.meta_cliente WHERE is_active = TRUE")
+    params = []
+    if cid:
+        sql += " AND client_id = %s"
+        params.append(cid)
+    sql += " ORDER BY periodo DESC, dimension"
+    with connection.cursor() as c:
+        c.execute(sql, params)
+        cols = [x[0] for x in c.description]
+        rows = [dict(zip(cols, r)) for r in c.fetchall()]
+    for r in rows:
+        r["monto"] = str(r["monto"])
+        r["updated_at"] = r["updated_at"].isoformat() if r.get("updated_at") else None
+    return Response({"results": rows})
+
+
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def cliente_objetivos(request):
+    """Evolución + metas del periodo: real vs meta por dimensión.
+    El semáforo solo se calcula cuando existe meta (si no, 'sin_meta')."""
+    client_id = (request.query_params.get("client_id") or "").strip()
+    if not client_id:
+        return Response({"detail": "client_id requerido"}, status=400)
+    tipo = (request.query_params.get("periodo_tipo") or "ANIO").upper()
+    if tipo not in ("MES", "TRIMESTRE", "ANIO"):
+        tipo = "ANIO"
+    periodo = (request.query_params.get("periodo") or "").strip()
+
+    ev = _evolucion_cliente(client_id, tipo)
+    series = ev["series"]
+    bucket = periodo or (series[-1]["periodo"] if series else None)
+    actual = next((s for s in series if s["periodo"] == bucket), None) or {
+        "periodo": bucket, "pedidos": 0, "compras": "0", "margen": "0",
+        "comisiones": "0", "pagos": "0", "entregas": 0,
+    }
+    real_map = {
+        "COMPRAS": _dec(actual["compras"]), "PEDIDOS": _dec(actual["pedidos"]),
+        "MARGEN": _dec(actual["margen"]), "COMISIONES": _dec(actual["comisiones"]),
+        "PAGOS": _dec(actual["pagos"]), "ENTREGAS": _dec(actual["entregas"]),
+    }
+    with connection.cursor() as c:
+        c.execute("""SELECT dimension, monto FROM finanzas.meta_cliente
+                      WHERE is_active AND client_id=%s AND periodo_tipo=%s AND periodo=%s""",
+                  [client_id, tipo, bucket])
+        metas = {d: _dec(m) for d, m in c.fetchall()}
+
+    dims = []
+    for d in _DIMENSIONES:
+        real = real_map[d]
+        meta = metas.get(d)
+        if meta is None:
+            dims.append({"dimension": d, "real": str(real), "meta": None,
+                         "pct": None, "estado": "SIN_META"})
+            continue
+        pct = (float(real / meta * 100) if meta and meta != 0 else None)
+        if pct is None:
+            estado = "SIN_META"
+        elif pct >= 100:
+            estado = "CUMPLIDO"
+        elif pct >= 70:
+            estado = "EN_RIESGO"
+        else:
+            estado = "ATRASADO"
+        dims.append({"dimension": d, "real": str(real), "meta": str(meta),
+                     "pct": round(pct, 1) if pct is not None else None, "estado": estado})
+    return Response({
+        "client_id": client_id, "periodo_tipo": tipo, "periodo": bucket,
+        "dimensiones": dims, "series": series, "recurrencia": ev["recurrencia"],
+        "today": date.today().isoformat(),
+        "nota": "El semáforo solo se muestra cuando existe una meta definida por el CEO.",
+    })
+
+
 

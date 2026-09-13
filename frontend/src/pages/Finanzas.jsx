@@ -22,6 +22,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { apiFetch, getToken } from "../lib/api.js";
 // Etapa 5 · comisiones por marca (ventana 10–20) + flujo 90 días (USD/CRC).
 import ComisionesFlujo from "../components/finanzas/ComisionesFlujo.jsx";
+// Etapa 6 · objetivos y evolución de clientes.
+import ObjetivosCliente from "../components/finanzas/ObjetivosCliente.jsx";
 import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
 
 // ---------------------------------------------------------------------
@@ -257,6 +259,9 @@ export default function Finanzas({ lang = "es" }) {
 
       {/* Etapa 5 · Comisiones por marca + flujo 90 días */}
       <ComisionesFlujo lang={lang} />
+
+      {/* Etapa 6 · Objetivos y evolución de clientes */}
+      <ObjetivosCliente lang={lang} />
 
       {/* KPIs hero */}
       <div style={{

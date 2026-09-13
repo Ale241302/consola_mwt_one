@@ -199,6 +199,12 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "finanzas_flujo":                ("finanzas", "view"),
     "finanzas_saldo_inicial_set":    ("finanzas", "update"),
     "finanzas_arbitraje":            ("finanzas", "view"),
+
+    # Etapa 6 · Objetivos y evolución de clientes
+    "cliente_evolucion":             ("finanzas", "view"),
+    "cliente_objetivos":             ("finanzas", "view"),
+    "cliente_meta_set":              ("finanzas", "update"),
+    "cliente_meta_listar":           ("finanzas", "view"),
     # ── Storage ────────────────────────────────────────────────────────────
     "storage_subir_archivo": ("storage", "create"),
     "artefacto_archivo_descargar": ("storage", "download_doc"),

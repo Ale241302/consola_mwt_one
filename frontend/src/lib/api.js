@@ -819,6 +819,15 @@ export const finanzasApi = {
     apiFetch(`/finanzas/saldo-inicial/`, { method: "POST", body, token: getToken() }),
   arbitraje: () =>
     apiFetch(`/finanzas/arbitraje/`, { token: getToken() }),
+  // Etapa 6 · Objetivos y evolución de clientes
+  clienteEvolucion: (clientId, periodo) =>
+    apiFetch(`/finanzas/cliente-evolucion/${qs({ client_id: clientId, periodo })}`, { token: getToken() }),
+  clienteObjetivos: (clientId, periodo_tipo) =>
+    apiFetch(`/finanzas/cliente-objetivos/${qs({ client_id: clientId, periodo_tipo })}`, { token: getToken() }),
+  metaClienteList: (clientId) =>
+    apiFetch(`/finanzas/meta-cliente/${qs(clientId ? { client_id: clientId } : null)}`, { token: getToken() }),
+  metaClienteSet: (body) =>
+    apiFetch(`/finanzas/meta-cliente/`, { method: "POST", body, token: getToken() }),
 };
 
 // ---------------------------------------------------------------------

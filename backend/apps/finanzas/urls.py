@@ -25,4 +25,8 @@ urlpatterns = [
     path("finanzas/saldo-inicial/",                   views.saldo_inicial,      name="finanzas-saldo-inicial"),
     # Etapa 5 · Arbitraje por fechas de factura (compra MWT vs venta cliente)
     path("finanzas/arbitraje/",                        views.arbitraje,          name="finanzas-arbitraje"),
+    # Etapa 6 · Objetivos y evolución de clientes
+    path("finanzas/cliente-evolucion/",                views.cliente_evolucion,  name="finanzas-cliente-evolucion"),
+    path("finanzas/cliente-objetivos/",                views.cliente_objetivos,  name="finanzas-cliente-objetivos"),
+    path("finanzas/meta-cliente/",                     views.meta_cliente,       name="finanzas-meta-cliente"),
 ]

@@ -3119,6 +3119,50 @@ def finanzas_arbitraje() -> Any:
 
 
 @mcp.tool()
+def cliente_evolucion(client_id: str, periodo: str = "MES") -> Any:
+    """Etapa 6: radiografía de evolución de un cliente (real, sin metas):
+    compras, pedidos, margen, comisiones, pagos, entregas y recurrencia.
+    `periodo`: MES | TRIMESTRE | ANIO."""
+    return _safe_role_read(lambda: api.get("finanzas/cliente-evolucion/",
+                                           _params(client_id=client_id, periodo=periodo)),
+                           "cliente_evolucion")
+
+
+@mcp.tool()
+def cliente_objetivos(client_id: str, periodo_tipo: str = "ANIO", periodo: str | None = None) -> Any:
+    """Etapa 6: evolución + metas del periodo (real vs meta por dimensión).
+    El semáforo solo se calcula cuando existe meta definida. CEO/Admin."""
+    return _safe_role_read(lambda: api.get("finanzas/cliente-objetivos/",
+                                           _params(client_id=client_id, periodo_tipo=periodo_tipo,
+                                                   periodo=periodo)),
+                           "cliente_objetivos")
+
+
+@mcp.tool()
+@write_tool
+def cliente_meta_set(client_id: str, dimension: str, periodo: str,
+                     monto: float, periodo_tipo: str = "ANIO", notas: str | None = None) -> Any:
+    """Etapa 6: define/actualiza una meta por cliente × dimensión × periodo.
+    `dimension`: COMPRAS|PEDIDOS|MARGEN|COMISIONES|PAGOS|ENTREGAS;
+    `periodo_tipo`: MES|TRIMESTRE|ANIO; `periodo`: 2026-09 | 2026-Q3 | 2026."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post("finanzas/meta-cliente/", {
+        "client_id": client_id, "dimension": dimension.upper(),
+        "periodo_tipo": periodo_tipo.upper(), "periodo": periodo,
+        "monto": monto, "notas": notas}))
+
+
+@mcp.tool()
+def cliente_meta_listar(client_id: str | None = None) -> Any:
+    """Etapa 6: lista las metas de clientes (opcionalmente de uno solo)."""
+    return _safe_role_read(lambda: api.get("finanzas/meta-cliente/",
+                                           _params(client_id=client_id)),
+                           "cliente_meta_listar")
+
+
+@mcp.tool()
 @write_tool
 def portal_subir_documento(expediente_id: str, file_path: str,
                            kind: str = "OTRO", codigo: str | None = None) -> Any:
