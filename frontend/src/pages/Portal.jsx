@@ -46,6 +46,8 @@ function mapApiOcToPortalOc(r, allApiExpedientes) {
     // El codigo interno PO-2026-N queda como fallback.
     po_code:     r.client_ref || r.codigo || r.po_code || '',
     client_id:   r.client_id || null,
+    client_name: r.client_name || null,
+    estado:      r.estado || null,
     brand:       r.brand_name || r.brand_id || '—',   // nombre (ya no UUID)
     total_value: Number(r.total_value) || 0,
     total_paid:  Number(r.total_paid)  || 0,
@@ -776,6 +778,10 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
     EN_DESTINO: lang==='es' ? 'En destino' : 'At destination',
     CERRADO: lang==='es' ? 'Cerrado' : 'Closed',
   };
+  const STAGE_TONE = {
+    REGISTRO: '#64748B', PRODUCCION: '#EA580C', PREPARACION_DESPACHO: '#D97706',
+    TRANSITO: '#2563EB', EN_DESTINO: '#0D9488', CERRADO: '#16A34A',
+  };
   const nameById = useMemo(() => {
     const m = {};
     (clientOpts || []).forEach((c) => { m[c.id] = c.name; });
@@ -908,19 +914,34 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
           )}
         </>
       ) : (
-        <div style={{ display: 'flex', gap: 12, overflowX: 'auto', padding: '4px 2px 10px' }}>
-          {DISPLAY_STAGES.map((s) => (
-            <div key={s} style={{ minWidth: 230, flex: '0 0 auto' }}>
-              <div className="caption" style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text-tertiary)' }}>
-                {STAGE_LABEL[s] || s} · {kanbanCols[s]?.length || 0}
+        <div style={{ display: 'flex', gap: 12, overflowX: 'auto', padding: '4px 2px 12px', alignItems: 'flex-start' }}>
+          {DISPLAY_STAGES.filter((s) => (kanbanCols[s]?.length || 0) > 0).map((s) => (
+            <div key={s} style={{
+              minWidth: 248, flex: '0 0 auto',
+              background: 'var(--surface-alt, #F8FAFC)',
+              border: '1px solid var(--border-subtle, #E2E8F0)',
+              borderRadius: 12, padding: 10,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+                  {STAGE_LABEL[s] || s}
+                </span>
+                <span style={{
+                  fontSize: 11, fontWeight: 700, color: 'var(--text-tertiary)',
+                  background: 'var(--surface, #fff)', border: '1px solid var(--border-subtle, #E2E8F0)',
+                  borderRadius: 999, padding: '1px 8px',
+                }}>{kanbanCols[s].length}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(kanbanCols[s] || []).map((r) => (
+                {kanbanCols[s].map((r) => (
                   <div key={r.id} onClick={() => gotoOC(r.id)}
-                       style={{ cursor: 'pointer', border: '1px solid var(--border-subtle, #E2E8F0)',
-                                borderRadius: 10, padding: '10px 12px', background: 'var(--surface, #fff)' }}>
+                       style={{ cursor: 'pointer', background: 'var(--surface, #fff)',
+                                border: '1px solid var(--border-subtle, #E2E8F0)',
+                                borderLeft: `3px solid ${STAGE_TONE[s] || '#94A3B8'}`,
+                                borderRadius: 8, padding: '10px 12px',
+                                boxShadow: '0 1px 2px rgba(11,30,58,0.05)' }}>
                     <div style={{ font:'700 12px/1.2 var(--font-mono)', color:'var(--brand-primary)' }}>{r.ref}</div>
-                    <div className="caption" style={{ margin: '2px 0 6px' }}>{r.cliente}</div>
+                    <div className="caption" style={{ margin: '3px 0 8px', color: 'var(--text-secondary)' }}>{r.cliente}</div>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                       {r.rawStatus ? <StatusBadge status={r.rawStatus} lang={lang}/> : <span/>}
                       <span className="caption">{r.expCount} {lang==='es'?'envíos':'shipments'}</span>
