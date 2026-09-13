@@ -333,53 +333,20 @@ def sync_mailbox(direction=None, limit=25) -> dict:
 
 # ── Traducción ──────────────────────────────────────────────────────
 def traducir(texto: str, idioma_destino: str, idioma_origen: str = "es") -> str | None:
-    """Traduce con OpenAI y, si falla, con Anthropic. None si no hay proveedor."""
+    """Traduce con el helper LLM compartido (OpenAI -> Anthropic). None si falla."""
     if not texto or not idioma_destino:
         return None
-    import os
     sys_prompt = (
         f"Traduce el correo del {idioma_origen} al {idioma_destino}. "
         "Conserva el formato, la firma y los datos (precios, fechas, referencias) EXACTOS. "
         "Devuelve SOLO la traducción, sin comentarios."
     )
-    ai = _cfg("AI_HUB", {}) or {}
-
-    # 1) OpenAI
-    key = os.environ.get("OPENAI_API_KEY") or ai.get("OPENAI_API_KEY")
-    if key:
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=key, timeout=60, max_retries=1)
-            resp = client.chat.completions.create(
-                model=os.environ.get("OPENAI_OCR_MODEL") or "gpt-4o-mini",
-                messages=[{"role": "system", "content": sys_prompt},
-                          {"role": "user", "content": texto}],
-            )
-            out = (resp.choices[0].message.content or "").strip()
-            if out:
-                return out
-        except Exception as exc:
-            log.warning("[correo.traducir] openai fallo: %s", exc)
-
-    # 2) Anthropic (fallback)
-    akey = os.environ.get("ANTHROPIC_API_KEY") or ai.get("ANTHROPIC_API_KEY")
-    if akey:
-        try:
-            import anthropic
-            cli = anthropic.Anthropic(api_key=akey)
-            resp = cli.messages.create(
-                model=ai.get("DEFAULT_MODEL") or "claude-sonnet-4-6",
-                max_tokens=2000,
-                system=sys_prompt,
-                messages=[{"role": "user", "content": texto}],
-            )
-            parts = [b.text for b in resp.content if getattr(b, "type", None) == "text"]
-            out = "\n".join(parts).strip()
-            if out:
-                return out
-        except Exception as exc:
-            log.warning("[correo.traducir] anthropic fallo: %s", exc)
-    return None
+    try:
+        from apps.ai_hub.llm_text import llm_text
+        return llm_text(sys_prompt, texto, max_tokens=2000)
+    except Exception as exc:
+        log.warning("[correo.traducir] fallo: %s", exc)
+        return None
 
 
 # ── Envío SMTP ──────────────────────────────────────────────────────
