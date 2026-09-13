@@ -23,4 +23,6 @@ urlpatterns = [
     # Etapa 5 · Flujo de dinero (90 dias, USD+CRC) + saldo inicial
     path("finanzas/flujo/",                           views.flujo,              name="finanzas-flujo"),
     path("finanzas/saldo-inicial/",                   views.saldo_inicial,      name="finanzas-saldo-inicial"),
+    # Etapa 5 · Arbitraje por fechas de factura (compra MWT vs venta cliente)
+    path("finanzas/arbitraje/",                        views.arbitraje,          name="finanzas-arbitraje"),
 ]

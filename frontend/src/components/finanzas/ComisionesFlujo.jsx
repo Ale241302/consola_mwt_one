@@ -27,19 +27,22 @@ export default function ComisionesFlujo({ lang = "es" }) {
   const es = lang === "es";
   const [marcas, setMarcas] = useState([]);
   const [flujo, setFlujo] = useState(null);
+  const [arb, setArb] = useState({ results: [], resumen: {}, nota: "" });
   const [saldo, setSaldo] = useState({ USD: "", CRC: "" });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [cm, fl, si] = await Promise.all([
+      const [cm, fl, si, ar] = await Promise.all([
         finanzasApi.comisionesPorMarca(),
         finanzasApi.flujo(90),
         finanzasApi.saldoInicial(),
+        finanzasApi.arbitraje(),
       ]);
       setMarcas(cm?.results || []);
       setFlujo(fl || null);
+      setArb(ar || { results: [], resumen: {}, nota: "" });
       const s = Object.fromEntries((si?.results || []).map((r) => [r.moneda, r.monto]));
       setSaldo({ USD: s.USD ?? "0", CRC: s.CRC ?? "0" });
     } catch { /* la página principal ya maneja su error */ }
@@ -61,7 +64,8 @@ export default function ComisionesFlujo({ lang = "es" }) {
   const sf = flujo?.saldo_final_proyectado || {};
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16, marginBottom: 24 }}>
+    <>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16, marginBottom: 16 }}>
       {/* Comisiones por marca */}
       <Card title={es ? "COMISIONES POR MARCA · ventana 10–20" : "COMMISSIONS BY BRAND · 10–20 window"} lang={lang}
             right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{marcas.length}</span>}>
@@ -150,5 +154,51 @@ export default function ComisionesFlujo({ lang = "es" }) {
         </div>
       </Card>
     </div>
+
+    {/* Arbitraje por fechas de factura */}
+    <Card title={es ? "ARBITRAJE POR FECHAS DE FACTURA · MWT opera" : "ARBITRAGE BY INVOICE DATES · MWT-operated"} lang={lang}
+          right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>
+            {es ? "Δ bruto" : "Gross Δ"}: <b>{money(arb?.resumen?.arbitraje_bruto_total)}</b>
+            {" · "}{es ? "a financiar" : "to finance"}: <b>{money(arb?.resumen?.monto_requiere_financiacion)}</b>
+          </span>}>
+      {(arb?.results || []).length === 0 ? (
+        <div style={{ padding: 12, color: "var(--text-tertiary)", fontSize: 12 }}>
+          {es ? "Sin expedientes operados por MWT." : "No MWT-operated files."}
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ textAlign: "left", color: "var(--text-tertiary)" }}>
+              <th style={{ padding: "4px 6px" }}>{es ? "Expediente" : "File"}</th>
+              <th style={{ padding: "4px 6px" }}>{es ? "Cliente" : "Client"}</th>
+              <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Δ bruto" : "Gross Δ"}</th>
+              <th style={{ padding: "4px 6px" }}>{es ? "Pago compra" : "Pay purchase"}</th>
+              <th style={{ padding: "4px 6px" }}>{es ? "Cobro venta" : "Collect sale"}</th>
+              <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Desfase" : "Gap"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(arb.results || []).map((r) => (
+              <tr key={r.expediente_id} style={{ borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
+                <td style={{ padding: "6px", fontWeight: 600 }}>{r.display_id}</td>
+                <td style={{ padding: "6px" }}>{r.cliente}{r.brand_name ? ` · ${r.brand_name}` : ""}</td>
+                <td className="tabular-nums" style={{ padding: "6px", textAlign: "right", fontWeight: 700 }}>{money(r.arbitraje_bruto)}</td>
+                <td className="tabular-nums" style={{ padding: "6px", color: "var(--text-secondary)" }}>
+                  {r.compra_vence || "—"}{r.credit_days_mwt != null ? ` (${r.credit_days_mwt}d)` : ""}
+                </td>
+                <td className="tabular-nums" style={{ padding: "6px", color: "var(--text-secondary)" }}>
+                  {r.venta_vence || "—"} ({r.credit_days_cliente}d)
+                </td>
+                <td className="tabular-nums" style={{ padding: "6px", textAlign: "right", color: r.requiere_financiacion ? "var(--warning-fg, #92400E)" : "var(--success-fg, #166534)" }}>
+                  {r.desfase_dias == null ? "—" : `${r.desfase_dias}d${r.requiere_financiacion ? " ⚠" : ""}`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>{arb?.nota || ""}</div>
+    </Card>
+    </>
   );
 }

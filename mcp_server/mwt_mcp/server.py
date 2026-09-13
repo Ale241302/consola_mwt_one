@@ -3110,6 +3110,15 @@ def finanzas_saldo_inicial_set(usd: float | None = None, crc: float | None = Non
 
 
 @mcp.tool()
+def finanzas_arbitraje() -> Any:
+    """Etapa 5: arbitraje por fechas de factura (expedientes operados por MWT):
+    arbitraje bruto (Δ precio cliente − precio MWT), vencimiento de compra (factura
+    compra + plazo MWT), vencimiento de venta (factura venta + plazo cliente) y el
+    desfase (días) que MWT debe financiar. CEO/Admin."""
+    return _safe_role_read(lambda: api.get("finanzas/arbitraje/"), "finanzas_arbitraje")
+
+
+@mcp.tool()
 @write_tool
 def portal_subir_documento(expediente_id: str, file_path: str,
                            kind: str = "OTRO", codigo: str | None = None) -> Any:

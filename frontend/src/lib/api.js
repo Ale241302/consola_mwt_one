@@ -817,6 +817,8 @@ export const finanzasApi = {
     apiFetch(`/finanzas/saldo-inicial/`, { token: getToken() }),
   setSaldoInicial: (body) =>
     apiFetch(`/finanzas/saldo-inicial/`, { method: "POST", body, token: getToken() }),
+  arbitraje: () =>
+    apiFetch(`/finanzas/arbitraje/`, { token: getToken() }),
 };
 
 // ---------------------------------------------------------------------

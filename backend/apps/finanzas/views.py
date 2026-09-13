@@ -1008,4 +1008,94 @@ def saldo_inicial(request):
     return Response({"results": rows})
 
 
+# ---------------------------------------------------------------------
+# Etapa 5 · ARBITRAJE por fechas de factura (modelo C · MWT opera)
+#   Arbitraje bruto = precio cliente − precio MWT (Δ).
+#   Vencimiento compra = fecha factura compra + plazo MWT.
+#   Vencimiento venta  = fecha factura venta  + plazo cliente.
+#   Desfase > 0 → MWT paga antes de cobrar (financiación temporal).
+# ---------------------------------------------------------------------
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def arbitraje(request):
+    from collections import defaultdict
+
+    today = date.today()
+    items = [_build_item(r, today) for r in _fetch_expedientes()]
+    if not items:
+        return Response({"results": [], "today": today.isoformat(),
+                         "resumen": {"expedientes": 0, "arbitraje_bruto_total": "0.00",
+                                     "monto_requiere_financiacion": "0.00"}})
+
+    ids = [it["expediente_id"] for it in items]
+    with connection.cursor() as c:
+        c.execute("""
+            SELECT expediente_id::text, COALESCE(audience, ''), MIN(fecha)
+              FROM expedientes.documento
+             WHERE is_active = TRUE AND kind = 'FACTURA'
+               AND expediente_id IS NOT NULL AND fecha IS NOT NULL
+               AND expediente_id::text = ANY(%s::text[])
+             GROUP BY 1, 2
+        """, [ids])
+        fac = c.fetchall()
+    inv: dict = defaultdict(dict)
+    for eid, aud, f in fac:
+        inv[eid][aud or ""] = f
+
+    results = []
+    for it in items:
+        # El arbitraje es el beneficio de MWT solo cuando MWT opera el expediente.
+        if str(it.get("operating_company_id") or "") != MWT_OPERATING_CLIENT_ID:
+            continue
+        eid = it["expediente_id"]
+        d = inv.get(eid, {})
+        venta_fecha = d.get("CLIENT")
+        compra_fecha = d.get("ADMIN_ONLY") or d.get("MWT_INTERNAL")
+        cd_cli = int(it.get("credit_days_cliente") or 90)
+        cd_mwt = it.get("credit_days_mwt")
+        cd_mwt = int(cd_mwt) if cd_mwt is not None else None
+        try:
+            salida = date.fromisoformat(it["shipment_date"]) if it.get("shipment_date") else None
+        except (TypeError, ValueError):
+            salida = None
+        venta_base = venta_fecha or salida
+        compra_base = compra_fecha or salida
+        venta_vence = (venta_base + timedelta(days=cd_cli)) if venta_base else None
+        compra_vence = (compra_base + timedelta(days=cd_mwt)) if (compra_base and cd_mwt is not None) else None
+        desfase = (venta_vence - compra_vence).days if (venta_vence and compra_vence) else None
+        results.append({
+            "expediente_id": eid,
+            "display_id": it["display_id"],
+            "cliente": it.get("cliente_razon_social"),
+            "brand_name": it.get("brand_name"),
+            "total_client": it["total_client"],
+            "total_mwt": it["total_mwt"],
+            "arbitraje_bruto": it["delta_total"],
+            "compra_fecha": compra_fecha.isoformat() if compra_fecha else (salida.isoformat() if salida else None),
+            "venta_fecha":  venta_fecha.isoformat() if venta_fecha else (salida.isoformat() if salida else None),
+            "credit_days_mwt": cd_mwt,
+            "credit_days_cliente": cd_cli,
+            "compra_vence": compra_vence.isoformat() if compra_vence else None,
+            "venta_vence":  venta_vence.isoformat() if venta_vence else None,
+            "desfase_dias": desfase,
+            "requiere_financiacion": bool(desfase and desfase > 0),
+        })
+
+    results.sort(key=lambda x: (x["desfase_dias"] is None, -(x["desfase_dias"] or 0)))
+    tot_arb = sum(_dec(x["arbitraje_bruto"]) for x in results)
+    en_riesgo = sum(_dec(x["total_mwt"]) for x in results if x["requiere_financiacion"])
+    return Response({
+        "results": results,
+        "today": today.isoformat(),
+        "resumen": {
+            "expedientes": len(results),
+            "arbitraje_bruto_total": str(tot_arb.quantize(Decimal("0.01"))),
+            "monto_requiere_financiacion": str(en_riesgo.quantize(Decimal("0.01"))),
+        },
+        "nota": ("Arbitraje bruto = precio cliente − precio MWT (Δ). Vencimientos = fecha de la "
+                 "factura (o la salida, si falta) + plazo compra (MWT) / venta (cliente). "
+                 "Desfase > 0 = MWT paga antes de cobrar (financiación temporal)."),
+    })
+
+
 
