@@ -1,21 +1,21 @@
 ﻿// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// CreateExpedienteWizardLite â€” Wizard Simplificado de 3 pasos
-// Sprint Wizard Lite Â· 2026-04-29
+// CreateExpedienteWizardLite — Wizard Simplificado de 3 pasos
+// Sprint Wizard Lite · 2026-04-29
 // Agente responsable: [AG-FRONTEND]
 //
-// Reemplazo del CreateExpedienteWizard pesado (2000 lÃ­neas con OCR,
-// marca, moneda, flete, totales). Esta versiÃ³n es estrictamente:
+// Reemplazo del CreateExpedienteWizard pesado (2000 líneas con OCR,
+// marca, moneda, flete, totales). Esta versión es estrictamente:
 //
-//   Paso 1 Â· Cliente            cliente/subsidiaria + responsable
-//   Paso 2 Â· Productos          plantilla CSV + matriz tallas + CPA
-//   Paso 3 Â· Revisar y Crear    resumen limpio sin financiero
+//   Paso 1 · Cliente            cliente/subsidiaria + responsable
+//   Paso 2 · Productos          plantilla CSV + matriz tallas + CPA
+//   Paso 3 · Revisar y Crear    resumen limpio sin financiero
 //
 // El expediente nace en estado REGISTRO con marca/mode/currency NULL.
 // El OPERATOR completa los datos comerciales en /expedientes/{id}
 // antes de poder transitar T2 (REGISTRO â†’ PRODUCCION). Esto se enforza
 // con el componente CommercialDataHardStop dentro de ExpedienteDetail.
 //
-// Tokens: Navy #0B1E3A Â· Mint #00B286 Â· tabular-nums.
+// Tokens: Navy #0B1E3A · Mint #00B286 · tabular-nums.
 // POL_VISIBILIDAD: cero precios, cero subtotales, cero totales financieros.
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -38,11 +38,11 @@ import {
 import {
   MWT_OPERATING_CLIENT_ID, MWT_OPERATOR_NAME,
 } from "../lib/operatingCompany.js";
-// Ola 3 Â· 3.28 Â· LÃ³gica pura extraÃ­da (adaptaciÃ³n/orden de clientes),
+// Ola 3 · 3.28 · Lógica pura extraída (adaptación/orden de clientes),
 // testeable con node --test.
 import { adaptClient, orderClientsHierarchy } from "./wizard-lite/clients.logic.js";
 
-// Sprint 2026-05-06 Â· Step 0 visible solo para ADMIN/CEO/staff. CLIENT_*
+// Sprint 2026-05-06 · Step 0 visible solo para ADMIN/CEO/staff. CLIENT_*
 // salta este paso; el operador se asume "el propio cliente" implicitamente.
 const STEPS_ADMIN = [
   { id: 0, label: "Operador" },
@@ -58,23 +58,23 @@ const STEPS_CLIENT = [
 
 // Plantilla compatible con Excel en locales LATAM/ES.
 //
-// Por quÃ© `sep=;` en la primera lÃ­nea:
+// Por qué `sep=;` en la primera línea:
 //   Excel en MX/CO/PE/ES usa `;` como separador por default (porque la
 //   coma `,` es separador decimal). Si el CSV usa `,`, Excel lo abre
 //   todo en una sola columna. La directiva `sep=` (Microsoft) instruye
-//   a Excel sobre quÃ© separador usar, ignorando el locale.
-//   Excel tambiÃ©n respeta CSVs con `;` directamente.
+//   a Excel sobre qué separador usar, ignorando el locale.
+//   Excel también respeta CSVs con `;` directamente.
 //
-// Por quÃ© BOM UTF-8 (ï»¿):
-//   Sin BOM, Excel asume Windows-1252 y rompe tildes / "Ã±".
+// Por qué BOM UTF-8 (ï»¿):
+//   Sin BOM, Excel asume Windows-1252 y rompe tildes / "ñ".
 //
 // El parser del backend ya hace csv.Sniffer() sobre los delimitadores
 // `,;|\t` y acepta ambos transparentemente.
 //
 // Sprint 2026-05-02 (AG-03): la primera columna acepta SKU **o** Nombre
-// del producto **o** Ref Proveedor â€” el backend resuelve al SKU canÃ³nico
-// vÃ­a productos.producto. La columna Talla acepta cualquier sistema con
-// prefijo explÃ­cito (BRA/EU/US/UK/CM); sin prefijo asume EU. Sin esto
+// del producto **o** Ref Proveedor — el backend resuelve al SKU canónico
+// vía productos.producto. La columna Talla acepta cualquier sistema con
+// prefijo explícito (BRA/EU/US/UK/CM); sin prefijo asume EU. Sin esto
 // los CSV de clientes que codifican distinto al SKU MWT fallaban en
 // el matchmaker.
 const TEMPLATE_CSV =
@@ -91,19 +91,19 @@ export default function CreateExpedienteWizardLite() {
   const navigate = useNavigate();
   const { lang = "es" } = useOutletContext() || {};
   const { isAdmin, user } = useRole();
-  // â”€â”€ Sprint 2026-05-07 Â· Modo EDIT (?editExp=&editSap=).
-  // R3: defensa en profundidad â€” si CLIENT_* llega al wizard con esos
-  // params, los ignoramos (no deberÃ­a pasar â€” ExpedienteDetail filtra el
-  // botÃ³n â€” pero si por URL directa llegan, modo CREATE normal).
+  // â”€â”€ Sprint 2026-05-07 · Modo EDIT (?editExp=&editSap=).
+  // R3: defensa en profundidad — si CLIENT_* llega al wizard con esos
+  // params, los ignoramos (no debería pasar — ExpedienteDetail filtra el
+  // botón — pero si por URL directa llegan, modo CREATE normal).
   const [searchParams] = useSearchParams();
   const editExp = isAdmin ? (searchParams.get('editExp') || null) : null;
   const editSap = isAdmin ? (searchParams.get('editSap') || null) : null;
-  // Sprint 2026-05-31 Â· Modo EDICIÃ“N GENERAL (?editExpFull=). Edita TODO
-  // el expediente (todas las lÃ­neas/SAPs) vÃ­a /api/expedientes/{id}/edit-full/.
+  // Sprint 2026-05-31 · Modo EDICIÃ“N GENERAL (?editExpFull=). Edita TODO
+  // el expediente (todas las líneas/SAPs) vía /api/expedientes/{id}/edit-full/.
   const editExpFull = isAdmin ? (searchParams.get('editExpFull') || null) : null;
   const isFullEdit = !!editExpFull;
   const isEditMode = !!((editExp && editSap) || isFullEdit);
-  // â”€â”€ Sprint 2026-05-06 Â· Step 0 (operador) solo para ADMIN/CEO/staff.
+  // â”€â”€ Sprint 2026-05-06 · Step 0 (operador) solo para ADMIN/CEO/staff.
   // Para CLIENT_* arrancamos directo en el Step 1 con el cliente
   // pre-fijado a su empresa primaria (legal_entity_ids[0]).
   const STEPS = isAdmin ? STEPS_ADMIN : STEPS_CLIENT;
@@ -121,7 +121,7 @@ export default function CreateExpedienteWizardLite() {
   const [selClient, setSelClient]       = useState(null);   // {id, label, parent_id, â€¦}
 
   const [orderLines, setOrderLines]     = useState([]);     // [{tmpId, sku, talla, cantidad, producto_id, product_label, is_assigned, unassigned_request_sent}]
-  // K2 Â· comisiones del cliente (default por familia para la columna % ComisiÃ³n).
+  // K2 · comisiones del cliente (default por familia para la columna % Comisión).
   const [comisionReglas, setComisionReglas] = useState([]);
   useEffect(() => {
     if (!selClient?.id) { setComisionReglas([]); return; }
@@ -139,38 +139,38 @@ export default function CreateExpedienteWizardLite() {
     const glob = rows.find((r) => !r.familia);
     return glob ? (Number(glob.commission_pct) || 0) : null;
   }, [comisionReglas]);
-  // Sprint 2026-07-15 Â· overrides manuales de precio por SKU (Paso 3).
+  // Sprint 2026-07-15 · overrides manuales de precio por SKU (Paso 3).
   //   { [SKU_UPPER]: { client?: number|string, mwt?: number|string } }
-  // El admin fija el precio por SKU y se aplica a TODAS las lÃ­neas de ese SKU.
+  // El admin fija el precio por SKU y se aplica a TODAS las líneas de ese SKU.
   const [priceOverrides, setPriceOverrides] = useState({});
   const [parsing, setParsing]           = useState(false);
   const [manualOpen, setManualOpen]     = useState(false);
-  const [reqDialog, setReqDialog]       = useState(null);   // {sku} cuando solicita asignaciÃ³n
+  const [reqDialog, setReqDialog]       = useState(null);   // {sku} cuando solicita asignación
   const [saving, setSaving]             = useState(false);
   const [toast, setToast]               = useState(null);
-  // Sprint 2026-05-06 Â· tÃ©rminos de pago del expediente.
+  // Sprint 2026-05-06 · términos de pago del expediente.
   const [paymentDays,   setPaymentDays]   = useState(0);
-  // Sprint 2026-05-24 Â· plazos duales cuando hay operador intermedio (MWT vs cliente).
+  // Sprint 2026-05-24 · plazos duales cuando hay operador intermedio (MWT vs cliente).
   // Cuando NO hay operador, ambos se mantienen sincronizados con paymentDays
   // a traves de useEffect en Step3Resumen. handleCreate envia los dos al backend.
   const [paymentDaysMwt,     setPaymentDaysMwt]     = useState(0);
   const [paymentDaysCliente, setPaymentDaysCliente] = useState(0);
-  // Sprint Registrar Pago (Fase 3 Â· Commit 9) Â· forma_pago obligatorio.
+  // Sprint Registrar Pago (Fase 3 · Commit 9) · forma_pago obligatorio.
   // Antes default 'CREDITO' silencioso, lo que dejaba expedientes con
   // termos no decididos por el usuario. Ahora arranca '' (Selecciona...)
   // y el wizard bloquea el submit si no se eligio una opcion explicita.
   // Razon: cerrar el loop EXPEDIENTE_TERMS_UNDEFINED al liberar credito.
   const [paymentMethod, setPaymentMethod] = useState("");
-  // Sprint 2026-05-22 Â· ref compartido al pricingMatrix del Step3Resumen.
+  // Sprint 2026-05-22 · ref compartido al pricingMatrix del Step3Resumen.
   // Step3Resumen actualiza este ref via useEffect cuando carga el
   // snapshot. handleCreate lo lee para calcular unit_price del plazo
-  // seleccionado y persistirlo en la lÃ­nea del expediente.
+  // seleccionado y persistirlo en la línea del expediente.
   const pricingMatrixRef = useRef(null);
-  // Sprint 2026-05-22 Â· ref del TC USD/BRL vivo. El backend lo necesita
+  // Sprint 2026-05-22 · ref del TC USD/BRL vivo. El backend lo necesita
   // para resolver el snapshot MWT (unit_price_mwt) cuando el operador
   // del expediente es Muito Work Limitada.
   const tcUsdBrlRef = useRef(null);
-  // Sprint 2026-07-15 Â· precios finales por SKU (base override Ã— descuento del
+  // Sprint 2026-07-15 · precios finales por SKU (base override Ã— descuento del
   // plazo elegido). Step3Resumen lo llena; handleCreate/edit-full lo persiste.
   //   [{ sku, unit_price_mwt?, unit_price_client? }]
   const linePricesRef = useRef([]);
@@ -198,11 +198,11 @@ export default function CreateExpedienteWizardLite() {
   }, [operatingMode, selClient]);
 
   // Cliente cuyo precio mostramos en pantalla (perspectiva del ADMIN).
-  // Sprint 2026-05-10 v2 Â· modelo dual snapshot:
-  //   Â· Operada por MWT  â†’ ADMIN ve precio MWT ($36.46), CLIENT_* ve su
+  // Sprint 2026-05-10 v2 · modelo dual snapshot:
+  //   · Operada por MWT  â†’ ADMIN ve precio MWT ($36.46), CLIENT_* ve su
   //                        override ($47.74). Por eso el wizard usa
   //                        MWT_OPERATING_CLIENT_ID aqui.
-  //   Â· Operada por cliente â†’ ADMIN y CLIENT_* ven el mismo precio del
+  //   · Operada por cliente â†’ ADMIN y CLIENT_* ven el mismo precio del
   //                        cliente. selClient.id.
   // Ahora MWT_OPERATING_CLIENT_ID apunta al UUID real de Muito Work
   // Limitada en clientes.cliente, asi el lookup en client_prices
@@ -212,18 +212,18 @@ export default function CreateExpedienteWizardLite() {
     ? MWT_OPERATING_CLIENT_ID
     : (selClient?.id || null);
 
-  // Sprint 2026-05-06 Â· cuando el usuario elige un cliente,
+  // Sprint 2026-05-06 · cuando el usuario elige un cliente,
   // pre-llenamos paymentDays con su dias_credito por defecto.
-  // Sprint 2026-05-07 Â· en EDIT mode no reseteamos a defaults cuando
-  // selClient se limpia momentÃ¡neamente (clear+pick) â€” el usuario ya
-  // eligiÃ³ forma_pago/payment_days y no queremos pisarlos.
+  // Sprint 2026-05-07 · en EDIT mode no reseteamos a defaults cuando
+  // selClient se limpia momentáneamente (clear+pick) — el usuario ya
+  // eligió forma_pago/payment_days y no queremos pisarlos.
   useEffect(() => {
     if (selClient && Number(selClient.dias_credito) > 0) {
       setPaymentDays(Number(selClient.dias_credito));
     } else if (!selClient && !isEditMode) {
       setPaymentDays(0);
-      // Sprint Commit 9 Â· sin cliente seleccionado volvemos a '' para
-      // forzar elecciÃ³n explÃ­cita en el prÃ³ximo expediente.
+      // Sprint Commit 9 · sin cliente seleccionado volvemos a '' para
+      // forzar elección explícita en el próximo expediente.
       setPaymentMethod("");
     }
   }, [selClient, isEditMode]);
@@ -233,19 +233,19 @@ export default function CreateExpedienteWizardLite() {
     setExistingClientUsage(0);
   }, [selClient?.id]);
 
-  // Sprint 2026-05-07 Â· BUG FIX: el priceMap solo debe limpiarse cuando
+  // Sprint 2026-05-07 · BUG FIX: el priceMap solo debe limpiarse cuando
   // cambia `pricingClientId` (el cliente cuyas tarifas mostramos). Si
   // solo cambia selClient pero el operador sigue siendo el mismo (ej.
-  // MWT operando), las tarifas son las mismas â€” limpiarlas dejaba
+  // MWT operando), las tarifas son las mismas — limpiarlas dejaba
   // valor del pedido en $0 hasta que el fetcher re-disparase, lo que
-  // no ocurrÃ­a porque su dep `[pricingClientId]` no habÃ­a cambiado.
+  // no ocurría porque su dep `[pricingClientId]` no había cambiado.
   useEffect(() => {
     setPriceMap({});
   }, [pricingClientId]);
 
   // Sprint 2026-05-01: calcular credito usado proyectado desde
   // expedientes existentes del cliente.
-  // Sprint 2026-05-10 Â· FIX: solo expedientes con forma_pago != CONTADO
+  // Sprint 2026-05-10 · FIX: solo expedientes con forma_pago != CONTADO
   // consumen credito. Los CONTADO se cobran al confirmar la factura, no
   // entran en el pool de credito del cliente.
   useEffect(() => {
@@ -351,7 +351,7 @@ export default function CreateExpedienteWizardLite() {
     }, 0);
   }, [orderLines, priceMap]);
 
-  // Sprint 2026-05-06 Â· cuando el operador es MWT, traemos el credito
+  // Sprint 2026-05-06 · cuando el operador es MWT, traemos el credito
   // de Muito Work Limitada (sus campos credito_aprobado / credito_usado)
   // para mostrar el impacto sobre EL OPERADOR, no sobre el cliente final.
   const [mwtOperator, setMwtOperator] = useState(null);
@@ -365,15 +365,15 @@ export default function CreateExpedienteWizardLite() {
   }, [isAdmin]);
 
   // Proyeccion de credito post-pedido sobre el OPERADOR del expediente.
-  // Sprint 2026-05-06 Â· si operatingMode === 'mwt', el credito relevante
+  // Sprint 2026-05-06 · si operatingMode === 'mwt', el credito relevante
   // es el de Muito Work Limitada. Si 'client', el del cliente final.
-  // Sprint 2026-05-10 Â· FIX: si el pedido en curso es CONTADO, NO debe
+  // Sprint 2026-05-10 · FIX: si el pedido en curso es CONTADO, NO debe
   // sumarse al `afterUsed` (no afecta credito).
-  // Sprint 2026-05-10 v2 Â· FIX: el "usado" sale del campo persistido
-  // del cliente (cliente.credito_used) â€” fuente de verdad alineada
-  // con /clientes. Antes hacÃ­amos Math.max(persistedUsed, existingClientUsage)
+  // Sprint 2026-05-10 v2 · FIX: el "usado" sale del campo persistido
+  // del cliente (cliente.credito_used) — fuente de verdad alineada
+  // con /clientes. Antes hacíamos Math.max(persistedUsed, existingClientUsage)
   // pero existingClientUsage sumaba qty*unit_price de TODOS los expedientes
-  // activos del cliente (incluso los que estÃ¡n en REGISTRO sin facturar),
+  // activos del cliente (incluso los que están en REGISTRO sin facturar),
   // lo cual inflaba el bar (ej. Sondel con 0% usado en /clientes pero
   // 108% proyectado en el wizard).
   const creditProjection = useMemo(() => {
@@ -387,8 +387,8 @@ export default function CreateExpedienteWizardLite() {
       ? Number(source.credito_usado || 0)
       : Number(source.credito_used || 0);
     // Usado = persistido. El campo lo mantiene el backend coherente con
-    // facturas emitidas. No proyectamos desde expedientes â€” eso era una
-    // sobre-estimaciÃ³n que confundÃ­a al admin.
+    // facturas emitidas. No proyectamos desde expedientes — eso era una
+    // sobre-estimación que confundía al admin.
     const used = persistedUsed;
     const available = Math.max(0, limit - used);
     // Si el pedido actual es CONTADO, no impacta credito â†’ contributedOrder = 0.
@@ -416,15 +416,15 @@ export default function CreateExpedienteWizardLite() {
     };
   }, [selClient, mwtOperator, operatingMode, orderTotalValue, existingClientUsage, paymentMethod]);
 
-  // â”€â”€ Cargar catÃ¡logos â”€â”€
+  // â”€â”€ Cargar catálogos â”€â”€
   useEffect(() => {
     clientesApi.list({ is_parent: "all" }).then((d) => {
       const arr = Array.isArray(d) ? d : (d?.results || []);
       const adapted = arr.map(adaptClient);
       setClients(orderClientsHierarchy(adapted));
       // CLIENT_* â†’ fija el cliente final a su empresa primaria.
-      // Sprint 2026-05-06 Â· usamos legal_entity_ids[0] (compat: legacy
-      // legal_entity_id singular) â€” el backend ya filtra el listado
+      // Sprint 2026-05-06 · usamos legal_entity_ids[0] (compat: legacy
+      // legal_entity_id singular) — el backend ya filtra el listado
       // por estos UUIDs.
       if (!isAdmin && user) {
         const primaryId = (Array.isArray(user.legal_entity_ids) && user.legal_entity_ids[0])
@@ -437,16 +437,16 @@ export default function CreateExpedienteWizardLite() {
     }).catch(() => setClients([]));
   }, [isAdmin, user]);
 
-  // â”€â”€ Sprint 2026-05-07 Â· EDIT MODE precarga â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â”€â”€ Sprint 2026-05-07 · EDIT MODE precarga â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Cuando entramos con ?editExp=&editSap=, hidratamos el state desde
-  // GET /expedientes/{exp}/sap/{sap}/. Si el endpoint todavÃ­a no estÃ¡
+  // GET /expedientes/{exp}/sap/{sap}/. Si el endpoint todavía no está
   // deployado (404/500), caemos a modo CREATE silenciosamente.
   // initialLinesRef guarda el snapshot inicial para calcular diffs en
   // el submit (lines_added / lines_removed / lines_updated).
   const initialLinesRef = useRef([]);
   const initialClientIdRef = useRef(null);
   const initialOperatorRef = useRef(null);
-  // Sprint 2026-05-07 Â· Modal de confirmaciÃ³n split.
+  // Sprint 2026-05-07 · Modal de confirmación split.
   // pendingSplitBodyRef contiene el body listo para PATCH cuando el
   // usuario confirma; showSplitConfirm controla el modal.
   const pendingSplitBodyRef = useRef(null);
@@ -512,15 +512,15 @@ export default function CreateExpedienteWizardLite() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditMode, editExp, editSap, editExpFull, isFullEdit]);
 
-  // â”€â”€ ValidaciÃ³n de step â”€â”€
+  // â”€â”€ Validación de step â”€â”€
   const canAdvance = useMemo(() => {
     if (step === 0) return operatingMode === 'mwt' || operatingMode === 'client';
     if (step === 1) return !!selClient;
     if (step === 2) return orderLines.length > 0
                        && orderLines.every((l) => l.is_assigned !== false && l.cantidad > 0);
-    // Sprint Commit 9 Â· paso final (Resumen) â€” forma_pago obligatorio.
+    // Sprint Commit 9 · paso final (Resumen) — forma_pago obligatorio.
     // Sin este gate el wizard creaba expedientes con forma_pago='CREDITO'
-    // silencioso, que luego rompÃ­a release-credit con EXPEDIENTE_TERMS_UNDEFINED.
+    // silencioso, que luego rompía release-credit con EXPEDIENTE_TERMS_UNDEFINED.
     if (step === 3) return paymentMethod === 'CREDITO' || paymentMethod === 'CONTADO';
     return true;
   }, [step, selClient, orderLines, operatingMode, paymentMethod]);
@@ -528,17 +528,17 @@ export default function CreateExpedienteWizardLite() {
   // â”€â”€ Submit â”€â”€
   const submit = useCallback(async () => {
     if (saving) return;
-    // Sprint Commit 9 Â· guard defensivo: si por algÃºn path el submit se
-    // disparara con paymentMethod vacÃ­o, bloqueamos y mostramos error.
+    // Sprint Commit 9 · guard defensivo: si por algún path el submit se
+    // disparara con paymentMethod vacío, bloqueamos y mostramos error.
     if (paymentMethod !== 'CREDITO' && paymentMethod !== 'CONTADO') {
       setError(lang === 'es'
-        ? 'Selecciona la forma de pago (CrÃ©dito o Contado) antes de guardar.'
+        ? 'Selecciona la forma de pago (Crédito o Contado) antes de guardar.'
         : 'Choose the payment method (Credit or Cash) before saving.');
       return;
     }
     setSaving(true); setError(null);
     try {
-      // â”€â”€ Sprint 2026-05-07 Â· branch EDIT MODE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+      // â”€â”€ Sprint 2026-05-07 · branch EDIT MODE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // En lugar de POST /expedientes/, computamos diffs vs el snapshot
       // inicial y mandamos PATCH /expedientes/{exp}/sap/{sap}/.
       if (isEditMode) {
@@ -565,15 +565,15 @@ export default function CreateExpedienteWizardLite() {
           })
           .map((l) => ({ id: l.tmpId, qty: Number(l.cantidad) || 0 }));
 
-        // Sprint 2026-07-15 Â· precios finales por SKU = base override Ã— el
+        // Sprint 2026-07-15 · precios finales por SKU = base override Ã— el
         // descuento del plazo elegido (MWT y Cliente). Los calcula Step3Resumen
         // (tiene el snapshot y los plazos) y los deja en linePricesRef.
         const line_prices = Array.isArray(linePricesRef.current)
           ? linePricesRef.current : [];
         const body = {
           operating_company_id: operatingCompanyId,
-          // Sprint Commit 9 Â· forma_pago obligatorio. Si llegÃ³ aqui es
-          // porque el wizard ya validÃ³ que paymentMethod âˆˆ {CREDITO, CONTADO}.
+          // Sprint Commit 9 · forma_pago obligatorio. Si llegó aqui es
+          // porque el wizard ya validó que paymentMethod âˆˆ {CREDITO, CONTADO}.
           forma_pago:           paymentMethod,
           payment_days:         Number(paymentDays) || 0,
           lines_added,
@@ -581,31 +581,31 @@ export default function CreateExpedienteWizardLite() {
           lines_updated,
           ...(line_prices.length ? { line_prices } : {}),
         };
-        // Si el usuario cambiÃ³ de cliente, abrir modal de confirmaciÃ³n
+        // Si el usuario cambió de cliente, abrir modal de confirmación
         // (split). Diferimos el PATCH hasta que el usuario apruebe.
         const clientChanged = !!(
           initialClientIdRef.current
           && selClient?.id
           && selClient.id !== initialClientIdRef.current
         );
-        // Sprint 2026-05-31 Â· en ediciÃ³n GENERAL no hay split por-SAP:
+        // Sprint 2026-05-31 · en edición GENERAL no hay split por-SAP:
         // el cambio de cliente se aplica directo al expediente completo.
         if (isFullEdit && clientChanged) {
           body.client_id = selClient.id;
         }
-        // Sprint 2026-06-13 Â· SPLIT â€” en ediciÃ³n GENERAL, si el admin seleccionÃ³
-        // un subconjunto de lÃ­neas y cambiÃ³ operador o cliente, esas lÃ­neas se
+        // Sprint 2026-06-13 · SPLIT — en edición GENERAL, si el admin seleccionó
+        // un subconjunto de líneas y cambió operador o cliente, esas líneas se
         // mueven a un expediente NUEVO (misma OC); el original conserva el resto.
         if (isFullEdit) {
-          // SPLIT: basta con seleccionar lÃ­neas reales (existentes en el
+          // SPLIT: basta con seleccionar líneas reales (existentes en el
           // expediente). Se mueven a un expediente NUEVO con el operador/
-          // cliente actuales (cambien o no). Sin selecciÃ³n â†’ todo se mantiene.
+          // cliente actuales (cambien o no). Sin selección â†’ todo se mantiene.
           const split_line_ids = orderLines
             .filter((l) => l.isSelected && l.tmpId && initialIds.has(l.tmpId))
             .map((l) => l.tmpId);
           if (split_line_ids.length) {
             body.split_line_ids = split_line_ids;
-            // Split PARCIAL: cantidades a separar por lÃ­nea (default = total).
+            // Split PARCIAL: cantidades a separar por línea (default = total).
             const split_quantities = {};
             orderLines.forEach((l) => {
               if (l.isSelected && l.tmpId && initialIds.has(l.tmpId)) {
@@ -621,7 +621,7 @@ export default function CreateExpedienteWizardLite() {
         if (clientChanged && !isFullEdit && !pendingSplitBodyRef.current) {
           body.client_id = selClient.id;
           // Guardamos el body en el ref + abrimos el modal. El handler
-          // de confirmaciÃ³n re-dispararÃ¡ submit() poniendo el ref pre-aprobado.
+          // de confirmación re-disparará submit() poniendo el ref pre-aprobado.
           pendingSplitBodyRef.current = body;
           setShowSplitConfirm(true);
           setSaving(false);
@@ -629,7 +629,7 @@ export default function CreateExpedienteWizardLite() {
         }
         if (clientChanged) {
           // pendingSplitBodyRef ya contiene el body aprobado; usamos ese
-          // y limpiamos el ref para futuros envÃ­os.
+          // y limpiamos el ref para futuros envíos.
           Object.assign(body, pendingSplitBodyRef.current || {});
           pendingSplitBodyRef.current = null;
         }
@@ -655,7 +655,7 @@ export default function CreateExpedienteWizardLite() {
           throw new Error(detail);
         }
 
-        // Parse response â€” puede traer new_expediente_id si hubo split.
+        // Parse response — puede traer new_expediente_id si hubo split.
         let respData = null;
         try { respData = await resp.json(); } catch { /* fallthrough */ }
         const targetExpId = respData?.new_expediente_id || editExp || editExpFull;
@@ -679,10 +679,10 @@ export default function CreateExpedienteWizardLite() {
                 : `Expediente split. New: ${respData?.new_expediente_codigo || ''}`)
             : (lang === 'es' ? 'Cambios guardados.' : 'Changes saved.'),
         });
-        // Sprint 2026-05-07 Â· al guardar cambios (editMode), aterrizar
+        // Sprint 2026-05-07 · al guardar cambios (editMode), aterrizar
         // en la vista de la OC padre (/expedientes/{ocId}) en lugar
         // del detalle del expediente (mismo criterio que CREATE).
-        // Si por algÃºn motivo no hay ocId resuelto, fallback al
+        // Si por algún motivo no hay ocId resuelto, fallback al
         // detalle del expediente.
         if (ocId && ocId !== 'none') {
           navigate(`/expedientes/${encodeURIComponent(ocId)}`);
@@ -692,7 +692,7 @@ export default function CreateExpedienteWizardLite() {
         return;
       }
 
-      // Agrupar lÃ­neas por (sku, talla) duplicadas â€” sumar cantidades.
+      // Agrupar líneas por (sku, talla) duplicadas — sumar cantidades.
       const grouped = {};
       orderLines.forEach((l) => {
         const k = `${l.sku}|${l.talla || ""}`;
@@ -702,11 +702,11 @@ export default function CreateExpedienteWizardLite() {
         grouped[k].cantidad += Number(l.cantidad || 0);
       });
 
-      // Payload mÃ­nimo â€” el orchestrator legacy soporta crear con NULLs.
-      // Sprint 2026-05-06 Â· operating_company_id define quien opera
+      // Payload mínimo — el orchestrator legacy soporta crear con NULLs.
+      // Sprint 2026-05-06 · operating_company_id define quien opera
       // el expediente (MWT vs cliente). Los precios duales se congelan
       // en el backend al crear las lineas (snapshot mwt + cliente).
-      // Sprint 2026-05-22 Â· TC USD/BRL vivo (lo leemos del ref del Step3).
+      // Sprint 2026-05-22 · TC USD/BRL vivo (lo leemos del ref del Step3).
       // El backend lo usa para escoger la banda Marluvas correcta al
       // resolver `unit_price_mwt` desde el snapshot MWT.
       const tcLive = tcUsdBrlRef.current;
@@ -717,22 +717,22 @@ export default function CreateExpedienteWizardLite() {
         // El backend ya las marca como required=False.
         estado:              "REGISTRO",
         notas:               null,
-        // Sprint 2026-05-06 Â· tÃ©rminos de pago del expediente.
+        // Sprint 2026-05-06 · términos de pago del expediente.
         credit_days:         Number(paymentDays) || 0,
-        // Sprint 2026-05-24 Â· plazos duales (cuando hay operador intermedio).
+        // Sprint 2026-05-24 · plazos duales (cuando hay operador intermedio).
         // Si no hay operador, ambos == paymentDays (sincronizados via useEffect).
-        // Sprint 2026-05-24 (fix v2) Â· si el user no toca el bloque MWT,
+        // Sprint 2026-05-24 (fix v2) · si el user no toca el bloque MWT,
         // paymentDaysMwt queda 0 y antes caia a paymentDays (cliente). Ahora
-        // cae a 90 (base) â€” coherente con el default del sync hook.
-        // Sprint 2026-05-24 (fix v3) Â· credit_days_mwt nunca cae a paymentDays.
+        // cae a 90 (base) — coherente con el default del sync hook.
+        // Sprint 2026-05-24 (fix v3) · credit_days_mwt nunca cae a paymentDays.
         credit_days_mwt:     Number(paymentDaysMwt)     > 0 ? Number(paymentDaysMwt)     : 90,
         credit_days_cliente: Number(paymentDaysCliente) > 0 ? Number(paymentDaysCliente) : (Number(paymentDays) || 90),
-        // Sprint Commit 9 Â· forma_pago obligatorio (CREDITO|CONTADO).
-        // canAdvance ya bloqueÃ³ este submit si el usuario no eligiÃ³ uno.
+        // Sprint Commit 9 · forma_pago obligatorio (CREDITO|CONTADO).
+        // canAdvance ya bloqueó este submit si el usuario no eligió uno.
         forma_pago:          paymentMethod,
         ...(Number.isFinite(tcLive) && tcLive > 0 ? { tc_usd_brl: tcLive } : {}),
         lines: Object.values(grouped).map((l) => {
-          // Sprint 2026-05-24 Â· cada precio se congela con SU PROPIO plazo:
+          // Sprint 2026-05-24 · cada precio se congela con SU PROPIO plazo:
           //   unit_price_client = precios del cliente final (results) al plazo cliente
           //   unit_price_mwt    = precios del operador MWT (operator_results) al plazo MWT
           // Cuando NO hay operador intermedio, operator_results no existe y
@@ -746,20 +746,20 @@ export default function CreateExpedienteWizardLite() {
           };
           const matrixClient = pricingMatrixRef.current?.results?.[l.sku];
           const matrixMwt    = pricingMatrixRef.current?.operator_results?.[l.sku] || matrixClient;
-          // Sprint 2026-05-24 (fix v2) Â· fallback al base 90d si el state
+          // Sprint 2026-05-24 (fix v2) · fallback al base 90d si el state
           // esta en 0, NUNCA al paymentDays (que es el plazo del bloque cliente
           // y NO aplica al precio MWT). Cuando NO hay operador, paymentDays
           // == paymentDaysMwt == paymentDaysCliente por el sync hook, asi
           // que este fallback solo se activa en operacion con operador y
-          // user que no tocÃ³ el bloque MWT (asume 90d base).
-          // Sprint 2026-05-24 (fix v3) Â· _mwtDays nunca cae a paymentDays
+          // user que no tocó el bloque MWT (asume 90d base).
+          // Sprint 2026-05-24 (fix v3) · _mwtDays nunca cae a paymentDays
           // (que es el plazo del bloque cliente). Default base 90d.
           const _clientDays = Number(paymentDaysCliente) > 0 ? Number(paymentDaysCliente) : (Number(paymentDays) || 90);
           const _mwtDays    = Number(paymentDaysMwt)     > 0 ? Number(paymentDaysMwt)     : 90;
           let unitPriceClient = _pickFromMatrix(matrixClient, _clientDays);
           let unitPriceMwt    = _pickFromMatrix(matrixMwt,    _mwtDays);
-          // Sprint 2026-07-15 Â· override manual del admin por SKU (Paso 3).
-          // Si existe, MANDA sobre el precio del motor y se marca la lÃ­nea
+          // Sprint 2026-07-15 · override manual del admin por SKU (Paso 3).
+          // Si existe, MANDA sobre el precio del motor y se marca la línea
           // con price_override para que el backend lo respete.
           const _skuKey = String(l.sku || "").trim().toUpperCase();
           const _finalLp = (linePricesRef.current || []).find(
@@ -819,10 +819,10 @@ export default function CreateExpedienteWizardLite() {
         id: cfocResp?.expediente?.id || null,
         oc_id: cfocResp?.oc?.id || null,
       };
-      // Sprint 2026-05-07 Â· al crear un expediente nuevo, el CEO prefiere
+      // Sprint 2026-05-07 · al crear un expediente nuevo, el CEO prefiere
       // aterrizar en la vista de la OC padre (/expedientes/{oc_id}) que
       // ya muestra el grupo de SAPs + el nuevo expediente al fondo.
-      // Si por algÃºn motivo no hay oc_id en la response, caemos al
+      // Si por algún motivo no hay oc_id en la response, caemos al
       // listado de expedientes.
       const expId = resp?.id;
       const ocId  = resp?.oc_id || resp?.oc?.id || null;
@@ -855,7 +855,7 @@ export default function CreateExpedienteWizardLite() {
             <IconChevLeft size={12}/> {lang === "es" ? "Volver" : "Back"}
           </button>
           <div className="micro" style={{ marginTop: 8, marginBottom: 4 }}>
-            {lang === "es" ? "EXPEDIENTES Â· INGRESO DE PEDIDO" : "FILES Â· ORDER INTAKE"}
+            {lang === "es" ? "EXPEDIENTES · INGRESO DE PEDIDO" : "FILES · ORDER INTAKE"}
           </div>
           <h1 className="page-title">
             {isEditMode
@@ -868,13 +868,13 @@ export default function CreateExpedienteWizardLite() {
             {isEditMode
               ? (isFullEdit
                   ? (lang === "es"
-                      ? "EditÃ¡s el expediente completo. Los cambios afectan TODAS las lÃ­neas y SAPs."
+                      ? "Editás el expediente completo. Los cambios afectan TODAS las líneas y SAPs."
                       : "Editing the whole file. Changes affect ALL lines and SAPs.")
                   : (lang === "es"
-                      ? "EditÃ¡s los datos de este SAP. Los cambios afectan solo a este SAP, no al expediente entero."
+                      ? "Editás los datos de este SAP. Los cambios afectan solo a este SAP, no al expediente entero."
                       : "Editing this SAP. Changes affect only this SAP, not the entire file."))
               : (lang === "es"
-                  ? "Ingreso puro de pedido. Datos comerciales y logÃ­sticos se completan despuÃ©s en el detalle."
+                  ? "Ingreso puro de pedido. Datos comerciales y logísticos se completan después en el detalle."
                   : "Pure order intake. Commercial/logistics data is filled later in the detail view.")}
           </div>
         </div>
@@ -939,9 +939,9 @@ export default function CreateExpedienteWizardLite() {
               operatingMode={operatingMode}
               operatingCompanyId={operatingCompanyId}
               orderLines={
-                // SPLIT: si en ediciÃ³n general hay lÃ­neas seleccionadas, el
+                // SPLIT: si en edición general hay líneas seleccionadas, el
                 // Paso 3 (preview del expediente NUEVO) muestra SOLO esas; las
-                // no seleccionadas quedan en el original y no se revisan aquÃ­.
+                // no seleccionadas quedan en el original y no se revisan aquí.
                 (isFullEdit && orderLines.some((l) => l.isSelected))
                   ? orderLines.filter((l) => l.isSelected)
                   : orderLines
@@ -997,7 +997,7 @@ export default function CreateExpedienteWizardLite() {
           ) : (
             <button
               className="btn btn-accent"
-              // Sprint Commit 9 Â· gate por canAdvance del step 3 â€” bloquea
+              // Sprint Commit 9 · gate por canAdvance del step 3 — bloquea
               // submit si paymentMethod no esta elegido (CREDITO|CONTADO).
               disabled={saving || orderLines.length === 0 || !canAdvance}
               onClick={submit}
@@ -1025,7 +1025,7 @@ export default function CreateExpedienteWizardLite() {
         </div>
       </div>
 
-      {/* â”€â”€ Modal de confirmaciÃ³n: split por cambio de cliente â”€â”€ */}
+      {/* â”€â”€ Modal de confirmación: split por cambio de cliente â”€â”€ */}
       {showSplitConfirm && (
         <div
           role="dialog"
@@ -1065,7 +1065,7 @@ export default function CreateExpedienteWizardLite() {
               marginBottom: 8,
             }}>
               {lang === 'es'
-                ? 'Â¿Crear un nuevo expediente con este SAP?'
+                ? '¿Crear un nuevo expediente con este SAP?'
                 : 'Create a new expediente with this SAP?'}
             </div>
             <div style={{
@@ -1073,7 +1073,7 @@ export default function CreateExpedienteWizardLite() {
               lineHeight: 1.5,
             }}>
               {lang === 'es'
-                ? 'Las lÃ­neas con este SAP se moverÃ¡n del expediente actual a un nuevo expediente con el cliente que elegiste. El crÃ©dito del cliente nuevo absorberÃ¡ el valor del SAP.'
+                ? 'Las líneas con este SAP se moverán del expediente actual a un nuevo expediente con el cliente que elegiste. El crédito del cliente nuevo absorberá el valor del SAP.'
                 : 'Lines with this SAP will move from the current expediente to a new one with the selected client. The new client\'s credit will absorb the SAP value.'}
             </div>
             <div style={{
@@ -1101,14 +1101,14 @@ export default function CreateExpedienteWizardLite() {
                   submit();
                 }}
               >
-                {lang === 'es' ? 'SÃ­, dividir expediente' : 'Yes, split expediente'}
+                {lang === 'es' ? 'Sí, dividir expediente' : 'Yes, split expediente'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* â”€â”€ DiÃ¡logo solicitud asignaciÃ³n â”€â”€ */}
+      {/* â”€â”€ Diálogo solicitud asignación â”€â”€ */}
       {reqDialog && (
         <RequestAssignmentDialog
           lang={lang}
@@ -1124,7 +1124,7 @@ export default function CreateExpedienteWizardLite() {
                 ? `Solicitud enviada a ${payload.sent_to}.`
                 : `Request sent to ${payload.sent_to}.`),
             });
-            // Marcar lÃ­nea como request_sent para deshabilitar reintento
+            // Marcar línea como request_sent para deshabilitar reintento
             setOrderLines((prev) => prev.map((l) =>
               l.sku === reqDialog.sku ? { ...l, unassigned_request_sent: true } : l));
           }}
@@ -1190,10 +1190,10 @@ function Stepper({ step, steps, onJump, lang }) {
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// STEP 0 Â· OPERADOR (solo ADMIN)
+// STEP 0 · OPERADOR (solo ADMIN)
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Sprint 2026-05-06 Â· el ADMIN decide si el expediente lo opera
-// Muito Work Limitada (default Â· pricing MWT, credito MWT) o el
+// Sprint 2026-05-06 · el ADMIN decide si el expediente lo opera
+// Muito Work Limitada (default · pricing MWT, credito MWT) o el
 // propio cliente (pricing del cliente, credito del cliente).
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 /**
@@ -1209,18 +1209,18 @@ function Step0Operador({ lang, operatingMode, setOperatingMode }) {
       id: 'mwt',
       title_es: `Operada por ${MWT_OPERATOR_NAME}`,
       title_en: `Operated by ${MWT_OPERATOR_NAME}`,
-      sub_es: 'Recomendada Â· MWT consolida pricing, crÃ©dito y exposiciÃ³n financiera.',
-      sub_en: 'Recommended Â· MWT consolidates pricing, credit and financial exposure.',
-      meta_es: 'CrÃ©dito y precios MWT Â· cliente final solo ve su precio congelado.',
-      meta_en: 'MWT credit and pricing Â· the final client only sees the frozen client price.',
+      sub_es: 'Recomendada · MWT consolida pricing, crédito y exposición financiera.',
+      sub_en: 'Recommended · MWT consolidates pricing, credit and financial exposure.',
+      meta_es: 'Crédito y precios MWT · cliente final solo ve su precio congelado.',
+      meta_en: 'MWT credit and pricing · the final client only sees the frozen client price.',
     },
     {
       id: 'client',
       title_es: 'Operada por el cliente',
       title_en: 'Operated by the client',
-      sub_es: 'El cliente paga directo al proveedor; MWT actÃºa solo como facilitador.',
+      sub_es: 'El cliente paga directo al proveedor; MWT actúa solo como facilitador.',
       sub_en: 'Client pays the supplier directly; MWT acts as facilitator only.',
-      meta_es: 'Precios y crÃ©dito del cliente final. Sin snapshot dual.',
+      meta_es: 'Precios y crédito del cliente final. Sin snapshot dual.',
       meta_en: 'Final client pricing and credit. No dual snapshot.',
     },
   ];
@@ -1229,14 +1229,14 @@ function Step0Operador({ lang, operatingMode, setOperatingMode }) {
     <div className="card card-pad-lg">
       <h2 className="heading-md" style={{ marginBottom: 6 }}>
         {lang === 'es'
-          ? 'Paso 0 Â· Â¿QuiÃ©n opera el expediente?'
-          : 'Step 0 Â· Who operates this file?'}
+          ? 'Paso 0 · ¿Quién opera el expediente?'
+          : 'Step 0 · Who operates this file?'}
       </h2>
       <div className="caption" style={{
         color: 'var(--text-tertiary)', marginBottom: 18, lineHeight: 1.5,
       }}>
         {lang === 'es'
-          ? 'Define quiÃ©n es responsable comercial y financieramente del expediente. Puedes cambiarlo mÃ¡s adelante mientras el expediente estÃ© en REGISTRO.'
+          ? 'Define quién es responsable comercial y financieramente del expediente. Puedes cambiarlo más adelante mientras el expediente esté en REGISTRO.'
           : 'Defines who is commercially and financially responsible. You can change this later while the file is in REGISTRO.'}
       </div>
 
@@ -1297,7 +1297,7 @@ function Step0Operador({ lang, operatingMode, setOperatingMode }) {
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// STEP 1 Â· CLIENTE
+// STEP 1 · CLIENTE
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 /**
  * @typedef {Object} Step1Props
@@ -1331,15 +1331,15 @@ function Step1Cliente({ lang, clients, selClient, setSelClient, existingClientUs
     ).slice(0, 100);
   }, [clients, search]);
 
-  // â”€â”€ Sprint 2026-05-06 Â· si el operador es MWT, mostramos un card
-  // resumen del crÃ©dito de Muito Work Limitada por arriba del picker.
+  // â”€â”€ Sprint 2026-05-06 · si el operador es MWT, mostramos un card
+  // resumen del crédito de Muito Work Limitada por arriba del picker.
   // El cliente final (Step 1) sigue siendo independiente.
   const showMwtOperatorCard = isAdmin && operatingMode === 'mwt';
 
   return (
     <div className="card card-pad-lg">
       <h2 className="heading-md" style={{ marginBottom: 14 }}>
-        {lang === "es" ? "Paso 1 Â· Cliente" : "Step 1 Â· Client"}
+        {lang === "es" ? "Paso 1 · Cliente" : "Step 1 · Client"}
       </h2>
 
       {showMwtOperatorCard && (
@@ -1353,7 +1353,7 @@ function Step1Cliente({ lang, clients, selClient, setSelClient, existingClientUs
       {/* Selector de cliente final */}
       <Field label={
         showMwtOperatorCard
-          ? (lang === 'es' ? 'Cliente final Â· Â¿a quiÃ©n factura MWT? *' : 'Final client Â· who does MWT invoice? *')
+          ? (lang === 'es' ? 'Cliente final · ¿a quién factura MWT? *' : 'Final client · who does MWT invoice? *')
           : (lang === 'es' ? 'Cliente / Subsidiaria *' : 'Client / Subsidiary *')
       }>
         {selClient ? (
@@ -1368,7 +1368,7 @@ function Step1Cliente({ lang, clients, selClient, setSelClient, existingClientUs
           <div ref={ref} style={{ position: "relative" }}>
             <input
               className="input"
-              placeholder={lang === "es" ? "Buscar por razÃ³n social, RUC o subsidiariaâ€¦" : "Searchâ€¦"}
+              placeholder={lang === "es" ? "Buscar por razón social, RUC o subsidiariaâ€¦" : "Searchâ€¦"}
               value={search}
               onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
               onFocus={() => setOpen(true)}
@@ -1404,7 +1404,7 @@ function Step1Cliente({ lang, clients, selClient, setSelClient, existingClientUs
                       <div className="caption" style={{ color: "var(--text-tertiary)" }}>
                         {c.tax_id && <code className="mono-sm">{c.tax_id}</code>}
                         {c.parent_label && (
-                          <> Â· <span style={{ color: "var(--brand-accent, #00B286)" }}>hija de {c.parent_label}</span></>
+                          <> · <span style={{ color: "var(--brand-accent, #00B286)" }}>hija de {c.parent_label}</span></>
                         )}
                       </div>
                     </div>
@@ -1428,7 +1428,7 @@ function Step1Cliente({ lang, clients, selClient, setSelClient, existingClientUs
   );
 }
 
-// â”€â”€ Sprint 2026-05-06 Â· Card readonly de Muito Work Limitada como
+// â”€â”€ Sprint 2026-05-06 · Card readonly de Muito Work Limitada como
 // operador. Muestra el credito disponible (pool) en barra verde.
 // El backend exporta MWT como un cliente normal (cliente.cliente con
 // id=MWT_OPERATING_CLIENT_ID); aqui la fetcheamos via clientesApi.get.
@@ -1469,7 +1469,7 @@ function MwtOperatorCard({ lang }) {
             display: 'flex', justifyContent: 'space-between',
             fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4,
           }}>
-            <span>{lang === 'es' ? 'CrÃ©dito disponible (pool)' : 'Available credit (pool)'}</span>
+            <span>{lang === 'es' ? 'Crédito disponible (pool)' : 'Available credit (pool)'}</span>
             <span className="tabular-nums" style={{ fontWeight: 700, color: 'var(--text-primary, #0B1E3A)' }}>
               {fmt(disponible)} / {fmt(limit)}
             </span>
@@ -1491,17 +1491,17 @@ function MwtOperatorCard({ lang }) {
 /**
  * @typedef {Object} SelectedClientCardProps
  * @property {object} client
- * @property {(()=>void)|null} [onClear] â€” null fuerza locked (CLIENT_* sin opcion de cambiar).
+ * @property {(()=>void)|null} [onClear] — null fuerza locked (CLIENT_* sin opcion de cambiar).
  * @property {string} lang
  * @property {number} [existingUsage]
  * @property {boolean} [locked]
  */
 /** @param {SelectedClientCardProps} props */
 function SelectedClientCard({ client, onClear, lang, existingUsage = 0, locked = false }) {
-  // Sprint 2026-05-10 v2 Â· usamos `cliente.credito_used` directo (fuente
+  // Sprint 2026-05-10 v2 · usamos `cliente.credito_used` directo (fuente
   // de verdad, alineada con /clientes). Antes Math.max(persistedUsed,
   // existingUsage) inflaba el bar contando expedientes en REGISTRO que
-  // todavÃ­a no facturan. existingUsage queda como prop por compat pero
+  // todavía no facturan. existingUsage queda como prop por compat pero
   // ya no se usa.
   const persistedUsed = Number(client.credito_used || 0);
   const used = persistedUsed;
@@ -1527,7 +1527,7 @@ function SelectedClientCard({ client, onClear, lang, existingUsage = 0, locked =
           <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
             {client.tax_id && <code className="mono-sm">{client.tax_id}</code>}
             {client.parent_label && (
-              <> Â· <span style={{ color: "#00B286" }}>hija de {client.parent_label}</span></>
+              <> · <span style={{ color: "#00B286" }}>hija de {client.parent_label}</span></>
             )}
           </div>
           {limit > 0 && (
@@ -1535,12 +1535,12 @@ function SelectedClientCard({ client, onClear, lang, existingUsage = 0, locked =
               <div style={{ display: "flex", justifyContent: "space-between",
                             fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>
                 <span>
-                  {lang === "es" ? "CrÃ©dito disponible (pool)" : "Available credit (pool)"}
-                  {/* Sprint 2026-05-10 v2 Â· badge "proyectado" removido.
+                  {lang === "es" ? "Crédito disponible (pool)" : "Available credit (pool)"}
+                  {/* Sprint 2026-05-10 v2 · badge "proyectado" removido.
                       El bar usa cliente.credito_used directo (alineado
                       con /clientes). Si en el futuro queremos mostrar
                       "pendiente de facturar" como hint separado, va con
-                      otro estilo y no debe afectar el cÃ¡lculo del bar. */}
+                      otro estilo y no debe afectar el cálculo del bar. */}
                 </span>
                 <span className="tabular-nums" style={{ fontWeight: 700, color: "var(--text-primary)" }}>
                   ${disponible.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
@@ -1578,7 +1578,7 @@ function SelectedClientCard({ client, onClear, lang, existingUsage = 0, locked =
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// STEP 2 Â· PRODUCTOS
+// STEP 2 · PRODUCTOS
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 function Step2Productos({
   lang, clientId, clientLabel,
@@ -1623,8 +1623,8 @@ function Step2Productos({
       setToast({
         kind: unass > 0 ? "warn" : "ok",
         msg: lang === "es"
-          ? `${payload.summary?.valid_rows || 0} lÃ­neas cargadas` + (unass ? ` Â· ${unass} sin asignar` : "")
-          : `${payload.summary?.valid_rows || 0} lines loaded` + (unass ? ` Â· ${unass} unassigned` : ""),
+          ? `${payload.summary?.valid_rows || 0} líneas cargadas` + (unass ? ` · ${unass} sin asignar` : "")
+          : `${payload.summary?.valid_rows || 0} lines loaded` + (unass ? ` · ${unass} unassigned` : ""),
       });
     } catch (e) {
       setToast({ kind: "err", msg: e?.message || (lang === "es" ? "Error procesando archivo" : "Parse error") });
@@ -1647,9 +1647,9 @@ function Step2Productos({
   const updateLine = (tmpId, patch) =>
     setOrderLines((prev) => prev.map((l) => l.tmpId === tmpId ? { ...l, ...patch } : l));
 
-  // Sprint 2026-07-15 (CEO) Â· selecciÃ³n por SKU: al marcar/desmarcar el check
-  // de una lÃ­nea, TODAS las lÃ­neas con el MISMO SKU se marcan/desmarcan igual.
-  // Al marcar, se inicializa splitQty = cantidad si aÃºn no tiene valor.
+  // Sprint 2026-07-15 (CEO) · selección por SKU: al marcar/desmarcar el check
+  // de una línea, TODAS las líneas con el MISMO SKU se marcan/desmarcan igual.
+  // Al marcar, se inicializa splitQty = cantidad si aún no tiene valor.
   const toggleSelectBySku = (line, checked) => {
     const sku = String(line.sku || "").trim().toUpperCase();
     setOrderLines((prev) => prev.map((l) => {
@@ -1670,14 +1670,14 @@ function Step2Productos({
     <div className="card card-pad-lg">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
         <h2 className="heading-md">
-          {lang === "es" ? "Paso 2 Â· Productos" : "Step 2 Â· Products"}
+          {lang === "es" ? "Paso 2 · Productos" : "Step 2 · Products"}
         </h2>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost btn-sm" onClick={downloadTemplate}>
             â¬‡ {lang === "es" ? "Descargar plantilla" : "Download template"}
           </button>
           <button className="btn btn-ghost btn-sm" onClick={() => setManualOpen(true)}>
-            <IconPlus size={11}/> {lang === "es" ? "Agregar lÃ­nea manual" : "Add manual line"}
+            <IconPlus size={11}/> {lang === "es" ? "Agregar línea manual" : "Add manual line"}
           </button>
         </div>
       </div>
@@ -1702,7 +1702,7 @@ function Step2Productos({
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
             <IconRefresh size={18} style={{ color: "#00B286", animation: "spin 1.2s linear infinite" }}/>
             <strong style={{ color: "var(--text-primary)" }}>
-              {lang === "es" ? "Validando contra catÃ¡logo del clienteâ€¦" : "Validating against client catalogâ€¦"}
+              {lang === "es" ? "Validando contra catálogo del clienteâ€¦" : "Validating against client catalogâ€¦"}
             </strong>
           </div>
         ) : (
@@ -1721,12 +1721,12 @@ function Step2Productos({
             </label>
             <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 8, lineHeight: 1.5 }}>
               {lang === "es" ? "Columnas: " : "Columns: "}
-              <code>SKU/Nombre Â· Talla Â· Cantidad</code>
+              <code>SKU/Nombre · Talla · Cantidad</code>
               <br/>
               <span style={{ fontSize: 11 }}>
                 {lang === "es"
-                  ? "La IA reconoce SKU, Nombre o Ref Proveedor. Talla acepta Â«42Â», Â«BRA 40Â», Â«US 9.5Â», Â«UK 9Â», Â«EU 43Â» o alfa (Â«MÂ», Â«UNICAÂ»)."
-                  : "AI accepts SKU, name or supplier ref. Size accepts Â«42Â», Â«BRA 40Â», Â«US 9.5Â», Â«UK 9Â», Â«EU 43Â» or alpha (Â«MÂ», Â«UNICAÂ»)."}
+                  ? "La IA reconoce SKU, Nombre o Ref Proveedor. Talla acepta «42», «BRA 40», «US 9.5», «UK 9», «EU 43» o alfa («M», «UNICA»)."
+                  : "AI accepts SKU, name or supplier ref. Size accepts «42», «BRA 40», «US 9.5», «UK 9», «EU 43» or alpha («M», «UNICA»)."}
               </span>
             </div>
           </div>
@@ -1740,7 +1740,7 @@ function Step2Productos({
         background: "rgba(0,178,134,0.06)",
       }}>
         <div className="caption" style={{ color: "var(--text-primary)", fontWeight: 600 }}>
-          {orderLines.length} {lang === "es" ? "lÃ­neas" : "lines"} Â· <strong className="tabular-nums">{totalUnits}</strong> {lang === "es" ? "unidades" : "units"}
+          {orderLines.length} {lang === "es" ? "líneas" : "lines"} · <strong className="tabular-nums">{totalUnits}</strong> {lang === "es" ? "unidades" : "units"}
           {unassignedCount > 0 && (
             <span style={{ color: "#B45309", marginLeft: 12, fontWeight: 700 }}>
               âš  {unassignedCount} {lang === "es" ? "sin asignar" : "unassigned"}
@@ -1759,7 +1759,7 @@ function Step2Productos({
         <div className="empty" style={{ padding: 36 }}>
           <IconPackage size={22} style={{ color: "var(--text-tertiary)" }}/>
           <div className="caption" style={{ color: "var(--text-tertiary)" }}>
-            {lang === "es" ? "Sin lÃ­neas todavÃ­a. Sube el CSV o agrega manual." : "No lines yet. Upload CSV or add manually."}
+            {lang === "es" ? "Sin líneas todavía. Sube el CSV o agrega manual." : "No lines yet. Upload CSV or add manually."}
           </div>
         </div>
       ) : (
@@ -1776,16 +1776,16 @@ function Step2Productos({
                 </th>
                 {showComision && (
                   <th style={{ width: 110, textAlign: "right" }}>
-                    % {lang === "es" ? "ComisiÃ³n" : "Comm."}
+                    % {lang === "es" ? "Comisión" : "Comm."}
                   </th>
                 )}
-                {/* Sprint 2026-05-03 v3.8 Â· P. unit y Subtotal ocultas a pedido del CEO. */}
+                {/* Sprint 2026-05-03 v3.8 · P. unit y Subtotal ocultas a pedido del CEO. */}
                 <th>{lang === "es" ? "Estado" : "Status"}</th>
                 <th style={{ width: 56, textAlign: "center" }}></th>
               </tr>
             </thead>
             <tbody>
-              {/* Sprint 2026-07-15 Â· agrupar/ordenar por SKU y talla (display). */}
+              {/* Sprint 2026-07-15 · agrupar/ordenar por SKU y talla (display). */}
               {[...orderLines].sort((a, b) => {
                 const sa = String(a.sku || ""), sb = String(b.sku || "");
                 if (sa !== sb) return sa.localeCompare(sb, undefined, { numeric: true });
@@ -1803,8 +1803,8 @@ function Step2Productos({
                       </td>
                     )}
                     <td className="mono-sm">{l.sku}</td>
-                    <td>{l.product_label || "â€”"}</td>
-                    <td>{l.talla || "â€”"}</td>
+                    <td>{l.product_label || "—"}</td>
+                    <td>{l.talla || "—"}</td>
                     <td style={{ textAlign: "right", paddingRight: 24 }}>
                       <input className="input tabular-nums" type="number" min="1"
                              value={l.cantidad}
@@ -1843,7 +1843,7 @@ function Step2Productos({
                                style={{ width: 84, textAlign: "right", display: "inline-block" }}/>
                       </td>
                     )}
-                    {/* Sprint 2026-05-03 v3.8 Â· TDs P. unit y Subtotal eliminados. */}
+                    {/* Sprint 2026-05-03 v3.8 · TDs P. unit y Subtotal eliminados. */}
                     <td>
                       {unassigned ? (
                         l.unassigned_request_sent ? (
@@ -1860,7 +1860,7 @@ function Step2Productos({
                               color: "#B45309", border: "1px solid rgba(180,83,9,0.40)",
                               background: "rgba(180,83,9,0.06)",
                             }}>
-                            <IconMail size={10}/> {lang === "es" ? "Solicitar asignaciÃ³n" : "Request assignment"}
+                            <IconMail size={10}/> {lang === "es" ? "Solicitar asignación" : "Request assignment"}
                           </button>
                         )
                       ) : (
@@ -1872,7 +1872,7 @@ function Step2Productos({
                     <td style={{ textAlign: "center", width: 56 }}>
                       <button className="btn btn-ghost btn-sm"
                               onClick={() => removeLine(l.tmpId)}
-                              title={lang === "es" ? "Eliminar lÃ­nea" : "Remove line"}
+                              title={lang === "es" ? "Eliminar línea" : "Remove line"}
                               style={{
                                 color: "var(--critical)",
                                 padding: "6px 8px",
@@ -1893,13 +1893,13 @@ function Step2Productos({
         <div className="card card-pad-md" style={{ marginTop: 12, background: "#ECFDF5", border: "1px solid #00B286" }}>
           <div className="caption" style={{ color: "var(--text-primary)" }}>
             {lang === "es"
-              ? `${selectedCount} lÃ­nea${selectedCount === 1 ? "" : "s"} seleccionada${selectedCount === 1 ? "" : "s"}: al guardar se separan a un expediente NUEVO con la misma OC. Si "Separar" es menor al total, el resto queda en este expediente (split por cantidad).`
+              ? `${selectedCount} línea${selectedCount === 1 ? "" : "s"} seleccionada${selectedCount === 1 ? "" : "s"}: al guardar se separan a un expediente NUEVO con la misma OC. Si "Separar" es menor al total, el resto queda en este expediente (split por cantidad).`
               : `${selectedCount} line(s) selected: on save, they move to a NEW expediente with the same PO. Unselected stay in this one.`}
           </div>
         </div>
       )}
 
-      {/* Rev 2026-05-21g Â· Card IMPACTO EN CRÃ‰DITO removida del PASO 2
+      {/* Rev 2026-05-21g · Card IMPACTO EN CRÃ‰DITO removida del PASO 2
           (mandato CEO). La banda y los descuentos del motor de precios
           haran la validacion comercial real; ese bloque rojo "EXCEDE
           LIMITE" ya no aplica en este paso. Se conserva el equivalente
@@ -1928,12 +1928,12 @@ function Step2Productos({
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ManualLinePanel + RequestAssignmentDialog viven ahora en
 //   components/expedientes/ManualLineModal.jsx
-// (Sprint 2026-05-06 Â· extraÃ­dos para reuso en ExpedienteDetail.jsx)
+// (Sprint 2026-05-06 · extraídos para reuso en ExpedienteDetail.jsx)
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// STEP 3 Â· RESUMEN (sin financiero)
+// STEP 3 · RESUMEN (sin financiero)
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 /**
  * @typedef {Object} Step3Props
@@ -1952,7 +1952,7 @@ function Step2Productos({
  */
 /** @param {Step3Props} props */
 function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompanyId, orderLines, priceMap = {}, creditProjection, isAdmin = false, paymentDays, setPaymentDays, paymentDaysMwt, setPaymentDaysMwt, paymentDaysCliente, setPaymentDaysCliente, paymentMethod, setPaymentMethod, pricingMatrixRef, tcUsdBrlRef, priceOverrides = {}, setPriceOverrides = () => {}, linePricesRef }) {
-  // Sprint 2026-05-24 Â· sincronizar plazos duales con paymentDays cuando NO hay operador intermedio.
+  // Sprint 2026-05-24 · sincronizar plazos duales con paymentDays cuando NO hay operador intermedio.
   // Cuando hay operador (MWT distinto del cliente), cada selector es independiente.
   const _operatedByMwtSync = operatingMode === 'mwt';
   useEffect(() => {
@@ -1961,7 +1961,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       if (Number(paymentDaysMwt) !== Number(paymentDays)) setPaymentDaysMwt(Number(paymentDays) || 0);
       if (Number(paymentDaysCliente) !== Number(paymentDays)) setPaymentDaysCliente(Number(paymentDays) || 0);
     } else {
-      // Sprint 2026-05-24 (fix v3) Â· con operador intermedio los plazos son
+      // Sprint 2026-05-24 (fix v3) · con operador intermedio los plazos son
       // INDEPENDIENTES. Race condition descubierta: si el usuario clickea
       // un plazo del bloque cliente ANTES de que el sync hook dispare,
       // paymentDays cambia a (por ej.) 8 ANTES de que paymentDaysMwt
@@ -1976,10 +1976,10 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       if (Number(paymentDaysCliente) === 0) setPaymentDaysCliente(Number(paymentDays) || 90);
     }
   }, [paymentDays, _operatedByMwtSync]); // eslint-disable-line react-hooks/exhaustive-deps
-  // â”€â”€ Matriz dinÃ¡mica de plazos por SKU (Sprint 2026-05-22) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â”€â”€ Matriz dinámica de plazos por SKU (Sprint 2026-05-22) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // El backend (`/api/portal/products/sku_pricing_matrix/`) devuelve la
   // fila de plazos del snapshot Marluvas del cliente en la banda vigente
-  // segÃºn el TC USD/BRL del dÃ­a. Si el cliente tiene snapshot, usamos
+  // según el TC USD/BRL del día. Si el cliente tiene snapshot, usamos
   // esos plazos reales (pueden ser solo 90/60/30/8 o un subconjunto).
   // Si no hay snapshot, caemos al EARLY_PAYMENT_TIERS hardcoded.
   const { tc: tcUsdBrl } = useExchangeRateUSDBRL(getToken());
@@ -1987,7 +1987,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   const _bandaActiva = useMemo(() => bandaForTC(tcUsdBrl), [tcUsdBrl]);
   const [pricingMatrix, setPricingMatrix] = useState(null); // {tc, banda_id, results: {sku â†’ matrix}}
 
-  // SKUs Ãºnicos presentes en la OC (key estable para el effect).
+  // SKUs únicos presentes en la OC (key estable para el effect).
   const skusInOrderKey = useMemo(() => {
     const set = new Set();
     orderLines.forEach(l => { if (l && l.sku) set.add(String(l.sku).trim()); });
@@ -2003,8 +2003,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     if (Number.isFinite(tcUsdBrl) && tcUsdBrl > 0) {
       params.set("tc", String(tcUsdBrl));
     }
-    // Sprint 2026-05-22 Â· Si el operador es Muito Work Limitada y el viewer
-    // es admin, pedimos tambiÃ©n la matriz del operador para mostrar SU
+    // Sprint 2026-05-22 · Si el operador es Muito Work Limitada y el viewer
+    // es admin, pedimos también la matriz del operador para mostrar SU
     // perspectiva (costo MWT) en lugar de la del cliente final.
     const opCid = String(operatingCompanyId || "").toLowerCase();
     const cliCid = String(client?.id || "").toLowerCase();
@@ -2024,9 +2024,9 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     return () => { cancelled = true; };
   }, [client?.id, skusInOrderKey, tcUsdBrl, operatingCompanyId]);
 
-  // Sprint 2026-05-22 Â· Mantener sincronizado el ref del padre con la
+  // Sprint 2026-05-22 · Mantener sincronizado el ref del padre con la
   // matriz actual. El handler handleCreate del padre lee este ref para
-  // persistir el unit_price del plazo seleccionado en las lÃ­neas del
+  // persistir el unit_price del plazo seleccionado en las líneas del
   // expediente. Sin esto, el backend resuelve con parse-template y
   // termina guardando el precio legacy (no el del snapshot Marluvas).
   useEffect(() => {
@@ -2035,8 +2035,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     }
   }, [pricingMatrix, pricingMatrixRef]);
 
-  // Sprint 2026-05-22 Â· Sync del TC vivo al ref del padre para que
-  // handleCreate lo envÃ­e al backend en el payload.
+  // Sprint 2026-05-22 · Sync del TC vivo al ref del padre para que
+  // handleCreate lo envíe al backend en el payload.
   useEffect(() => {
     if (tcUsdBrlRef) {
       tcUsdBrlRef.current = (Number.isFinite(tcUsdBrl) && tcUsdBrl > 0)
@@ -2045,12 +2045,12 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     }
   }, [tcUsdBrl, tcUsdBrlRef]);
 
-  // Sprint 2026-05-22 Â· viewer-aware matrix.
+  // Sprint 2026-05-22 · viewer-aware matrix.
   // Cuando el admin/CEO crea una OC operada por MWT, su "perspectiva" en
   // las cards y subtotales debe ser el snapshot del OPERADOR (com=0%,
-  // precios mÃ¡s bajos), no la del cliente final que sÃ­ paga la comisiÃ³n.
+  // precios más bajos), no la del cliente final que sí paga la comisión.
   // El backend devuelve `operator_results` cuando le pasamos
-  // ?operator_client_id=. AquÃ­ escogemos cuÃ¡l matriz alimenta el render.
+  // ?operator_client_id=. Aquí escogemos cuál matriz alimenta el render.
   const useOperatorView = (
     isAdmin
     && operatingMode === 'mwt'
@@ -2063,7 +2063,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     : pricingMatrix?.results;
 
   // dynamicTiers: derivados del snapshot del primer SKU con ok=true.
-  // (Asumimos que todos los SKUs del mismo cliente comparten plazos â€”
+  // (Asumimos que todos los SKUs del mismo cliente comparten plazos —
   // se cumple en el motor de precios actual donde `custom_plazos` es
   // global por (cliente, marca), no por SKU.)
   const dynamicTiers = useMemo(() => {
@@ -2074,10 +2074,10 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     return firstOk.plazos.map(p => ({
       days:     Number(p.dias),
       // EARLY_PAYMENT_TIERS usa pct positivo para descuento (2.75 â†’ -2.75%);
-      // el backend devuelve fracciÃ³n relativa al base (-0.0275). Convertimos:
+      // el backend devuelve fracción relativa al base (-0.0275). Convertimos:
       //   descuento â†’ pct positivo, recargo â†’ pct negativo.
       pct:      -Number(p.pct) * 100,
-      label_es: `${p.dias} dÃ­as`,
+      label_es: `${p.dias} días`,
       label_en: `${p.dias} days`,
       isBase:   Boolean(p.is_base),
       adminOnly: false,
@@ -2085,18 +2085,18 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     }));
   }, [viewerResults]);
 
-  // Tiers efectivos para el render: dinÃ¡micos si hay snapshot, sino el hardcoded.
+  // Tiers efectivos para el render: dinámicos si hay snapshot, sino el hardcoded.
   const effectiveTiers = dynamicTiers && dynamicTiers.length > 0
     ? dynamicTiers
     : getAvailableTiers(isAdmin);
 
   const operatedByMwt = operatingMode === 'mwt';
   const totalUnits = orderLines.reduce((a, l) => a + Number(l.cantidad || 0), 0);
-  // Sprint 2026-05-22 Â· Si hay matriz del snapshot, el precio unitario
-  // de cada lÃ­nea sale de prices_matrix[banda]["90"] (plazo base) en
-  // lugar del priceMap (que viene de parse-template). AsÃ­ la tabla
+  // Sprint 2026-05-22 · Si hay matriz del snapshot, el precio unitario
+  // de cada línea sale de prices_matrix[banda]["90"] (plazo base) en
+  // lugar del priceMap (que viene de parse-template). Así la tabla
   // PRODUCTOS y el VALOR TOTAL DEL PEDIDO quedan sincronizados con la
-  // secciÃ³n PROPUESTA Â· Pronto Pago.
+  // sección PROPUESTA · Pronto Pago.
   const snapshotUnitPrice = (sku) => {
     if (!viewerResults) return null;
     const m = viewerResults[sku];
@@ -2107,7 +2107,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     return Number.isFinite(v) && v > 0 ? v : null;
   };
 
-  // Sprint 2026-07-15 Â· precio editable por SKU (override manual del admin).
+  // Sprint 2026-07-15 · precio editable por SKU (override manual del admin).
   const _ovKey = (sku) => String(sku || "").trim().toUpperCase();
   const _numPos = (v) => (v != null && v !== "" && Number(v) > 0 ? Number(v) : null);
   const _priceFromResults = (resultsObj, sku) => {
@@ -2145,7 +2145,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   const groups = Object.values(bySku).sort((a, b) =>
     String(a.sku || "").localeCompare(String(b.sku || ""), undefined, { numeric: true }));
   const totalValue = groups.reduce((a, g) => a + g.subtotalValue, 0);
-  // Sprint 2026-07-15 Â· totales por perspectiva (override-aware) para mostrar
+  // Sprint 2026-07-15 · totales por perspectiva (override-aware) para mostrar
   // "Valor total del pedido" de MWT y de Cliente por separado.
   let clientTotalValue = 0, mwtTotalValue = 0;
   orderLines.forEach((l) => {
@@ -2154,7 +2154,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     const mp = mwtPriceOf(l.sku);    if (mp != null) mwtTotalValue += mp * q;
   });
 
-  // Sprint 2026-07-15 Â· precios FINALES por SKU = base override Ã— el descuento
+  // Sprint 2026-07-15 · precios FINALES por SKU = base override Ã— el descuento
   // del plazo elegido. MWT usa su plazo (paymentDaysMwt), Cliente el suyo
   // (paymentDaysCliente). En el plazo base el factor es 1 (sin descuento).
   // Se deja en linePricesRef para que handleCreate/edit-full los persista.
@@ -2163,11 +2163,11 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     return t ? (1 - (Number(t.pct) || 0) / 100) : 1;
   };
 
-  // â”€â”€ Sprint 2026-07-20 Â· Bloque PROPUESTA MWT â€” selector Banda/DÃ­as â”€â”€
+  // â”€â”€ Sprint 2026-07-20 · Bloque PROPUESTA MWT — selector Banda/Días â”€â”€
   // El backend (sku_pricing_matrix) ahora expone la matriz COMPLETA del
   // operador: operator_results[sku].bands = {bandaId: {dias: price}} y
-  // bandas[] = catÃ¡logo de las 12 bandas FX. El precio MWT final se toma
-  // EXACTO de (banda, dÃ­as) â€” sin aproximar base Ã— factor.
+  // bandas[] = catálogo de las 12 bandas FX. El precio MWT final se toma
+  // EXACTO de (banda, días) — sin aproximar base Ã— factor.
   const mwtResults    = pricingMatrix && pricingMatrix.operator_results ? pricingMatrix.operator_results : null;
   const clientResults = pricingMatrix && pricingMatrix.results ? pricingMatrix.results : null;
   const bandasList = (pricingMatrix && Array.isArray(pricingMatrix.bandas))
@@ -2178,8 +2178,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   })();
   const [bandaMwtSel, setBandaMwtSel] = useState(null);   // null â†’ banda del TC
   const bandaMwt = bandaMwtSel || tcBandaId;
-  // DÃ­as disponibles en una banda = uniÃ³n de los plazos con precio en el
-  // motor para los SKUs del pedido (si un dÃ­a no estÃ¡ en el motor, no aplica).
+  // Días disponibles en una banda = unión de los plazos con precio en el
+  // motor para los SKUs del pedido (si un día no está en el motor, no aplica).
   const _bandDays = (b) => {
     const set = new Set();
     (orderLines || []).forEach((l) => {
@@ -2200,7 +2200,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     const n = pl ? Number(pl[String(d)]) : NaN;
     return Number.isFinite(n) && n > 0 ? n : null;
   };
-  // Precio base de la banda (90d o el plazo mayor) â€” referencia del % desc.
+  // Precio base de la banda (90d o el plazo mayor) — referencia del % desc.
   const _mwtBandBasePrice = (sku, b) => {
     const bd = mwtResults && mwtResults[sku] && mwtResults[sku].bands;
     const pl = bd && bd[String(b)];
@@ -2212,7 +2212,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     return Number.isFinite(n) && n > 0 ? n : null;
   };
   // Precio MWT final por SKU: override manual (re-escalado) > precio exacto
-  // de (banda, dÃ­as) > fallback base Ã— factor (matriz del TC).
+  // de (banda, días) > fallback base Ã— factor (matriz del TC).
   const mwtPriceFinal = (sku) => {
     const _f = () => _factorForDays(
       operatedByMwt ? (Number(paymentDaysMwt) || Number(paymentDays) || 90)
@@ -2224,7 +2224,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     const snap = mwtPriceOf(sku);
     return snap != null ? Math.round(snap * _f() * 10000) / 10000 : null;
   };
-  // Precio por SKU en una card de plazo (bloque CLIENTE) â€” misma lÃ³gica
+  // Precio por SKU en una card de plazo (bloque CLIENTE) — misma lógica
   // por-SKU que _buildTierTotals (con re-escalado por override).
   const _tierSkuPrice = (matrixSrc, sku, dias, overrideField) => {
     const matrix = matrixSrc && matrixSrc[sku];
@@ -2250,12 +2250,12 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     const mwtFactor = _factorForDays(mwtDays);
     const cliFactor = _factorForDays(cliDays);
     const out = [];
-    // Sprint 2026-07-19 Â· el Precio CLIENTE se emite SIEMPRE para cada SKU
-    // (override manual o default de la matriz â€” lo que el wizard muestra en
+    // Sprint 2026-07-19 · el Precio CLIENTE se emite SIEMPRE para cada SKU
+    // (override manual o default de la matriz — lo que el wizard muestra en
     // la columna Precio Cliente es lo que debe quedar guardado). Antes solo
-    // viajaba cuando el admin lo editaba a mano y las lÃ­neas se quedaban
-    // con el precio estÃ¡tico viejo de especificaciones.client_prices.
-    // Sprint 2026-07-20 Â· el Precio MWT se emite con la MISMA regla (lo que
+    // viajaba cuando el admin lo editaba a mano y las líneas se quedaban
+    // con el precio estático viejo de especificaciones.client_prices.
+    // Sprint 2026-07-20 · el Precio MWT se emite con la MISMA regla (lo que
     // el wizard muestra en la columna Precio MWT Ã— el factor del plazo MWT).
     // Antes solo viajaba con override manual y, tras un split en edit-full,
     // el backend re-derivaba la lista cruda del operador (sin el descuento
@@ -2266,7 +2266,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       if (!sku || seen.has(sku)) return;
       seen.add(sku);
       const cp = clientPriceOf(sku);
-      // Sprint 2026-07-20 Â· MWT exacto de (banda, dÃ­as) del selector â€”
+      // Sprint 2026-07-20 · MWT exacto de (banda, días) del selector —
       // ya no se aproxima base Ã— factor.
       const mp = mwtPriceFinal(sku);
       if (cp == null && mp == null) return;
@@ -2278,13 +2278,13 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     linePricesRef.current = out;
   }, [orderLines, priceOverrides, effectiveTiers, paymentDays, paymentDaysMwt, paymentDaysCliente, operatedByMwt, bandaMwt, mwtDiasEff, mwtResults, linePricesRef]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sprint 2026-05-22 Â· Precios reales del snapshot por plazo.
+  // Sprint 2026-05-22 · Precios reales del snapshot por plazo.
   // tierTotals[dias] = suma sobre TODOS los SKUs de la OC:
   //   precio_del_snapshot_al_plazo[sku] * cantidad_del_sku.
-  // Esto reemplaza el cÃ¡lculo legacy `totalValue * (1 - pct)` que usaba
+  // Esto reemplaza el cálculo legacy `totalValue * (1 - pct)` que usaba
   // el precio del priceMap (que viene de parse-template, no del snapshot
   // Marluvas). Si dynamicTiers es null (sin snapshot), tierTotals queda
-  // null y el render cae al cÃ¡lculo legacy.
+  // null y el render cae al cálculo legacy.
   const tierTotals = useMemo(() => {
     if (!dynamicTiers || !viewerResults) return null;
     const unitsBySku = {};
@@ -2293,7 +2293,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       const sku = String(l.sku).trim();
       unitsBySku[sku] = (unitsBySku[sku] || 0) + Number(l.cantidad || 0);
     });
-    // Sprint 2026-07-15 Â· si el admin overrideÃ³ el precio base del SKU, la
+    // Sprint 2026-07-15 · si el admin overrideó el precio base del SKU, la
     // escalera de pronto pago se re-escala proporcional (override / base).
     const ofield = operatedByMwt ? 'mwt' : 'client';
     const totals = {};
@@ -2318,13 +2318,13 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     return totals;
   }, [dynamicTiers, viewerResults, orderLines, priceOverrides, operatedByMwt]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sprint 2026-05-24 Â· CADA BLOQUE DE PROPUESTA usa SU PROPIA MATRIZ
+  // Sprint 2026-05-24 · CADA BLOQUE DE PROPUESTA usa SU PROPIA MATRIZ
   // (fix: antes los dos bloques mostraban los mismos precios porque ambos
   // leian viewerResults, que es la perspectiva del que ve la pantalla,
   // no necesariamente la del cliente final).
   // - mwtResults    -> precios MWT (operator_results del backend)
   // - clientResults -> precios cliente final (results del backend)
-  // (Sprint 2026-07-20 Â· definidas arriba, junto al selector Banda/DÃ­as.)
+  // (Sprint 2026-07-20 · definidas arriba, junto al selector Banda/Días.)
 
   // Helper: dado una matriz (cualquiera), calcular { dias: total } para cada tier.
   const _buildTierTotals = (matrixSrc, overrideField) => {
@@ -2344,7 +2344,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
         const plazo = matrix.plazos.find(p => Number(p.dias) === Number(tier.days));
         if (!plazo) return;
         let price = Number(plazo.price);
-        // Sprint 2026-07-15 Â· re-escalar por override del precio base del SKU.
+        // Sprint 2026-07-15 · re-escalar por override del precio base del SKU.
         const ov = overrideField ? _numPos((priceOverrides[_ovKey(sku)] || {})[overrideField]) : null;
         if (ov != null) {
           const bp = matrix.plazos.find(p => p.is_base);
@@ -2368,13 +2368,13 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     ? (tierTotals[_baseTierGlobal.days] ?? totalValue)
     : totalValue;
 
-  // Sprint 2026-05-06 Â· valor ajustado por el tier de pronto pago.
+  // Sprint 2026-05-06 · valor ajustado por el tier de pronto pago.
   // El "VALOR DEL PEDIDO" del bloque IMPACTO EN CRÃ‰DITO refleja el
   // total con el descuento aplicado del plazo seleccionado.
-  // Sprint 2026-05-22 Â· buscar en effectiveTiers (dinÃ¡micos del snapshot
+  // Sprint 2026-05-22 · buscar en effectiveTiers (dinámicos del snapshot
   // del cliente cuando existen; fallback hardcoded sino).
-  // Sprint 2026-05-24 Â· cuando hay operador intermedio (MWT compra),
-  // el credito que se afecta es el de MWT â€” por lo tanto VALOR DEL PEDIDO
+  // Sprint 2026-05-24 · cuando hay operador intermedio (MWT compra),
+  // el credito que se afecta es el de MWT — por lo tanto VALOR DEL PEDIDO
   // y DISPONIBLE DESPUES deben reflejar el plazo y precios MWT, NO los
   // del cliente final. Cuando NO hay operador, sigue siendo paymentDays
   // (que esta sincronizado con paymentDaysCliente y paymentDaysMwt).
@@ -2385,7 +2385,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   ) || _baseTierGlobal;
   const tierPct = selectedTier ? selectedTier.pct / 100 : 0;
   // Si hay tierTotals (snapshot), usamos el total real del plazo seleccionado.
-  // Sino, fallback al cÃ¡lculo legacy proporcional.
+  // Sino, fallback al cálculo legacy proporcional.
   const adjustedTotalValue = (_creditTotals && selectedTier)
     ? (_creditTotals[selectedTier.days] ?? effectiveBaseTotal)
     : (totalValue * (1 - tierPct));
@@ -2393,7 +2393,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
   return (
     <div className="card card-pad-lg">
       <h2 className="heading-md" style={{ marginBottom: 14 }}>
-        {lang === "es" ? "Paso 3 Â· Revisar y crear" : "Step 3 Â· Review & create"}
+        {lang === "es" ? "Paso 3 · Revisar y crear" : "Step 3 · Review & create"}
       </h2>
 
       {/* Cliente */}
@@ -2425,14 +2425,14 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
         <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
           {client?.tax_id && <>RUC/CUIT <code className="mono-sm">{client.tax_id}</code></>}
           {client?.parent_label && (
-            <> Â· <span style={{ color: "var(--brand-accent, #00B286)" }}>hija de {client.parent_label}</span></>
+            <> · <span style={{ color: "var(--brand-accent, #00B286)" }}>hija de {client.parent_label}</span></>
           )}
         </div>
       </div>
 
       {/* Productos */}
       <div className="micro" style={{ color: "#00B286", letterSpacing: 1, marginBottom: 8 }}>
-        {lang === "es" ? "PRODUCTOS" : "PRODUCTS"} Â· {orderLines.length} {lang === "es" ? "lÃ­neas" : "lines"} Â· <strong>{totalUnits}</strong> {lang === "es" ? "unidades" : "units"}
+        {lang === "es" ? "PRODUCTOS" : "PRODUCTS"} · {orderLines.length} {lang === "es" ? "líneas" : "lines"} · <strong>{totalUnits}</strong> {lang === "es" ? "unidades" : "units"}
       </div>
       <div className="card card-pad-0">
         <table className="table">
@@ -2457,7 +2457,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
               return (
                 <tr key={g.sku}>
                   <td className="mono-sm">{g.sku}</td>
-                  <td>{g.label || "â€”"}</td>
+                  <td>{g.label || "—"}</td>
                   <td>
                     {g.tallas.map((t, i) => (
                       <span key={i} style={{
@@ -2465,7 +2465,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                         background: "rgba(0,178,134,0.08)", color: "var(--text-primary)",
                         fontSize: 11, fontWeight: 600, marginRight: 4, marginBottom: 4,
                       }}>
-                        {t.talla || "â€”"}: <strong className="tabular-nums">{t.cantidad}</strong>
+                        {t.talla || "—"}: <strong className="tabular-nums">{t.cantidad}</strong>
                       </span>
                     ))}
                   </td>
@@ -2479,8 +2479,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                         onChange={(e) => setOverride(g.sku, "mwt", e.target.value)}
                         style={{ width: 90, textAlign: "right", display: "inline-block" }}
                         title={lang === "es"
-                          ? "Precio MWT por par â€” se aplica a todas las tallas de este SKU"
-                          : "MWT price per pair â€” applies to all sizes of this SKU"} />
+                          ? "Precio MWT por par — se aplica a todas las tallas de este SKU"
+                          : "MWT price per pair — applies to all sizes of this SKU"} />
                     </td>
                   )}
                   {isAdmin && (
@@ -2493,8 +2493,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                         onChange={(e) => setOverride(g.sku, "client", e.target.value)}
                         style={{ width: 90, textAlign: "right", display: "inline-block" }}
                         title={lang === "es"
-                          ? "Precio Cliente por par â€” se aplica a todas las tallas de este SKU"
-                          : "Client price per pair â€” applies to all sizes of this SKU"} />
+                          ? "Precio Cliente por par — se aplica a todas las tallas de este SKU"
+                          : "Client price per pair — applies to all sizes of this SKU"} />
                     </td>
                   )}
                   <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--text-primary)" }}>
@@ -2504,7 +2504,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                     <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--text-primary)" }}>
                       {g.subtotalValue > 0
                         ? `$${g.subtotalValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                        : <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>â€”</span>}
+                        : <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>—</span>}
                     </td>
                   )}
                 </tr>
@@ -2514,9 +2514,9 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
         </table>
       </div>
 
-      {/* Sprint 2026-05-03 v3.9 Â· Total separado en barra propia.
-          Antes vivÃ­a como <tfoot>, pero al tener colSpan + columnas con
-          chips de talla se veÃ­a descolgado del eje vertical de la columna
+      {/* Sprint 2026-05-03 v3.9 · Total separado en barra propia.
+          Antes vivía como <tfoot>, pero al tener colSpan + columnas con
+          chips de talla se veía descolgado del eje vertical de la columna
           'Valor'. Lo sacamos a un bloque hermano con grid 2-col que se
           alinea limpio al borde derecho del card. */}
       {isAdmin && totalValue > 0 && (
@@ -2560,7 +2560,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
         </div>
       )}
 
-      {/* Sprint 2026-05-06 Â· TÃ‰RMINOS DE PAGO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* Sprint 2026-05-06 · TÃ‰RMINOS DE PAGO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       {client && (
         <div style={{
           marginTop: 14,
@@ -2576,14 +2576,14 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
           </div>
 
           {/* â”€â”€ Fila superior: Plazo de pago del expediente + Forma de pago â”€â”€ */}
-          {/* Sprint 2026-05-10 Â· FIX: este campo debe reflejar el plazo
+          {/* Sprint 2026-05-10 · FIX: este campo debe reflejar el plazo
               SELECCIONADO en las cards de pronto pago (paymentDays), NO
               el dias_credito default del cliente. El cliente trae un
               dias_credito por defecto que se usa solo como sugerencia
-              inicial al elegir cliente â€” una vez que el ADMIN clickea
+              inicial al elegir cliente — una vez que el ADMIN clickea
               otra card de pronto pago, este campo debe seguir esa
-              selecciÃ³n. Etiqueta cambiada de 'DÃ­as crÃ©dito (cliente)'
-              a 'Plazo de pago' para reflejar la semÃ¡ntica del campo
+              selección. Etiqueta cambiada de 'Días crédito (cliente)'
+              a 'Plazo de pago' para reflejar la semántica del campo
               (es el plazo de ESTE expediente, no el del cliente). */}
           <div style={{
             display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14,
@@ -2595,7 +2595,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
               }}>
                 {lang === "es" ? "Plazo de pago" : "Payment terms"}
               </div>
-              {/* Sprint 2026-05-24 (fix v4) Â· cuando hay operador intermedio
+              {/* Sprint 2026-05-24 (fix v4) · cuando hay operador intermedio
                   mostrar AMBOS plazos separados (cliente y MWT) para que el
                   ADMIN vea claramente que son independientes. Cuando no hay
                   operador, mostrar solo el plazo unico. */}
@@ -2609,7 +2609,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                     }}>
                       {lang === "es" ? "Cliente:" : "Client:"}
                     </span>{" "}
-                    {Number(paymentDaysCliente || paymentDays || 0)} {lang === "es" ? "dÃ­as" : "days"}
+                    {Number(paymentDaysCliente || paymentDays || 0)} {lang === "es" ? "días" : "days"}
                   </div>
                   <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
                     <span style={{
@@ -2619,9 +2619,9 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                     }}>
                       {lang === "es" ? "MWT:" : "MWT:"}
                     </span>{" "}
-                    {Number(paymentDaysMwt || 90)} {lang === "es" ? "dÃ­as" : "days"}
+                    {Number(paymentDaysMwt || 90)} {lang === "es" ? "días" : "days"}
                     <span style={{ marginLeft: 6, fontSize: 10, color: "var(--brand-accent, #75CBB3)", fontWeight: 600 }}>
-                      Â· {lang === "es" ? "independiente" : "independent"}
+                      · {lang === "es" ? "independiente" : "independent"}
                     </span>
                   </div>
                 </div>
@@ -2629,14 +2629,14 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 <div className="tabular-nums" style={{
                   fontSize: 16, fontWeight: 700, color: "var(--text-primary)", padding: "8px 0",
                 }}>
-                  {Number(paymentDays || 0)} {lang === "es" ? "dÃ­as" : "days"}
+                  {Number(paymentDays || 0)} {lang === "es" ? "días" : "days"}
                   {Number(client?.dias_credito || 0) > 0
                    && Number(paymentDays || 0) !== Number(client.dias_credito || 0) && (
                     <span style={{
                       marginLeft: 8, fontSize: 11, fontWeight: 500,
                       color: "var(--text-tertiary)",
                     }}>
-                      Â· {lang === "es"
+                      · {lang === "es"
                           ? `cliente: ${Number(client.dias_credito)}d default`
                           : `client: ${Number(client.dias_credito)}d default`}
                     </span>
@@ -2652,16 +2652,16 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 {lang === "es" ? "Forma de pago" : "Payment method"}
                 <span style={{ color: "var(--critical)", marginLeft: 4 }}>*</span>
               </div>
-              {/* Sprint Commit 9 Â· obligatorio. Mientras no se elija, el
+              {/* Sprint Commit 9 · obligatorio. Mientras no se elija, el
                   wizard mantiene canAdvance=false en el paso 3 (Resumen)
-                  y el botÃ³n "Crear" queda deshabilitado. Cerramos el loop
-                  EXPEDIENTE_TERMS_UNDEFINED en liberaciÃ³n de crÃ©dito. */}
+                  y el botón "Crear" queda deshabilitado. Cerramos el loop
+                  EXPEDIENTE_TERMS_UNDEFINED en liberación de crédito. */}
               <select
                 className="input"
                 value={paymentMethod}
                 onChange={(e) => {
-                  // Sprint 2026-05-06 Â· CONTADO y plazo son dimensiones
-                  // ortogonales. Un pedido puede ser CONTADO a 30 dÃ­as
+                  // Sprint 2026-05-06 · CONTADO y plazo son dimensiones
+                  // ortogonales. Un pedido puede ser CONTADO a 30 días
                   // con descuento. Solo cambiamos paymentMethod; el plazo
                   // sigue siendo el que el usuario elija en las cards.
                   setPaymentMethod(e.target.value);
@@ -2673,9 +2673,9 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 required
               >
                 <option value="" disabled>
-                  {lang === "es" ? "â€” Selecciona â€”" : "â€” Select â€”"}
+                  {lang === "es" ? "— Selecciona —" : "— Select —"}
                 </option>
-                <option value="CREDITO">{lang === "es" ? "CrÃ©dito" : "Credit"}</option>
+                <option value="CREDITO">{lang === "es" ? "Crédito" : "Credit"}</option>
                 <option value="CONTADO">{lang === "es" ? "Contado" : "Cash"}</option>
               </select>
               {!paymentMethod && (
@@ -2684,8 +2684,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                   color: "var(--critical)",
                 }}>
                   {lang === "es"
-                    ? "Requerido â€” sin forma de pago no se podrÃ¡ liberar crÃ©dito."
-                    : "Required â€” without payment method credit cannot be released."}
+                    ? "Requerido — sin forma de pago no se podrá liberar crédito."
+                    : "Required — without payment method credit cannot be released."}
                 </div>
               )}
             </div>
@@ -2699,20 +2699,20 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
               color: "#00875A", fontSize: 12, fontWeight: 600,
             }}>
               {lang === "es"
-                  ? "Pago al contado Â· sin impacto en crÃ©dito"
-                  : "Cash payment Â· no credit impact"}
+                  ? "Pago al contado · sin impacto en crédito"
+                  : "Cash payment · no credit impact"}
             </div>
           )}
         </div>
       )}
 
-      {/* â”€â”€ PROPUESTA â€” DESCUENTO POR PRONTO PAGO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-      {/* Sprint 2026-05-06 Â· cards horizontales con descuento por plazo.
-          90 dÃ­as = base (plazo actual de la PO). Plazos cortos = descuento %.
-          120 dÃ­as = recargo (solo admin). El usuario hace click en una card
-          y se actualiza paymentDays. Visible solo cuando hay lÃ­neas con
+      {/* â”€â”€ PROPUESTA — DESCUENTO POR PRONTO PAGO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* Sprint 2026-05-06 · cards horizontales con descuento por plazo.
+          90 días = base (plazo actual de la PO). Plazos cortos = descuento %.
+          120 días = recargo (solo admin). El usuario hace click en una card
+          y se actualiza paymentDays. Visible solo cuando hay líneas con
           totalValue > 0 (necesario para calcular ahorro). */}
-      {/* Sprint 2026-05-24 Â· Bloque PROPUESTA MWT (solo ADMIN cuando hay operador intermedio).
+      {/* Sprint 2026-05-24 · Bloque PROPUESTA MWT (solo ADMIN cuando hay operador intermedio).
           Se renderiza ANTES del bloque cliente. Estado independiente: paymentDaysMwt. */}
       {client && totalValue > 0 && operatedByMwt && isAdmin && (
         <div style={{ marginTop: 14 }}>
@@ -2721,14 +2721,14 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
             marginBottom: 10, padding: "0 4px",
           }}>
             {lang === "es"
-              ? "PROPUESTA â€” MUITO WORK LIMITADA (operador)"
-              : "PROPOSAL â€” MUITO WORK LIMITADA (operator)"}
+              ? "PROPUESTA — MUITO WORK LIMITADA (operador)"
+              : "PROPOSAL — MUITO WORK LIMITADA (operator)"}
           </div>
-          {/* Sprint 2026-07-20 Â· Selector DÃ­as de plazo + Banda (12 bandas
+          {/* Sprint 2026-07-20 · Selector Días de plazo + Banda (12 bandas
               FX del motor de precios) y tabla por SKU con precio exacto de
-              (banda, dÃ­as) y % descuento vs la base de la banda. Los dÃ­as
-              vienen del motor: si un dÃ­a no tiene precio en la banda para
-              ese SKU, la celda muestra "â€”" (no aplica). */}
+              (banda, días) y % descuento vs la base de la banda. Los días
+              vienen del motor: si un día no tiene precio en la banda para
+              ese SKU, la celda muestra "—" (no aplica). */}
           <div style={{
             border: "1px solid var(--border)", borderRadius: 12,
             background: "var(--surface-raised)", padding: "14px 16px",
@@ -2742,7 +2742,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                   color: "var(--text-tertiary)", textTransform: "uppercase",
                   marginBottom: 4,
                 }}>
-                  {lang === "es" ? "DÃ­as de plazo" : "Payment days"}
+                  {lang === "es" ? "Días de plazo" : "Payment days"}
                 </div>
                 <select
                   className="input"
@@ -2752,7 +2752,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                   disabled={!daysMwtBand.length}
                 >
                   {daysMwtBand.map((d) => (
-                    <option key={d} value={d}>{d} {lang === "es" ? "dÃ­as" : "days"}</option>
+                    <option key={d} value={d}>{d} {lang === "es" ? "días" : "days"}</option>
                   ))}
                 </select>
               </label>
@@ -2781,7 +2781,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 >
                   {(bandasList.length ? bandasList : [{ id: tcBandaId, rango: "" }]).map((b) => (
                     <option key={b.id} value={b.id}>
-                      {lang === "es" ? `Banda ${b.id}${b.rango ? ` Â· ${b.rango}` : ""}` : `Band ${b.id}${b.rango ? ` Â· ${b.rango}` : ""}`}
+                      {lang === "es" ? `Banda ${b.id}${b.rango ? ` · ${b.rango}` : ""}` : `Band ${b.id}${b.rango ? ` · ${b.rango}` : ""}`}
                     </option>
                   ))}
                 </select>
@@ -2795,8 +2795,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 const price = _mwtBandPrice(g.sku, bandaMwt, mwtDiasEff);
                 const base  = _mwtBandBasePrice(g.sku, bandaMwt);
                 const pct   = (price != null && base) ? (price - base) / base : null;
-                // Sprint 2026-07-20 (fix) Â· groups NO trae `qty` â€” las
-                // cantidades viven en tallas[].cantidad (bug: CANT salÃ­a 0).
+                // Sprint 2026-07-20 (fix) · groups NO trae `qty` — las
+                // cantidades viven en tallas[].cantidad (bug: CANT salía 0).
                 const qty   = (g.tallas || []).reduce(
                   (a, t) => a + Number(t.cantidad || 0), 0);
                 totQty += qty;
@@ -2804,10 +2804,10 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 return (
                   <tr key={g.sku} style={{ borderTop: "1px solid var(--border)" }}>
                     <td style={{ padding: "7px 8px", fontFamily: "var(--font-mono, monospace)", fontWeight: 800, fontSize: 12 }}>{g.sku}</td>
-                    <td style={{ padding: "7px 8px", fontSize: 12, color: "var(--text-secondary)" }}>{g.label || "â€”"}</td>
+                    <td style={{ padding: "7px 8px", fontSize: 12, color: "var(--text-secondary)" }}>{g.label || "—"}</td>
                     <td className="tabular-nums" style={{ padding: "7px 8px", textAlign: "right", fontSize: 12 }}>{qty.toLocaleString("en-US")}</td>
                     <td className="tabular-nums" style={{ padding: "7px 8px", textAlign: "right", fontWeight: 800, fontSize: 12.5 }}>
-                      {price != null ? fmt(price) : "â€”"}
+                      {price != null ? fmt(price) : "—"}
                     </td>
                     <td className="tabular-nums" style={{
                       padding: "7px 8px", textAlign: "right", fontSize: 12, fontWeight: 700,
@@ -2815,10 +2815,10 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                     }}>
                       {pct != null
                         ? `${pct < 0 ? "âˆ’" : "+"}${(Math.abs(pct) * 100).toFixed(2)}%`
-                        : "â€”"}
+                        : "—"}
                     </td>
                     <td className="tabular-nums" style={{ padding: "7px 8px", textAlign: "right", fontSize: 12 }}>
-                      {price != null ? fmt(price * qty) : "â€”"}
+                      {price != null ? fmt(price * qty) : "—"}
                     </td>
                   </tr>
                 );
@@ -2843,7 +2843,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                       <td />
                       <td />
                       <td className="tabular-nums" style={{ padding: "8px", textAlign: "right", fontWeight: 800, fontSize: 13.5, color: "var(--navy, #013A57)" }}>
-                        {anyPrice ? fmt(totSub) : "â€”"}
+                        {anyPrice ? fmt(totSub) : "—"}
                       </td>
                     </tr>
                   </tfoot>
@@ -2852,7 +2852,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
             })()}
             <div className="caption" style={{ marginTop: 8, fontSize: 11, color: "var(--text-tertiary)" }}>
               {lang === "es"
-                ? "El precio por par es el exacto del motor de precios para la banda y el plazo elegidos; se congela como unit_price_mwt de cada lÃ­nea al guardar."
+                ? "El precio por par es el exacto del motor de precios para la banda y el plazo elegidos; se congela como unit_price_mwt de cada línea al guardar."
                 : "The per-pair price is the exact pricing-engine value for the chosen band and term; it is frozen as each line's unit_price_mwt on save."}
             </div>
           </div>
@@ -2869,29 +2869,29 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
           }}>
             {operatedByMwt && isAdmin
               ? (lang === "es"
-                  ? `PROPUESTA â€” CLIENTE: ${client.razon_social || ''}`
-                  : `PROPOSAL â€” CLIENT: ${client.razon_social || ''}`)
+                  ? `PROPUESTA — CLIENTE: ${client.razon_social || ''}`
+                  : `PROPOSAL — CLIENT: ${client.razon_social || ''}`)
               : (lang === "es"
-                  ? "PROPUESTA â€” DESCUENTO POR PRONTO PAGO"
-                  : "PROPOSAL â€” EARLY-PAYMENT DISCOUNT")}
+                  ? "PROPUESTA — DESCUENTO POR PRONTO PAGO"
+                  : "PROPOSAL — EARLY-PAYMENT DISCOUNT")}
           </div>
 
           <div style={{
             display: "grid",
             gridTemplateColumns: `repeat(${effectiveTiers.length}, minmax(0, 1fr))`,
             gap: 10,
-            // Sprint 2026-07-20 Â· alto por contenido (las cards con mÃ¡s
-            // SKUs crecen sin estirar a las demÃ¡s).
+            // Sprint 2026-07-20 · alto por contenido (las cards con más
+            // SKUs crecen sin estirar a las demás).
             alignItems: "start",
           }}>
             {effectiveTiers.map((tier) => {
-              // Sprint 2026-05-24 (fix v3) Â· usar paymentDaysCliente para
+              // Sprint 2026-05-24 (fix v3) · usar paymentDaysCliente para
               // isSelected en el bloque cliente (antes usaba paymentDays legacy
               // que podia estar desincronizado).
               const isSelected   = Number(paymentDaysCliente || paymentDays) === tier.days;
               const tierDiscount = tier.pct / 100;
               const baseTier     = effectiveTiers.find(t => t.isBase) || effectiveTiers[0];
-              // Sprint 2026-05-24 Â· este bloque (CLIENTE) usa tierTotalsCliente.
+              // Sprint 2026-05-24 · este bloque (CLIENTE) usa tierTotalsCliente.
               // Si NO hay operador intermedio, tierTotalsCliente == tierTotals (mismo cliente).
               const _tt          = tierTotalsCliente || tierTotals;
               const tierTotal    = _tt && _tt[tier.days] != null
@@ -2943,8 +2943,8 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                           ? `âˆ’${tier.pct.toFixed(2)}%`
                           : `+${Math.abs(tier.pct).toFixed(2)}%`)}
                   </div>
-                  {/* Sprint 2026-07-20 Â· precio por par POR SKU (con su
-                      descripciÃ³n) â€” el promedio "por par" Ãºnico no decÃ­a
+                  {/* Sprint 2026-07-20 · precio por par POR SKU (con su
+                      descripción) — el promedio "por par" único no decía
                       nada cuando los SKUs tienen precios distintos. */}
                   <div style={{
                     display: "flex", flexDirection: "column", gap: 3,
@@ -2966,7 +2966,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                           <span className="tabular-nums" style={{
                             fontSize: 11.5, fontWeight: 700, flexShrink: 0,
                             color: "var(--text-primary)",
-                          }}>{unit != null ? fmt(unit) : "â€”"}</span>
+                          }}>{unit != null ? fmt(unit) : "—"}</span>
                         </div>
                       );
                     })}
@@ -3005,7 +3005,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
           }}>
             <strong>{lang === "es" ? "Pronto pago:" : "Early payment:"}</strong>{" "}
             {lang === "es"
-              ? "el descuento se aplica sobre el total facturado al confirmar el plazo de pago elegido. Plazo se cuenta desde la fecha de factura en destino. Sujeto a aprobaciÃ³n de crÃ©dito y disponibilidad de stock."
+              ? "el descuento se aplica sobre el total facturado al confirmar el plazo de pago elegido. Plazo se cuenta desde la fecha de factura en destino. Sujeto a aprobación de crédito y disponibilidad de stock."
               : "discount applies to the total invoiced upon confirming the chosen payment term. Term counted from the destination invoice date. Subject to credit approval and stock availability."}
           </div>
         </div>
@@ -3019,7 +3019,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
         </div>
       )}
 
-      {/* Aviso de quÃ© falta */}
+      {/* Aviso de qué falta */}
       <div style={{
         marginTop: 18, padding: "12px 14px", borderRadius: 8,
         background: "rgba(48,131,254,0.06)", border: "1px solid rgba(48,131,254,0.20)",
@@ -3027,7 +3027,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       }}>
         <IconLock size={11} style={{ verticalAlign: -1, marginRight: 6, color: "#3083FE" }}/>
         {lang === "es"
-          ? "Este expediente nacerÃ¡ en estado REGISTRO. Marca, moneda y modo de operaciÃ³n se completarÃ¡n despuÃ©s en el detalle (operativa/comercial)."
+          ? "Este expediente nacerá en estado REGISTRO. Marca, moneda y modo de operación se completarán después en el detalle (operativa/comercial)."
           : "This file will start in REGISTRO. Brand, currency and operation mode are filled later in the detail view."}
       </div>
     </div>
@@ -3038,25 +3038,25 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
 // HELPERS
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-// Sprint 2026-05-06 Â· matriz de descuento por pronto pago (waterfall).
-// Valores canÃ³nicos del catÃ¡logo COMEX 2025 v6 (commercial.early_payment_tier
-// es la fuente de verdad oficial; aquÃ­ los hardcodeamos como fallback
+// Sprint 2026-05-06 · matriz de descuento por pronto pago (waterfall).
+// Valores canónicos del catálogo COMEX 2025 v6 (commercial.early_payment_tier
+// es la fuente de verdad oficial; aquí los hardcodeamos como fallback
 // estable mientras el endpoint /api/commercial/early-payment-tiers/ no
 // se enchufa al wizard. Cuando se haga el fetch real, este array se
 // reemplaza por el response del backend).
 //
-// 90 dÃ­as = base (0% descuento, plazo "estÃ¡ndar" de la PO).
-// 120 dÃ­as = recargo financiero â€” solo ADMIN puede ofrecerlo.
+// 90 días = base (0% descuento, plazo "estándar" de la PO).
+// 120 días = recargo financiero — solo ADMIN puede ofrecerlo.
 const EARLY_PAYMENT_TIERS = [
-  { days: 8,   pct: 2.75, label_es: "8 dÃ­as",   label_en: "8 days",   isBase: false, adminOnly: false },
-  { days: 30,  pct: 1.75, label_es: "30 dÃ­as",  label_en: "30 days",  isBase: false, adminOnly: false },
-  { days: 60,  pct: 1.00, label_es: "60 dÃ­as",  label_en: "60 days",  isBase: false, adminOnly: false },
-  { days: 90,  pct: 0.00, label_es: "90 dÃ­as",  label_en: "90 days",  isBase: true,  adminOnly: false },
-  { days: 120, pct: -1.00, label_es: "120 dÃ­as", label_en: "120 days", isBase: false, adminOnly: true  },
+  { days: 8,   pct: 2.75, label_es: "8 días",   label_en: "8 days",   isBase: false, adminOnly: false },
+  { days: 30,  pct: 1.75, label_es: "30 días",  label_en: "30 days",  isBase: false, adminOnly: false },
+  { days: 60,  pct: 1.00, label_es: "60 días",  label_en: "60 days",  isBase: false, adminOnly: false },
+  { days: 90,  pct: 0.00, label_es: "90 días",  label_en: "90 days",  isBase: true,  adminOnly: false },
+  { days: 120, pct: -1.00, label_es: "120 días", label_en: "120 days", isBase: false, adminOnly: true  },
 ];
 
-// Devuelve los tiers visibles segÃºn el rol y la moneda del pedido.
-// El parÃ¡metro `commissionPct` es informativo (cliente VIP con comisiÃ³n >0
+// Devuelve los tiers visibles según el rol y la moneda del pedido.
+// El parámetro `commissionPct` es informativo (cliente VIP con comisión >0
 // se considera "premium" y obtiene el tier 120; default sigue las flags).
 function getAvailableTiers(isAdmin) {
   return EARLY_PAYMENT_TIERS.filter(t => isAdmin || !t.adminOnly);
@@ -3076,11 +3076,11 @@ function Field({ label, children }) {
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// CREDIT PROJECTION CARD â€” visualizacion del impacto del pedido en
+// CREDIT PROJECTION CARD — visualizacion del impacto del pedido en
 // el credito disponible del cliente. Sprint 2026-05-01.
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
-  // Sprint 2026-05-06 Â· si llega adjustedOrderValue (tier de pronto pago),
+  // Sprint 2026-05-06 · si llega adjustedOrderValue (tier de pronto pago),
   // recalculamos los derivados sobre la base ajustada para que el bloque
   // refleje el efecto del descuento elegido en el wizard.
   if (typeof adjustedOrderValue === "number" && !isNaN(adjustedOrderValue)) {
@@ -3127,13 +3127,13 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
             background: "var(--critical)", color: "#fff",
             fontSize: 10, fontWeight: 800, letterSpacing: 0.6,
           }}>
-            {lang === "es" ? "EXCEDE LÃMITE" : "EXCEEDS LIMIT"}
+            {lang === "es" ? "EXCEDE LÍMITE" : "EXCEEDS LIMIT"}
           </span>
         )}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 14 }}>
-        <Stat label={lang === "es" ? "LÃ­mite total" : "Total limit"} value={fmt(cp.limit)}/>
+        <Stat label={lang === "es" ? "Límite total" : "Total limit"} value={fmt(cp.limit)}/>
         <Stat label={lang === "es" ? "Uso actual" : "Current used"} value={fmt(cp.used)}/>
         <Stat
           label={lang === "es" ? "Valor del pedido" : "Order value"}
@@ -3145,7 +3145,7 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
           accent="#00B286"
         />
         <Stat
-          label={lang === "es" ? "Disponible despuÃ©s" : "After order"}
+          label={lang === "es" ? "Disponible después" : "After order"}
           value={fmt(cp.afterAvailable)}
           accent={cp.afterAvailable < 0 ? "var(--critical)" : c.text}
         />
@@ -3155,7 +3155,7 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
         <div style={{ display: "flex", justifyContent: "space-between",
                        fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>
           <span>
-            {lang === "es" ? "UtilizaciÃ³n proyectada" : "Projected utilization"}
+            {lang === "es" ? "Utilización proyectada" : "Projected utilization"}
           </span>
           <span className="tabular-nums" style={{ fontWeight: 700, color: c.text }}>
             {cp.utilPctAfter}% {cp.exceedsLimit && "(>100%)"}
@@ -3180,7 +3180,7 @@ function CreditProjectionCard({ cp, lang, adjustedOrderValue }) {
       {cp.exceedsLimit && (
         <div style={{ marginTop: 10, fontSize: 12, color: "#991B1B", fontWeight: 600 }}>
           âš  {lang === "es"
-              ? "Este pedido excede el lÃ­mite de crÃ©dito del cliente. Revisa con CEO antes de continuar."
+              ? "Este pedido excede el límite de crédito del cliente. Revisa con CEO antes de continuar."
               : "This order exceeds the client credit limit. Review with CEO before continuing."}
         </div>
       )}
@@ -3228,6 +3228,6 @@ function Toast({ kind = "ok", msg, onClose }) {
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// EOF Â· CreateExpedienteWizardLite
+// EOF · CreateExpedienteWizardLite
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

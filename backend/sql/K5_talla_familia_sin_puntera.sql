@@ -1,6 +1,6 @@
 ﻿-- =====================================================================
--- K5 Â· Familia de tallas "No tiene" (sin puntera) para EVA y PALMILHA
--- Crea la familia (familia_id fijo) copiando las tallas Composite 33â€“47
+-- K5 · Familia de tallas "No tiene" (sin puntera) para EVA y PALMILHA
+-- Crea la familia (familia_id fijo) copiando las tallas Composite 33–47
 -- y asigna esas tallas a 700412 (EVA) y 801048 (PALMILHA).
 -- Idempotente.
 -- =====================================================================

@@ -1,6 +1,6 @@
 ﻿"""
-apps.finanzas Â· views (read-only API CEO-only)
-Sprint 2026-05-24 Â· Decision CEO (Alejandro)
+apps.finanzas · views (read-only API CEO-only)
+Sprint 2026-05-24 · Decision CEO (Alejandro)
 Agente responsable: [AG-BACKEND]
 
 Endpoints:
@@ -9,7 +9,7 @@ Endpoints:
   GET /api/finanzas/comisiones/<expediente_id>/ -> breakdown linea por linea
   GET /api/finanzas/cliente/<client_id>/       -> perfil financiero cliente
 
-Calculo "al vuelo" (sin MV) â€” para MVP. Cuando crezca el volumen, mover a
+Calculo "al vuelo" (sin MV) — para MVP. Cuando crezca el volumen, mover a
 mv_linea_finanzas refrescada por Celery. Deuda diferida documentada en
 docs/finanzas/SPEC_FINANZAS_MODULE_v1.md.
 
@@ -58,8 +58,8 @@ def _dec(v) -> Decimal:
 def _resolve_display_id(codigo: str | None, proforma_codigo: str | None) -> str:
     """number_proforma > codigo. Estandariza prefijo PF en todos los identificadores."""
     raw = (proforma_codigo or codigo or "").strip()
-    if not raw or raw == "â€”":
-        return "â€”"
+    if not raw or raw == "—":
+        return "—"
     if not raw.upper().startswith("PF"):
         return f"PF {raw}"
     return raw
@@ -92,7 +92,7 @@ def _resolve_devengo_estado(
     cd_cli = int(credit_days_cliente or 90)
     cd_mwt = int(credit_days_mwt or 90)
 
-    # JerarquÃ­a de fecha base (real > eta > estimada con dÃ­as crÃ©dito cliente)
+    # Jerarquía de fecha base (real > eta > estimada con días crédito cliente)
     base = shipment_date or eta
     if base is None and created_at_date is not None:
         base = created_at_date + timedelta(days=cd_cli)
@@ -336,7 +336,7 @@ def _build_item(row: dict, today: date) -> dict:
         "codigo":                row["codigo"],
         "proforma_codigo":       row["proforma_codigo"],
         "client_id":             row["client_id"],
-        "cliente_razon_social":  row["cliente_razon_social"] or "â€”",
+        "cliente_razon_social":  row["cliente_razon_social"] or "—",
         "cliente_segmento":      row["cliente_segmento"] or None,
         "operador_razon_social": row.get("operador_razon_social") or None,
         "dias_credito_cliente":  cd_cli,
@@ -542,7 +542,7 @@ def margin_scatter(request):
 
     Response: {
         "points": [
-            {"id": "<expediente_id>", "label": "EXP-2026-0001 Â· Sondel",
+            {"id": "<expediente_id>", "label": "EXP-2026-0001 · Sondel",
              "projected": 0.21, "real": 0.21, "value": 2591.45},
             ...
         ],
@@ -565,11 +565,11 @@ def margin_scatter(request):
         m = float(mp)
         # MVP: projected == real. Cuando haya drift de margen, separar.
         delta = float(_dec(it.get("delta_total")))
-        cliente = it.get("cliente_razon_social") or "â€”"
-        display = it.get("display_id") or it.get("codigo") or "â€”"
+        cliente = it.get("cliente_razon_social") or "—"
+        display = it.get("display_id") or it.get("codigo") or "—"
         points.append({
             "id":        it["expediente_id"],
-            "label":     f"{display} Â· {cliente}",
+            "label":     f"{display} · {cliente}",
             "projected": m,
             "real":      m,
             "value":     delta,
@@ -580,7 +580,7 @@ def margin_scatter(request):
 @api_view(["GET"])
 @permission_classes([IsCeoOrAdmin])
 def cliente_profile(request, client_id):
-    """Perfil financiero de un cliente â€” comision agregada + sus expedientes."""
+    """Perfil financiero de un cliente — comision agregada + sus expedientes."""
     today = date.today()
     rows = _fetch_expedientes()
     mine = [r for r in rows if str(r["client_id"]) == str(client_id)]
@@ -597,7 +597,7 @@ def cliente_profile(request, client_id):
         tot_client += _dec(it["total_client"])
         tot_mwt += _dec(it["total_mwt"])
 
-    # Datos basicos del cliente (separately â€” perfil no duplica /api/clientes/)
+    # Datos basicos del cliente (separately — perfil no duplica /api/clientes/)
     cliente_summary = None
     if items:
         cliente_summary = {
