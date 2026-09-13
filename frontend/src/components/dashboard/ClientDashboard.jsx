@@ -34,6 +34,8 @@ import {
 } from "./client/widgetRegistry.jsx";
 import CustomWidgetBuilder from "./client/CustomWidgetBuilder.jsx";
 import { DashboardCard } from "./DashboardPrimitives.jsx";
+// Etapa 5 · portada de embarques del cliente (cantidades, fechas, salidas, docs).
+import EmbarquesPortada from "../portal/EmbarquesPortada.jsx";
 
 // Grid de 12 columnas: tamaño del widget → columnas que ocupa.
 const SPAN = { sm: 4, md: 6, lg: 8, full: 12 };
@@ -139,6 +141,8 @@ export default function ClientDashboard({ lang = "es" }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 24 }}>
+      <EmbarquesPortada lang={lang} clientId={(user?.legal_entity_ids || [])[0] || null} />
+
       {/* Toolbar de personalización (modo normal / modo editar) */}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
         {customizing ? (

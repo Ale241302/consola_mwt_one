@@ -827,6 +827,187 @@ class PortalViewSet(viewsets.ViewSet):
         return Response(rows)
 
     # ── /api/portal/expediente_detail/?id=<uuid> ──────────────
+    # ── /api/portal/mis_embarques/ + /api/portal/embarque/ (Etapa 5) ──
+    #   Portada/detalle de EMBARQUES por OC/expediente: cantidades del funnel
+    #   (pedido → producción → listas → embarcadas → entregadas), fechas
+    #   publicadas (estimada/confirmada + cuándo se actualizó), salidas con
+    #   destino y AWB/BL, y documentos vigentes. Sin datos internos.
+    _FECHA_ORDEN = ("PRODUCCION", "ETD", "ETA", "BL_AWB", "DUE", "DOCUMENTO")
+
+    @action(detail=False, methods=["get"], url_path="mis_embarques")
+    def mis_embarques(self, request):
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return _empty_scope()
+        limit, offset = _page_limits(request)
+        ph = ",".join(["%s"] * len(cids))
+        rows = _fetchall(f"""
+            SELECT
+              e.id, e.codigo, e.estado, e.origin, e.destination,
+              e.freight_mode, e.eta, e.last_event_at,
+              o.codigo AS oc_codigo, o.display_label AS oc_display, o.proforma AS oc_proforma,
+              COALESCE(c.nombre_comercial, c.razon_social) AS client_name,
+              m.nombre AS brand_name,
+              COALESCE((SELECT SUM(l.qty) FROM expedientes.linea l
+                         WHERE l.expediente_id = e.id AND l.is_active = TRUE), 0) AS qty_pedido,
+              COALESCE((SELECT SUM(a.qty_asignada) FROM inventario.expediente_nodo_assignment a
+                         WHERE a.expediente_id = e.id AND a.is_active = TRUE), 0) AS qty_asignado,
+              COALESCE((SELECT SUM(a.qty_asignada) FROM inventario.expediente_nodo_assignment a
+                         JOIN transfers.transferencia t2 ON t2.id = a.transferencia_id
+                         WHERE a.expediente_id = e.id AND a.is_active = TRUE
+                           AND t2.estado IN ('IN_TRANSIT','RECEIVED','RECONCILED','CLOSED')), 0) AS qty_embarcado,
+              COALESCE((SELECT SUM(a.qty_asignada) FROM inventario.expediente_nodo_assignment a
+                         JOIN transfers.transferencia t2 ON t2.id = a.transferencia_id
+                         WHERE a.expediente_id = e.id AND a.is_active = TRUE
+                           AND t2.estado IN ('RECEIVED','RECONCILED','CLOSED')), 0) AS qty_entregado
+            FROM expedientes.expediente e
+            LEFT JOIN expedientes.oc    o ON o.id = e.oc_id
+            LEFT JOIN clientes.cliente  c ON c.id = e.client_id
+            LEFT JOIN brands.marca      m ON m.id = e.brand_id
+            WHERE e.is_active = TRUE
+              AND (lower(e.client_id::text) IN ({ph})
+                   OR lower(e.operating_company_id::text) IN ({ph}))
+            ORDER BY e.last_event_at DESC NULLS LAST, e.created_at DESC
+            LIMIT %s OFFSET %s
+        """, list(cids) + list(cids) + [limit, offset])
+
+        if not rows:
+            return Response([])
+        ids = [str(r["id"]) for r in rows]
+        fechas = _fetchall("""
+            SELECT expediente_id, campo, valor_raw, valor_fecha, precision, updated_at
+              FROM correo.expediente_fecha
+             WHERE publicado = TRUE AND expediente_id::text = ANY(%s::text[])
+        """, [ids])
+        by_exp = {}
+        for f in fechas:
+            by_exp.setdefault(str(f["expediente_id"]), []).append(f)
+        for r in rows:
+            r["estado_cliente_es"] = CLIENT_STATE_MAP.get(r["estado"], {}).get("es", r["estado"])
+            pedido = int(r["qty_pedido"] or 0); asig = int(r["qty_asignado"] or 0)
+            emb = int(r["qty_embarcado"] or 0); ent = int(r["qty_entregado"] or 0)
+            r["cantidades"] = {
+                "pedido": pedido,
+                "en_produccion": max(pedido - asig, 0),
+                "listas": max(asig - emb, 0),
+                "embarcadas": emb,
+                "entregadas": ent,
+            }
+            fs = sorted(by_exp.get(str(r["id"]), []),
+                        key=lambda x: self._FECHA_ORDEN.index(x["campo"])
+                        if x["campo"] in self._FECHA_ORDEN else 99)
+            r["fechas"] = [{
+                "campo": x["campo"], "valor_raw": x["valor_raw"],
+                "valor_fecha": x["valor_fecha"], "precision": x["precision"],
+                "actualizado": x["updated_at"],
+            } for x in fs]
+            r["proximo_hito"] = r["fechas"][0] if r["fechas"] else None
+        return Response(rows)
+
+    @action(detail=False, methods=["get"], url_path="embarque")
+    def embarque(self, request):
+        """Detalle de un embarque: cantidades, fechas, salidas y documentos."""
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return _empty_scope()
+        exp_id = request.query_params.get("id")
+        if not exp_id:
+            return Response({"detail": "Falta query param 'id'"}, status=400)
+        ph = ",".join(["%s"] * len(cids))
+        r = _fetchone(f"""
+            SELECT e.id, e.codigo, e.estado, e.origin, e.destination,
+                   e.freight_mode, e.eta, e.last_event_at,
+                   o.codigo AS oc_codigo, o.display_label AS oc_display, o.proforma AS oc_proforma,
+                   COALESCE(c.nombre_comercial, c.razon_social) AS client_name,
+                   m.nombre AS brand_name,
+                   COALESCE((SELECT SUM(l.qty) FROM expedientes.linea l
+                              WHERE l.expediente_id = e.id AND l.is_active = TRUE), 0) AS qty_pedido,
+                   COALESCE((SELECT SUM(a.qty_asignada) FROM inventario.expediente_nodo_assignment a
+                              WHERE a.expediente_id = e.id AND a.is_active = TRUE), 0) AS qty_asignado,
+                   COALESCE((SELECT SUM(a.qty_asignada) FROM inventario.expediente_nodo_assignment a
+                              JOIN transfers.transferencia t2 ON t2.id = a.transferencia_id
+                              WHERE a.expediente_id = e.id AND a.is_active = TRUE
+                                AND t2.estado IN ('IN_TRANSIT','RECEIVED','RECONCILED','CLOSED')), 0) AS qty_embarcado,
+                   COALESCE((SELECT SUM(a.qty_asignada) FROM inventario.expediente_nodo_assignment a
+                              JOIN transfers.transferencia t2 ON t2.id = a.transferencia_id
+                              WHERE a.expediente_id = e.id AND a.is_active = TRUE
+                                AND t2.estado IN ('RECEIVED','RECONCILED','CLOSED')), 0) AS qty_entregado
+              FROM expedientes.expediente e
+              LEFT JOIN expedientes.oc   o ON o.id = e.oc_id
+              LEFT JOIN clientes.cliente c ON c.id = e.client_id
+              LEFT JOIN brands.marca     m ON m.id = e.brand_id
+             WHERE e.is_active = TRUE AND e.id = %s
+               AND (lower(e.client_id::text) IN ({ph})
+                    OR lower(e.operating_company_id::text) IN ({ph}))
+        """, [exp_id] + list(cids) + list(cids))
+        if not r:
+            return Response({"detail": "Embarque no encontrado o fuera de scope."}, status=404)
+
+        r["estado_cliente_es"] = CLIENT_STATE_MAP.get(r["estado"], {}).get("es", r["estado"])
+        pedido = int(r["qty_pedido"] or 0); asig = int(r["qty_asignado"] or 0)
+        emb = int(r["qty_embarcado"] or 0); ent = int(r["qty_entregado"] or 0)
+        r["cantidades"] = {"pedido": pedido, "en_produccion": max(pedido - asig, 0),
+                           "listas": max(asig - emb, 0), "embarcadas": emb, "entregadas": ent}
+
+        r["fechas"] = _fetchall("""
+            SELECT campo, valor_raw, valor_fecha, precision, updated_at
+              FROM correo.expediente_fecha
+             WHERE publicado = TRUE AND expediente_id = %s
+        """, [exp_id])
+        r["fechas"].sort(key=lambda x: self._FECHA_ORDEN.index(x["campo"])
+                         if x["campo"] in self._FECHA_ORDEN else 99)
+        r["proximo_hito"] = r["fechas"][0] if r["fechas"] else None
+
+        salidas = _fetchall("""
+            SELECT t.id, t.codigo, t.estado, t.legal_context,
+                   t.origen_label, t.destino_label, t.dispatched_at, t.eta,
+                   t.received_at, t.ref_tracking,
+                   t.context_data->>'bl_awb_number'  AS bl_awb,
+                   t.context_data->>'awb_bl_number'  AS awb_bl,
+                   COALESCE(n.nombre, t.destino_label) AS destino_nombre,
+                   (SELECT SUM(l.qty_transfer) FROM transfers.linea l
+                     WHERE l.transferencia_id = t.id) AS qty
+              FROM transfers.transferencia t
+              JOIN (SELECT DISTINCT transferencia_id
+                      FROM inventario.expediente_nodo_assignment
+                     WHERE is_active = TRUE AND transferencia_id IS NOT NULL
+                       AND expediente_id = %s) a ON a.transferencia_id = t.id
+              LEFT JOIN nodos.nodo n ON n.id = t.destino_id
+             WHERE t.is_active = TRUE
+             ORDER BY t.dispatched_at DESC NULLS LAST, t.created_at DESC
+        """, [exp_id])
+        for s in salidas:
+            s["lineas"] = _fetchall("""
+                SELECT sku, size, qty_transfer, qty_received, product_label
+                  FROM transfers.linea WHERE transferencia_id = %s
+                 ORDER BY sku, size
+            """, [s["id"]])
+        r["salidas"] = salidas
+
+        # Documentos vigentes visibles al cliente (audience CLIENT) + AWB/BL Builder.
+        docs = _fetchall("""
+            SELECT id, kind, codigo, created_at,
+                   (storage_url IS NOT NULL AND COALESCE(file_size_bytes,0) > 0) AS tiene_archivo
+              FROM expedientes.documento
+             WHERE expediente_id = %s AND is_active = TRUE AND audience = 'CLIENT'
+             ORDER BY created_at DESC
+        """, [exp_id])
+        art = _fetchone("""
+            SELECT i.data->'field-1778637230655' AS awb_file,
+                   i.data->>'field-1780150662711' AS fecha_despacho,
+                   i.data->>'field-1780150673285' AS fecha_arrivo,
+                   i.data->>'field-0072'          AS tracking
+              FROM nodos.builder_artifact_instance i
+              JOIN nodos.builder_artifact_line l ON l.builder_artifact_instance_id = i.id
+             WHERE i.template_id = 9 AND i.is_active = TRUE AND l.is_active = TRUE
+               AND l.expediente_id = %s
+             ORDER BY i.updated_at DESC NULLS LAST LIMIT 1
+        """, [exp_id])
+        r["documentos"] = docs
+        r["awb_bl"] = art or None
+
+        return Response(r)
+
     @action(detail=False, methods=["get"], url_path="expediente_detail")
     def expediente_detail(self, request):
         """Detalle de un expediente del cliente (scope-checked por client_id).

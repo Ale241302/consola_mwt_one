@@ -3052,6 +3052,29 @@ def ceo_radiografia(window_days: int = 21) -> Any:
 
 
 # =========================================================================== #
+# PORTAL CLIENTE — embarques (Etapa 5). Misma lectura que el portal web.
+# =========================================================================== #
+@mcp.tool()
+def portal_embarques(limit: int | None = None, offset: int | None = None) -> Any:
+    """Portal cliente (Etapa 5): embarques de las empresas del usuario del token.
+    Devuelve cantidades (pedido / en producción / listas / embarcadas / entregadas),
+    fechas publicadas (estimada/confirmada + cuándo se actualizaron) y el próximo
+    hito. Respeta el scope del token: un cliente ve solo lo suyo; admin ve todo."""
+    return _safe_role_read(lambda: api.get("portal/mis_embarques/",
+                                           _params(limit=limit, offset=offset)),
+                           "portal_embarques")
+
+
+@mcp.tool()
+def portal_embarque(expediente_id: str) -> Any:
+    """Detalle de un embarque (portal cliente): cantidades del funnel, fechas,
+    salidas con destino y AWB/BL, y documentos vigentes. Sin datos internos."""
+    return _safe_role_read(lambda: api.get("portal/embarque/",
+                                           _params(id=expediente_id)),
+                           "portal_embarque")
+
+
+# =========================================================================== #
 # TAREAS — catálogo, agenda por expediente y mesa de trabajo (Etapa 2)
 # =========================================================================== #
 @mcp.tool()

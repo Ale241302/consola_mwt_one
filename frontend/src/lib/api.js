@@ -1493,6 +1493,10 @@ export const portalApi = {
   misPagos:       (cid) => apiFetch(`${portalBase}/mis_pagos/`,      { token: getToken(), headers: portalHeaders(cid) }),
   misCobros:      (cid) => apiFetch(`${portalBase}/mis_cobros/`,     { token: getToken(), headers: portalHeaders(cid) }),
   misDocumentos:  (cid) => apiFetch(`${portalBase}/mis_documentos/`, { token: getToken(), headers: portalHeaders(cid) }),
+  // Etapa 5 · embarques (portada + detalle), scopeado al cliente.
+  misEmbarques:   (cid) => apiFetch(`${portalBase}/mis_embarques/`,  { token: getToken(), headers: portalHeaders(cid) }),
+  embarque:       (cid, id) => apiFetch(`${portalBase}/embarque/?id=${encodeURIComponent(id)}`,
+                                        { token: getToken(), headers: portalHeaders(cid) }),
   // Ola 3 · 3.29 — líneas de una OC scopeada (precio cliente, sin costos internos).
   ocLines:        (cid, ocId) => apiFetch(`${portalBase}/oc_lines/?id=${encodeURIComponent(ocId)}`,
                                           { token: getToken(), headers: portalHeaders(cid) }),
