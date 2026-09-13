@@ -614,7 +614,7 @@ export default function ScreenPortal() {
           ))}
         </div>
 
-        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC} isClient={isClient} showEmpresaCol={hasMultiEmpresa} loading={loadingPortal}/>}
+        {tab === 'orders'   && <PortalOrders   lang={lang} ocs={myOCs} expedientes={EXPEDIENTES} onOpenOC={onOpenOC} isClient={isClient} showEmpresaCol={hasMultiEmpresa} loading={loadingPortal} clientName={client?.name || ''}/>}
         {tab === 'payments' && <PortalPayments lang={lang} ocs={myOCs} showEmpresaCol={hasMultiEmpresa}/>}
         {tab === 'products' && <ProductCatalogGrid lang={lang} clientId={activeEmpresa?.id || null} />}
       </div>
@@ -721,7 +721,7 @@ function NoEmpresasState({ lang, userEmail }) {
 }
 
 // ── Orders tab: table of OCs (not expedientes) ─────
-function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false, loading = false }) {
+function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false, loading = false, clientName = '' }) {
   const navigate = useNavigate();
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting]   = useState(false);
@@ -788,12 +788,12 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
       id: o.id,
       ref: o.client_ref || o.codigo || o.po_code || '—',
       proforma: o.proforma,
-      cliente: o.client_name || nameById[o.client_id] || (clientOpts[0]?.name) || '—',
+      cliente: o.client_name || clientName || nameById[o.client_id] || '—',
       rawStatus: leadExp?.estado || o.estado || null,
       expCount: relatedExps.length,
       fusion: leadExp?.fusion_label || null,
     };
-  }), [visibleOcs, expedientes, nameById, clientOpts]);
+  }), [visibleOcs, expedientes, nameById, clientName]);
   const { pageItems, page, setPage, perPage, setPerPage, totalPages, total } =
     usePagination(rows, { defaultPerPage: 20 });
   const kanbanCols = useMemo(() => {
