@@ -3,7 +3,21 @@ apps.correo · serializers (Etapa 3)
 """
 from rest_framework import serializers
 
-from .models import Adjunto, Contacto, Envio, Estilo, Grupo, Mensaje
+from .models import Adjunto, Contacto, Envio, Estilo, Extraccion, ExpedienteFecha, Grupo, Mensaje
+
+
+class ExtraccionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = Extraccion
+        fields = "__all__"
+        read_only_fields = ("id", "created_at", "updated_at")
+
+
+class ExpedienteFechaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = ExpedienteFecha
+        fields = "__all__"
+        read_only_fields = ("id", "created_at", "updated_at")
 
 
 class ContactoSerializer(serializers.ModelSerializer):

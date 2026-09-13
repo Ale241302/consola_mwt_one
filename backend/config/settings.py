@@ -391,6 +391,12 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 300.0,
         "options":  {"queue": "default", "expires": 240},
     },
+    # Etapa 4 · extracción de fechas de correos correlacionados (2×/día).
+    "correo_extraer_pendientes": {
+        "task":     "correo.extraer_pendientes",
+        "schedule": _crontab(hour="7,19", minute=30),
+        "options":  {"queue": "default", "expires": 1800},
+    },
     # Archival a S3 Glacier — Fase 5C (placeholder; el task se crea
     # en una sub-fase posterior. Comentado hasta que esté implementado).
     # "archive_old_payments": {

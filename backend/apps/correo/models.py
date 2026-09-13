@@ -110,6 +110,47 @@ class MensajeExpediente(models.Model):
         ordering = ["created_at"]
 
 
+class Extraccion(models.Model):
+    id            = models.UUIDField(primary_key=True)
+    mensaje_id    = models.UUIDField(null=True, blank=True)
+    expediente_id = models.UUIDField(null=True, blank=True)
+    campo         = models.CharField(max_length=24)
+    valor_raw     = models.TextField(null=True, blank=True)
+    valor_fecha   = models.DateField(null=True, blank=True)
+    precision     = models.CharField(max_length=16, default="EXACTA")
+    fuente        = models.CharField(max_length=32, default="MENSAJE")
+    confianza     = models.DecimalField(max_digits=4, decimal_places=3, default=0)
+    estado        = models.CharField(max_length=16, default="PROPUESTO")
+    conflicto     = models.BooleanField(default=False)
+    evidencias    = models.JSONField(default=dict, blank=True)
+    created_by_id = models.UUIDField(null=True, blank=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+    updated_at    = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'correo"."extraccion'
+        ordering = ["-created_at"]
+
+
+class ExpedienteFecha(models.Model):
+    id                   = models.UUIDField(primary_key=True)
+    expediente_id        = models.UUIDField()
+    campo                = models.CharField(max_length=24)
+    valor_raw            = models.TextField(null=True, blank=True)
+    valor_fecha          = models.DateField(null=True, blank=True)
+    precision            = models.CharField(max_length=16, default="EXACTA")
+    publicado            = models.BooleanField(default=True)
+    fuente_extraccion_id = models.UUIDField(null=True, blank=True)
+    created_at           = models.DateTimeField(auto_now_add=True)
+    updated_at           = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'correo"."expediente_fecha'
+        ordering = ["campo"]
+
+
 class Adjunto(models.Model):
     id          = models.UUIDField(primary_key=True)
     mensaje_id  = models.UUIDField()

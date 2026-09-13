@@ -20,9 +20,12 @@ from rest_framework.response import Response
 from apps.core.permissions import user_is_ceo_or_admin
 
 from . import services
-from .models import Adjunto, Contacto, Envio, Estilo, Grupo, Mensaje, MensajeExpediente
+from . import extraccion as extraccion_svc
+from .models import (Adjunto, Contacto, Envio, Estilo, Extraccion, ExpedienteFecha,
+                     Grupo, Mensaje, MensajeExpediente)
 from .serializers import (AdjuntoSerializer, ContactoSerializer, EnvioSerializer,
-                          EstiloSerializer, GrupoSerializer, MensajeSerializer)
+                          EstiloSerializer, ExtraccionSerializer,
+                          ExpedienteFechaSerializer, GrupoSerializer, MensajeSerializer)
 
 
 def _paging(request):
@@ -157,6 +160,19 @@ class MensajeViewSet(viewsets.ViewSet):
         """Importa un mensaje ya parseado (MCP Hostinger / otra fuente)."""
         return Response(services.importar_mensaje(dict(request.data or {}),
                                                   getattr(request.user, "id", None)))
+
+    @action(detail=True, methods=["post"])
+    def extraer(self, request, pk=None):
+        """Etapa 4 · extrae fechas del mensaje y crea propuestas (marca conflicto)."""
+        m = Mensaje.objects.filter(pk=pk, is_active=True).first()
+        if not m:
+            return Response({"detail": "Mensaje no existe"}, status=404)
+        exps = [m.expediente_id] if m.expediente_id else services.expedientes_de(m.id)
+        exp_id = exps[0] if exps else None
+        creadas = extraccion_svc.crear_propuestas(
+            m.id, exp_id, m.body_text or "", fuente="MENSAJE",
+            user_id=getattr(request.user, "id", None))
+        return Response(ExtraccionSerializer(creadas, many=True).data, status=201)
 
     @action(detail=False, methods=["post"])
     def sync(self, request):
@@ -408,3 +424,50 @@ class EnvioViewSet(viewsets.ViewSet):
         learned = services.aprender_estilo(antes, nuevo or antes,
                                            getattr(request.user, "id", None))
         return Response({"ok": True, "envio": EnvioSerializer(e).data, "learned": learned})
+
+
+class ExtraccionViewSet(viewsets.ViewSet):
+    """Etapa 4 · propuestas de fechas y fechas publicadas por expediente."""
+    required_module = "correo"
+
+    def list(self, request):
+        qs = Extraccion.objects.all()
+        qp = request.query_params
+        for p, f in (("expediente", "expediente_id"), ("mensaje", "mensaje_id"),
+                     ("campo", "campo"), ("estado", "estado")):
+            v = qp.get(p)
+            if v:
+                qs = qs.filter(**{f: v.upper() if f in ("campo", "estado") else v})
+        if qp.get("conflicto") in ("1", "true", "True"):
+            qs = qs.filter(conflicto=True)
+        return Response(ExtraccionSerializer(qs.order_by("-created_at")[:500], many=True).data)
+
+    def retrieve(self, request, pk=None):
+        ex = Extraccion.objects.filter(pk=pk).first()
+        if not ex:
+            return Response({"detail": "Extracción no existe"}, status=404)
+        return Response(ExtraccionSerializer(ex).data)
+
+    @action(detail=True, methods=["post"])
+    def confirmar(self, request, pk=None):
+        """Publica la fecha vigente del expediente (la hace visible al cliente)."""
+        ex = extraccion_svc.confirmar(pk, getattr(request.user, "id", None))
+        if not ex:
+            return Response({"detail": "Extracción no existe"}, status=404)
+        return Response(ExtraccionSerializer(ex).data)
+
+    @action(detail=True, methods=["post"])
+    def rechazar(self, request, pk=None):
+        ex = extraccion_svc.rechazar(pk, getattr(request.user, "id", None))
+        if not ex:
+            return Response({"detail": "Extracción no existe"}, status=404)
+        return Response(ExtraccionSerializer(ex).data)
+
+    @action(detail=False, methods=["get"])
+    def fechas(self, request):
+        """Fechas VIGENTES publicadas de un expediente."""
+        exp = request.query_params.get("expediente")
+        if not exp:
+            return Response({"detail": "expediente requerido"}, status=400)
+        qs = ExpedienteFecha.objects.filter(expediente_id=exp, publicado=True)
+        return Response(ExpedienteFechaSerializer(qs, many=True).data)

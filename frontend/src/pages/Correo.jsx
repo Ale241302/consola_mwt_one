@@ -49,6 +49,7 @@ export default function Correo() {
         <div className="seg">
           {[["bandeja", es ? "Bandeja" : "Inbox"], ["contactos", es ? "Contactos" : "Contacts"],
             ["grupos", es ? "Grupos" : "Groups"], ["estilo", es ? "Estilo" : "Style"],
+            ["extracciones", es ? "Extracciones" : "Extractions"],
             ["redactar", es ? "Redactar" : "Compose"]].map(([k, l]) => (
             <button key={k} data-active={tab === k} onClick={() => setTab(k)}>{l}</button>
           ))}
@@ -59,6 +60,7 @@ export default function Correo() {
       {tab === "contactos" && <Contactos es={es} selStyle={selStyle} inp={inp} flash={flash} />}
       {tab === "grupos" && <Grupos es={es} inp={inp} flash={flash} />}
       {tab === "estilo" && <Estilo es={es} inp={inp} flash={flash} />}
+      {tab === "extracciones" && <Extracciones es={es} selStyle={selStyle} flash={flash} />}
       {tab === "redactar" && <Redactar es={es} inp={inp} selStyle={selStyle} flash={flash} />}
 
       {toast && <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 1200, background: "#0F172A",
@@ -171,6 +173,10 @@ function Bandeja({ es, selStyle, flash }) {
               }}>{es ? "Vincular a expediente" : "Link to file"}</button>
               <button className="btn btn-sm btn-ghost" onClick={async () => { await correoApi.mensajes.ignorar(detalle.id); flash("OK"); setDetalle(null); load(); }}>
                 {es ? "Ignorar" : "Ignore"}</button>
+              <button className="btn btn-sm" onClick={async () => {
+                try { const r = await correoApi.mensajes.extraer(detalle.id); flash(`${es ? "Extracciones" : "Extractions"}: ${r?.length || 0}`); }
+                catch (e) { flash(e?.body?.detail || "Error"); }
+              }}>{es ? "Extraer fechas" : "Extract dates"}</button>
             </div>
             {detalle.adjuntos?.length > 0 && (
               <div style={{ marginBottom: 12 }}>
@@ -275,6 +281,71 @@ function Grupos({ es, inp, flash }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function Extracciones({ es, selStyle, flash }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [fEstado, setFEstado] = useState("PROPUESTO");
+  const [soloConflicto, setSoloConflicto] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = {};
+      if (fEstado) params.estado = fEstado;
+      if (soloConflicto) params.conflicto = 1;
+      const d = await correoApi.extracciones.list(params);
+      setItems(Array.isArray(d) ? d : (d?.results || []));
+    } catch { setItems([]); } finally { setLoading(false); }
+  }, [fEstado, soloConflicto]);
+  useEffect(() => { load(); }, [load]);
+  const act = async (fn, ok) => { try { await fn(); flash(ok); load(); } catch (e) { flash(e?.body?.detail || "Error"); } };
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+        <select value={fEstado} onChange={(e) => setFEstado(e.target.value)} style={selStyle}>
+          <option value="">{es ? "Estado: todos" : "Status: all"}</option>
+          {["PROPUESTO", "CONFIRMADO", "RECHAZADO", "SUPERSEDIDO"].map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+          <input type="checkbox" checked={soloConflicto} onChange={(e) => setSoloConflicto(e.target.checked)} /> {es ? "Solo conflictos" : "Conflicts only"}
+        </label>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary, #94A3B8)" }}>{items.length} {es ? "propuestas" : "proposals"}</span>
+      </div>
+      <div className="table-scroll" style={{ background: "var(--surface, #fff)", border: "1px solid var(--border-subtle, #E2E8F0)", borderRadius: 12 }}>
+        <table className="table-sticky" style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
+          <thead><tr style={{ background: "var(--surface-alt, #F1F5F9)" }}>
+            <Th>{es ? "Campo" : "Field"}</Th><Th>{es ? "Fecha" : "Date"}</Th><Th>{es ? "Precisión" : "Precision"}</Th>
+            <Th>{es ? "Evidencia" : "Evidence"}</Th><Th>{es ? "Estado" : "Status"}</Th><Th right>{es ? "Acciones" : "Actions"}</Th>
+          </tr></thead>
+          <tbody>
+            {loading && <tr><td colSpan={6} style={{ padding: 28, textAlign: "center", color: "var(--text-tertiary)" }}>…</td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={6} style={{ padding: 28, textAlign: "center", color: "var(--text-tertiary)" }}>{es ? "Sin propuestas." : "No proposals."}</td></tr>}
+            {items.map((x) => (
+              <tr key={x.id} style={{ borderBottom: "1px solid var(--border-subtle, #F1F5F9)" }}>
+                <Td>
+                  {x.campo}
+                  {x.conflicto ? <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, fontSize: 9, fontWeight: 700, background: "rgba(220,38,38,0.14)", color: "#991B1B" }}>CONFLICTO</span> : null}
+                </Td>
+                <Td mono>{x.valor_fecha || "—"}</Td>
+                <Td>{x.precision}</Td>
+                <Td>{(x.valor_raw || "").slice(0, 90)}</Td>
+                <Td>{x.estado}</Td>
+                <Td right>
+                  {x.estado === "PROPUESTO" && (
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                      <button className="btn btn-sm" onClick={() => act(() => correoApi.extracciones.confirmar(x.id), es ? "Publicada" : "Published")}>{es ? "Confirmar" : "Confirm"}</button>
+                      <button className="btn btn-sm btn-ghost" onClick={() => act(() => correoApi.extracciones.rechazar(x.id), es ? "Rechazada" : "Rejected")}>{es ? "Rechazar" : "Reject"}</button>
+                    </div>
+                  )}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 

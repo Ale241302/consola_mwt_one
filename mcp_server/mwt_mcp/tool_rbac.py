@@ -235,6 +235,12 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # Etapa 1/backlog B8 · anular/recrear expediente
     "expediente_anular":  ("expedientes", "update"),
     "expediente_recrear": ("expedientes", "create"),
+
+    # Etapa 4 · extracción de fechas + publicación al cliente
+    "correo_extracciones_listar":    ("correo", "view"),
+    "correo_extraccion_confirmar":   ("correo", "update"),
+    "correo_extraccion_rechazar":    ("correo", "update"),
+    "expediente_fechas_publicadas":  ("expedientes", "view"),
 }
 
 

@@ -670,6 +670,7 @@ export const correoApi = {
     desvincular:   (id, body) => apiFetch(`/correo/mensajes/${id}/desvincular/`, { method: "POST", body, token: getToken() }),
     importar:      (body)   => apiFetch(`/correo/mensajes/importar/`, { method: "POST", body, token: getToken() }),
     sync:          (body)   => apiFetch(`/correo/mensajes/sync/`, { method: "POST", body: body || {}, token: getToken() }),
+    extraer:       (id)     => apiFetch(`/correo/mensajes/${id}/extraer/`, { method: "POST", token: getToken() }),
     adjuntos:      (id)     => apiFetch(`/correo/mensajes/${id}/adjuntos/`, { token: getToken() }),
     adjuntoUrl:    (id, aid) => apiFetch(`/correo/mensajes/${id}/adjuntos/${aid}/url/`, { token: getToken() }),
     diagnostico:   ()       => apiFetch(`/correo/mensajes/diagnostico/`, { token: getToken() }),
@@ -685,6 +686,12 @@ export const correoApi = {
     create: (body)      => apiFetch(`/correo/grupos/`, { method: "POST", body, token: getToken() }),
     update: (id, body)  => apiFetch(`/correo/grupos/${id}/`, { method: "PATCH", body, token: getToken() }),
     remove: (id)        => apiFetch(`/correo/grupos/${id}/`, { method: "DELETE", token: getToken() }),
+  },
+  extracciones: {
+    list:      (params) => apiFetch(`/correo/extracciones/${qs(params)}`, { token: getToken() }),
+    confirmar: (id)     => apiFetch(`/correo/extracciones/${id}/confirmar/`, { method: "POST", token: getToken() }),
+    rechazar:  (id)     => apiFetch(`/correo/extracciones/${id}/rechazar/`, { method: "POST", token: getToken() }),
+    fechas:    (exp)    => apiFetch(`/correo/extracciones/fechas/?expediente=${encodeURIComponent(exp)}`, { token: getToken() }),
   },
   estilos: {
     list:     ()        => apiFetch(`/correo/estilos/`, { token: getToken() }),

@@ -3224,6 +3224,51 @@ def correo_mensaje_importar(message_id: str | None = None, direction: str = "IN"
 
 
 # =========================================================================== #
+# ETAPA 4 — Extracción de fechas + publicación al cliente
+# =========================================================================== #
+@mcp.tool()
+def correo_extracciones_listar(expediente: str | None = None, estado: str | None = None,
+                               campo: str | None = None, conflicto: bool | None = None,
+                               campos: str | None = None) -> Any:
+    """Propuestas de fecha extraídas de correos (revisión). Filtros: `expediente` (UUID),
+    `estado` (PROPUESTO/CONFIRMADO/RECHAZADO/SUPERSEDIDO), `campo`
+    (PRODUCCION/ETD/ETA/BL_AWB/DUE/DOCUMENTO), `conflicto=true`."""
+    data = _safe_role_read(lambda: api.get("correo/extracciones/", _params(
+        expediente=expediente, estado=estado, campo=campo, conflicto=conflicto)),
+        "correo_extracciones_listar")
+    return _project(campos, data)
+
+
+@mcp.tool()
+@write_tool
+def correo_extraccion_confirmar(extraccion_id: str) -> Any:
+    """Publica la fecha vigente del expediente a partir de la propuesta (visible al cliente)."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(f"correo/extracciones/{extraccion_id}/confirmar/", {}))
+
+
+@mcp.tool()
+@write_tool
+def correo_extraccion_rechazar(extraccion_id: str) -> Any:
+    """Rechaza una propuesta de fecha."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(f"correo/extracciones/{extraccion_id}/rechazar/", {}))
+
+
+@mcp.tool()
+def expediente_fechas_publicadas(expediente_id: str) -> Any:
+    """Fechas VIGENTES publicadas de un expediente (lo que ve el cliente):
+    campo, valor_raw, valor_fecha, precision."""
+    return _safe_role_read(lambda: api.get("correo/extracciones/fechas/",
+                                           _params(expediente=expediente_id)),
+                           "expediente_fechas_publicadas")
+
+
+# =========================================================================== #
 # STORAGE — subir el binario de un campo de archivo de artefacto (AWB/BL, factura)
 # =========================================================================== #
 @mcp.tool()

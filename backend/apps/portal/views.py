@@ -801,6 +801,31 @@ class PortalViewSet(viewsets.ViewSet):
             r["signed_url_ttl_sec"] = 900
         return Response(rows)
 
+    # ── /api/portal/mis_fechas/ (Etapa 4) ─────────────────────
+    @action(detail=False, methods=["get"], url_path="mis_fechas")
+    def mis_fechas(self, request):
+        """Fechas VIGENTES publicadas de los expedientes del cliente
+        (sin exponer correspondencia interna)."""
+        cids = _resolve_client_ids(request)
+        if not cids:
+            return _empty_scope()
+        placeholders = ",".join(["%s"] * len(cids))
+        rows = _fetchall(
+            f"""
+            SELECT ef.expediente_id, ef.campo, ef.valor_raw, ef.valor_fecha, ef.precision
+              FROM correo.expediente_fecha ef
+             WHERE ef.publicado = TRUE
+               AND ef.expediente_id IN (
+                     SELECT id FROM expedientes.expediente
+                      WHERE lower(client_id::text) IN ({placeholders})
+                         OR lower(operating_company_id::text) IN ({placeholders})
+               )
+             ORDER BY ef.expediente_id, ef.campo
+            """,
+            cids + cids,
+        )
+        return Response(rows)
+
     # ── /api/portal/expediente_detail/?id=<uuid> ──────────────
     @action(detail=False, methods=["get"], url_path="expediente_detail")
     def expediente_detail(self, request):
