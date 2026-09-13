@@ -9,13 +9,15 @@
 //  - Deferred price visible only when show_deferred_to_client = true.
 //  - Modo C lines get a subtle "Operado por Muito Work" tag.
 //  - All downloadable docs marked as signed-URL (15-min expiry).
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { clientesApi, storageUrl } from "../lib/api.js";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import OcChoiceModal from "../components/portal/OcChoiceModal.jsx";
 import { tr, fmtMoney, fmtDate } from "../lib/i18n.js";
 import { Badge, StatusBadge } from "../components/ui/primitives.jsx";
 import { TableSkeletonRows } from "../components/ui/Skeleton.jsx";
+import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
+import { DISPLAY_STAGES, displayStage } from "../lib/phaseDisplay.js";
 import ExportExpedientesModal from "../components/expedientes/ExportExpedientesModal.jsx";
 import { runExpedienteExport } from "../lib/expedienteExport.js";
 import { INVOICE_AUDIENCE } from "../lib/transferInvoiceHtml.js";
@@ -764,12 +766,58 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
     const lead = expedientes.find((e) => e.oc_id === o.id);
     return !!(lead?.estado || o.estado);
   });
+  // Etapa 6/aceptación · filas client-safe (REF, cliente, estado) + Kanban.
+  const [vista, setVista] = useState('tabla');
+  const STAGE_LABEL = {
+    REGISTRO: lang==='es' ? 'Registro' : 'Registration',
+    PRODUCCION: lang==='es' ? 'Producción' : 'Production',
+    PREPARACION_DESPACHO: lang==='es' ? 'Preparación de despacho' : 'Dispatch prep',
+    TRANSITO: lang==='es' ? 'Tránsito' : 'In transit',
+    EN_DESTINO: lang==='es' ? 'En destino' : 'At destination',
+    CERRADO: lang==='es' ? 'Cerrado' : 'Closed',
+  };
+  const rows = useMemo(() => visibleOcs.map((o) => {
+    const relatedExps = expedientes.filter((e) => e.oc_id === o.id);
+    const leadExp = relatedExps[0];
+    return {
+      id: o.id,
+      ref: o.client_ref || o.codigo || o.po_code || '—',
+      proforma: o.proforma,
+      cliente: o.client_name || '—',
+      rawStatus: leadExp?.estado || o.estado || null,
+      expCount: relatedExps.length,
+      fusion: leadExp?.fusion_label || null,
+    };
+  }), [visibleOcs, expedientes]);
+  const { pageItems, page, setPage, perPage, setPerPage, totalPages, total } =
+    usePagination(rows, { defaultPerPage: 20 });
+  const kanbanCols = useMemo(() => {
+    const cols = {};
+    DISPLAY_STAGES.forEach((s) => { cols[s] = []; });
+    rows.forEach((r) => {
+      const s = r.rawStatus ? displayStage(r.rawStatus) : null;
+      if (s && cols[s]) cols[s].push(r);
+    });
+    return cols;
+  }, [rows]);
+  const gotoOC = (id) => onOpenOC && onOpenOC(id);
   return (
     <div className="card">
       <div className="card-head">
         <div className="card-title">{lang==='es' ? 'Mis Órdenes' : 'My Orders'}</div>
         <div style={{display:'flex', alignItems:'center', gap:12}}>
           <span className="caption">{visibleOcs.length} {lang==='es'?'órdenes':'orders'}</span>
+          {/* Etapa 6 · vista Tabla / Kanban (igual que /expedientes) */}
+          <div className="seg" style={{ display: 'inline-flex', gap: 4 }}>
+            <button type="button" data-active={vista==='tabla'} onClick={() => setVista('tabla')}
+                    className="btn btn-sm" style={{ opacity: vista==='tabla'?1:.6 }}>
+              {lang==='es' ? 'Tabla' : 'Table'}
+            </button>
+            <button type="button" data-active={vista==='kanban'} onClick={() => setVista('kanban')}
+                    className="btn btn-sm" style={{ opacity: vista==='kanban'?1:.6 }}>
+              {lang==='es' ? 'Kanban' : 'Kanban'}
+            </button>
+          </div>
           {/* Sprint 2026-06-10 — botón Exportar retirado: el reporte vive
               en /cronograma (vista React, item del sidebar). */}
           {/* CTA primaria: subir una nueva OC.
@@ -813,65 +861,66 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
           />
         </div>
       </div>
-      <table className="table">
-        <thead><tr>
-          <th>{lang==='es' ? 'Orden' : 'Order'}</th>
-          <th>{lang==='es' ? 'Estado' : 'Status'}</th>
-          <th>{lang==='es' ? 'Cliente' : 'Client'}</th>
-          <th/>
-        </tr></thead>
-        <tbody>
-          {loading && visibleOcs.length === 0 && (
-            <TableSkeletonRows rows={6} />
+      {vista === 'tabla' ? (
+        <>
+          <div className="table-scroll">
+            <table className="table-sticky" style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+              <thead>
+                <tr>
+                  <th>{lang==='es' ? 'REF' : 'REF'}</th>
+                  <th>{lang==='es' ? 'Cliente' : 'Client'}</th>
+                  <th>{lang==='es' ? 'Estado' : 'Status'}</th>
+                  <th/>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && rows.length === 0 && <TableSkeletonRows rows={6} />}
+                {pageItems.map((r) => (
+                  <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => gotoOC(r.id)}>
+                    <td>
+                      <div style={{ font:'700 12px/1.2 var(--font-mono)', color:'var(--brand-primary)' }}>{r.ref}</div>
+                      <div className="caption" style={{ marginTop: 2 }}>
+                        {r.fusion ? `${r.fusion} · ` : ''}{r.expCount} {lang==='es'?'envíos':'shipments'}
+                      </div>
+                    </td>
+                    <td><span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{r.cliente}</span></td>
+                    <td>{r.rawStatus ? <StatusBadge status={r.rawStatus} lang={lang}/> : <span className="caption">—</span>}</td>
+                    <td><IconChevRight size={14} style={{ color:'var(--text-tertiary)' }}/></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {total > perPage && (
+            <TablePagination page={page} setPage={setPage} totalPages={totalPages}
+                             perPage={perPage} setPerPage={setPerPage} total={total} lang={lang} />
           )}
-          {visibleOcs.map(o => {
-            // Sprint 2026-05-21 · Match real con shape backend
-            // (apps.portal.views.mis_ocs):
-            //   { id, codigo, brand_id, proforma, moneda, total_value,
-            //     total_invoiced, total_paid, balance, coverage_pct,
-            //     lines_count, issued_at, estado, client_id, client_name }
-            // Backend NO devuelve `expedientes[]` ni `brand` ni `po_code`.
-            // Derivamos lead expediente buscando expedientes con oc_id === o.id.
-            const ocCode    = o.client_ref || o.codigo || o.po_code || '—';  // Fable5-QA
-            const lineCount = o.lines_count ?? (o.lines?.length || 0);
-            const relatedExps = expedientes.filter(e => e.oc_id === o.id);
-            const leadExp     = relatedExps[0];
-            const expCount    = relatedExps.length;
-            // Estado natural del expediente (CLIENT_STATE_MAP en backend
-            // ya devuelve `estado_cliente_es/en/step` en mis_expedientes).
-            // Mismos estados que "Mis Pedidos" (StatusBadge crudo: REGISTRO,
-            // EN_DESTINO, PRODUCCION…), no los labels "amigables" del portal.
-            const rawStatus   = leadExp?.estado || o.estado || null;
-            const expStatus   = leadExp?.estado_cliente_es
-                              || leadExp?.estado
-                              || o.estado
-                              || '—';
-            const expEta      = leadExp?.eta;
-            const totalVal    = Number(o.total_value || 0);
-            const totalPaid   = Number(o.total_paid  || 0);
-            const coverage    = totalVal > 0 ? (totalPaid / totalVal) : 0;
-            return (
-              <tr key={o.id} style={{cursor:'pointer'}} onClick={() => onOpenOC && onOpenOC(o.id)}>
-                <td>
-                  <div style={{font:'700 12px/1.2 var(--font-mono)', color:'var(--brand-primary)'}}>{ocCode}</div>
-                  <div className="caption" style={{marginTop:2}}>
-                    {expCount} {lang==='es'?'envíos':'shipments'}
+        </>
+      ) : (
+        <div style={{ display: 'flex', gap: 12, overflowX: 'auto', padding: '4px 2px 10px' }}>
+          {DISPLAY_STAGES.map((s) => (
+            <div key={s} style={{ minWidth: 230, flex: '0 0 auto' }}>
+              <div className="caption" style={{ fontWeight: 700, marginBottom: 6, color: 'var(--text-tertiary)' }}>
+                {STAGE_LABEL[s] || s} · {kanbanCols[s]?.length || 0}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(kanbanCols[s] || []).map((r) => (
+                  <div key={r.id} onClick={() => gotoOC(r.id)}
+                       style={{ cursor: 'pointer', border: '1px solid var(--border-subtle, #E2E8F0)',
+                                borderRadius: 10, padding: '10px 12px', background: 'var(--surface, #fff)' }}>
+                    <div style={{ font:'700 12px/1.2 var(--font-mono)', color:'var(--brand-primary)' }}>{r.ref}</div>
+                    <div className="caption" style={{ margin: '2px 0 6px' }}>{r.cliente}</div>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      {r.rawStatus ? <StatusBadge status={r.rawStatus} lang={lang}/> : <span/>}
+                      <span className="caption">{r.expCount} {lang==='es'?'envíos':'shipments'}</span>
+                    </div>
                   </div>
-                </td>
-                <td>
-                  {rawStatus
-                    ? <StatusBadge status={rawStatus} lang={lang}/>
-                    : <span className="caption">{expStatus}</span>}
-                </td>
-                <td>
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{o.client_name || '—'}</span>
-                </td>
-                <td><IconChevRight size={14} style={{color:'var(--text-tertiary)'}}/></td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {/* Sprint 2026-06-10 — modal de exportación retirado: el reporte
           vive en /cronograma (vista React). */}
     </div>
