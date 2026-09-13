@@ -666,6 +666,8 @@ export const correoApi = {
     ignorar:       (id)     => apiFetch(`/correo/mensajes/${id}/ignorar/`, { method: "POST", token: getToken() }),
     marcarLeido:   (id)     => apiFetch(`/correo/mensajes/${id}/marcar-leido/`, { method: "POST", token: getToken() }),
     porExpediente: (exp)    => apiFetch(`/correo/mensajes/por-expediente/?expediente=${encodeURIComponent(exp)}`, { token: getToken() }),
+    porVincular:   ()       => apiFetch(`/correo/mensajes/por-vincular/`, { token: getToken() }),
+    desvincular:   (id, body) => apiFetch(`/correo/mensajes/${id}/desvincular/`, { method: "POST", body, token: getToken() }),
     importar:      (body)   => apiFetch(`/correo/mensajes/importar/`, { method: "POST", body, token: getToken() }),
     sync:          (body)   => apiFetch(`/correo/mensajes/sync/`, { method: "POST", body: body || {}, token: getToken() }),
     adjuntos:      (id)     => apiFetch(`/correo/mensajes/${id}/adjuntos/`, { token: getToken() }),
@@ -688,6 +690,7 @@ export const correoApi = {
     list:     ()        => apiFetch(`/correo/estilos/`, { token: getToken() }),
     actual:   ()        => apiFetch(`/correo/estilos/actual/`, { token: getToken() }),
     publicar: (body)    => apiFetch(`/correo/estilos/publicar/`, { method: "POST", body, token: getToken() }),
+    aprender: (body)    => apiFetch(`/correo/estilos/aprender/`, { method: "POST", body, token: getToken() }),
   },
   envios: {
     list:     (params)  => apiFetch(`/correo/envios/${qs(params)}`, { token: getToken() }),
@@ -696,6 +699,7 @@ export const correoApi = {
     update:   (id, body) => apiFetch(`/correo/envios/${id}/`, { method: "PATCH", body, token: getToken() }),
     traducir: (id, body) => apiFetch(`/correo/envios/${id}/traducir/`, { method: "POST", body, token: getToken() }),
     enviar:   (id)      => apiFetch(`/correo/envios/${id}/enviar/`, { method: "POST", token: getToken() }),
+    corregir: (id, body) => apiFetch(`/correo/envios/${id}/corregir/`, { method: "POST", body, token: getToken() }),
   },
 };
 

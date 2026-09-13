@@ -26,7 +26,7 @@ from email.mime.text import MIMEText
 from django.conf import settings
 from django.db import IntegrityError, connection
 
-from .models import Adjunto, Contacto, Envio, Mensaje
+from .models import Adjunto, Contacto, Envio, Estilo, Mensaje, MensajeExpediente
 
 log = logging.getLogger(__name__)
 
@@ -180,6 +180,43 @@ def _notify_tarea_seguimiento(expediente_id, subject, user_id=None):
 
 
 # ── Persistencia ────────────────────────────────────────────────────
+def vincular_expedientes(mensaje_id, expediente_ids: list) -> int:
+    """Vincula un mensaje a uno o varios expedientes (N:M)."""
+    n = 0
+    for eid in (expediente_ids or []):
+        if not eid:
+            continue
+        try:
+            MensajeExpediente.objects.get_or_create(
+                id=uuid.uuid4(), mensaje_id=mensaje_id, expediente_id=eid)
+            n += 1
+        except Exception:
+            pass
+    return n
+
+
+def expedientes_de(mensaje_id) -> list:
+    return [str(x) for x in MensajeExpediente.objects.filter(
+        mensaje_id=mensaje_id).values_list("expediente_id", flat=True)]
+
+
+def desvincular_expediente(mensaje_id, expediente_id) -> int:
+    try:
+        return MensajeExpediente.objects.filter(
+            mensaje_id=mensaje_id, expediente_id=expediente_id).delete()[0]
+    except Exception:
+        return 0
+
+
+def _on_outbound(exp_id, user_id=None):
+    """Reconoce un envío (desde consola o fuera): retira el seguimiento vivo."""
+    try:
+        from apps.tareas import services as tserv
+        tserv.cancelar_auto(exp_id, "SEGUIMIENTO_SIN_RESPUESTA", "envio registrado", user_id)
+    except Exception as exc:
+        log.warning("[correo] _on_outbound: %s", exc)
+
+
 def _subir_adjunto(mensaje_id, a: dict):
     """Sube el binario a MinIO (si hay data) y crea la fila de adjunto."""
     data = a.get("data")
@@ -262,6 +299,15 @@ def upsert_mensaje(data: dict) -> dict | None:
         return None
     for a in (data.get("adjuntos") or []):
         _subir_adjunto(new_id, a)
+    # Etapa 3 · vínculo N:M + reconocimiento de envíos salientes.
+    if exp_id:
+        try:
+            MensajeExpediente.objects.get_or_create(
+                id=uuid.uuid4(), mensaje_id=new_id, expediente_id=exp_id)
+        except Exception:
+            pass
+    if data.get("direction") == "OUT":
+        _on_outbound(exp_id)
     return {"id": new_id, "dedup": False, "expediente_id": exp_id, "match_status": status}
 
 
@@ -460,8 +506,35 @@ def sync_mailbox(direction=None, limit=25) -> dict:
 
 
 # ── Traducción ──────────────────────────────────────────────────────
+def aprender_estilo(texto_es: str, texto_enviado: str | None = None, user_id=None) -> list:
+    """Aprende una preferencia de estilo a partir de una corrección/envío.
+    La acumula en `estilo.reglas.learned` (últimas 50). Usa DeepSeek si hay key."""
+    last = Estilo.objects.order_by("-version").first()
+    reglas = dict(last.reglas or {}) if last else {}
+    learned = list(reglas.get("learned") or [])
+    pref = None
+    try:
+        from apps.ai_hub.llm_text import llm_text
+        sys = ("Eres editor de estilo. A partir del borrador y su versión enviada, "
+               "escribe UNA preferencia de estilo breve (máx 140 caracteres) para futuros "
+               "correos en español. Devuelve solo la preferencia.")
+        user = f"BORRADOR:\n{texto_es}\n\nENVIADO:\n{texto_enviado or texto_es}"
+        pref = llm_text(sys, user, max_tokens=80)
+    except Exception as exc:
+        log.warning("[correo.aprender_estilo] %s", exc)
+    learned.append({"pref": (pref or "corrección registrada").strip(),
+                    "at": datetime.now(_tz.utc).isoformat()})
+    reglas["learned"] = learned[-50:]
+    if last:
+        last.reglas = reglas
+        last.save(update_fields=["reglas"])
+    else:
+        Estilo.objects.create(id=uuid.uuid4(), version=1, contenido="", reglas=reglas)
+    return reglas["learned"]
+
+
 def traducir(texto: str, idioma_destino: str, idioma_origen: str = "es") -> str | None:
-    """Traduce con el helper LLM compartido (OpenAI -> Anthropic). None si falla."""
+    """Traduce con el helper LLM compartido (DeepSeek -> OpenAI -> Anthropic)."""
     if not texto or not idioma_destino:
         return None
     sys_prompt = (

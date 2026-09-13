@@ -98,6 +98,18 @@ class Mensaje(models.Model):
         ordering = ["-sent_at", "-created_at"]
 
 
+class MensajeExpediente(models.Model):
+    id            = models.UUIDField(primary_key=True)
+    mensaje_id    = models.UUIDField()
+    expediente_id = models.UUIDField()
+    created_at    = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'correo"."mensaje_expediente'
+        ordering = ["created_at"]
+
+
 class Adjunto(models.Model):
     id          = models.UUIDField(primary_key=True)
     mensaje_id  = models.UUIDField()

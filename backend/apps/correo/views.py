@@ -20,7 +20,7 @@ from rest_framework.response import Response
 from apps.core.permissions import user_is_ceo_or_admin
 
 from . import services
-from .models import Adjunto, Contacto, Envio, Estilo, Grupo, Mensaje
+from .models import Adjunto, Contacto, Envio, Estilo, Grupo, Mensaje, MensajeExpediente
 from .serializers import (AdjuntoSerializer, ContactoSerializer, EnvioSerializer,
                           EstiloSerializer, GrupoSerializer, MensajeSerializer)
 
@@ -80,21 +80,39 @@ class MensajeViewSet(viewsets.ViewSet):
         data = MensajeSerializer(m).data
         data["adjuntos"] = AdjuntoSerializer(
             Adjunto.objects.filter(mensaje_id=m.id), many=True).data
+        data["expedientes"] = services.expedientes_de(m.id)
         return Response(data)
 
     @action(detail=True, methods=["post"])
     def vincular(self, request, pk=None):
+        """Vincula el mensaje a uno o varios expedientes."""
         m = Mensaje.objects.filter(pk=pk, is_active=True).first()
         if not m:
             return Response({"detail": "Mensaje no existe"}, status=404)
-        exp_id = request.data.get("expediente_id")
-        if not exp_id:
-            return Response({"detail": "expediente_id requerido"}, status=400)
-        m.expediente_id = exp_id
+        ids = request.data.get("expediente_ids")
+        if not ids:
+            single = request.data.get("expediente_id")
+            ids = [single] if single else []
+        if not ids:
+            return Response({"detail": "expediente_id(s) requerido(s)"}, status=400)
+        services.vincular_expedientes(m.id, ids)
+        m.expediente_id = ids[0]
         m.match_status = "VINCULADO"
         m.match_reason = "manual"
         m.save(update_fields=["expediente_id", "match_status", "match_reason", "updated_at"])
-        return Response(MensajeSerializer(m).data)
+        data = MensajeSerializer(m).data
+        data["expedientes"] = services.expedientes_de(m.id)
+        return Response(data)
+
+    @action(detail=True, methods=["post"])
+    def desvincular(self, request, pk=None):
+        m = Mensaje.objects.filter(pk=pk, is_active=True).first()
+        if not m:
+            return Response({"detail": "Mensaje no existe"}, status=404)
+        eid = request.data.get("expediente_id")
+        if eid:
+            services.desvincular_expediente(m.id, eid)
+        return Response({"expedientes": services.expedientes_de(m.id)})
 
     @action(detail=True, methods=["post"])
     def ignorar(self, request, pk=None):
@@ -119,8 +137,20 @@ class MensajeViewSet(viewsets.ViewSet):
         exp = request.query_params.get("expediente")
         if not exp:
             return Response({"detail": "expediente requerido"}, status=400)
-        qs = Mensaje.objects.filter(expediente_id=exp, is_active=True).order_by("-sent_at", "-created_at")
+        ids = set(MensajeExpediente.objects.filter(
+            expediente_id=exp).values_list("mensaje_id", flat=True))
+        qs = (Mensaje.objects.filter(is_active=True)
+              .filter(Q(expediente_id=exp) | Q(id__in=ids))
+              .order_by("-sent_at", "-created_at"))
         return Response(MensajeSerializer(list(qs), many=True).data)
+
+    @action(detail=False, methods=["get"], url_path="por-vincular")
+    def por_vincular(self, request):
+        """Cola dedicada: mensajes que no se pudieron correlacionar."""
+        qs = (Mensaje.objects.filter(is_active=True, match_status="POR_VINCULAR")
+              .order_by("-sent_at", "-created_at"))
+        return Response({"count": qs.count(),
+                         "results": MensajeSerializer(list(qs), many=True).data})
 
     @action(detail=False, methods=["post"])
     def importar(self, request):
@@ -279,6 +309,17 @@ class EstiloViewSet(viewsets.ViewSet):
         )
         return Response(EstiloSerializer(e).data, status=201)
 
+    @action(detail=False, methods=["post"])
+    def aprender(self, request):
+        """Aprende del par (borrador ↔ enviado/corregido) y acumula la preferencia."""
+        texto_es = (request.data.get("texto_es") or "").strip()
+        enviado = (request.data.get("texto_enviado") or "").strip()
+        if not texto_es and not enviado:
+            return Response({"detail": "texto requerido"}, status=400)
+        learned = services.aprender_estilo(texto_es, enviado or None,
+                                           getattr(request.user, "id", None))
+        return Response({"ok": True, "learned": learned})
+
 
 class EnvioViewSet(viewsets.ViewSet):
     required_module = "correo"
@@ -352,3 +393,18 @@ class EnvioViewSet(viewsets.ViewSet):
         if e.estado == "ENVIADO":
             return Response({"detail": "ya_enviado"}, status=400)
         return Response(services.enviar_envio(e, getattr(request.user, "id", None)))
+
+    @action(detail=True, methods=["post"])
+    def corregir(self, request, pk=None):
+        """Guarda la corrección del borrador y aprende de ella (estilo)."""
+        e = Envio.objects.filter(pk=pk).first()
+        if not e:
+            return Response({"detail": "Envío no existe"}, status=404)
+        antes = e.body_es or ""
+        nuevo = request.data.get("body_es")
+        if nuevo is not None:
+            e.body_es = nuevo
+            e.save(update_fields=["body_es", "updated_at"])
+        learned = services.aprender_estilo(antes, nuevo or antes,
+                                           getattr(request.user, "id", None))
+        return Response({"ok": True, "envio": EnvioSerializer(e).data, "learned": learned})

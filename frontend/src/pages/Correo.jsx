@@ -294,6 +294,14 @@ function Estilo({ es, inp, flash }) {
       <div style={{ marginTop: 12 }}>
         <button className="btn btn-primary" onClick={publicar}>{es ? "Publicar nueva versión" : "Publish new version"}</button>
       </div>
+      {Array.isArray(actual?.reglas?.learned) && actual.reglas.learned.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div className="micro">{es ? "PREFERENCIAS APRENDIDAS" : "LEARNED PREFERENCES"}</div>
+          {actual.reglas.learned.slice(-10).reverse().map((l, i) => (
+            <div key={i} style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>• {l.pref}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -327,6 +335,13 @@ function Redactar({ es, inp, selStyle, flash }) {
     }
     catch (e) { flash(e?.body?.detail || "Error"); }
   };
+  const aprender = async () => {
+    if (!envio) return;
+    try {
+      const r = await correoApi.envios.corregir(envio.id, { body_es: form.body_es });
+      flash(`${es ? "Aprendido" : "Learned"} (${r?.learned?.length || 0})`);
+    } catch (e) { flash(e?.body?.detail || "Error"); }
+  };
   return (
     <div className="card card-pad-lg" style={{ display: "grid", gap: 10, maxWidth: 820 }}>
       <input style={inp} placeholder={es ? "Expediente (UUID, opcional)" : "File (UUID, optional)"} value={form.expediente_id} onChange={(e) => setForm({ ...form, expediente_id: e.target.value })} />
@@ -346,6 +361,7 @@ function Redactar({ es, inp, selStyle, flash }) {
         <button className="btn btn-primary" onClick={crear}>{es ? "Crear borrador" : "Create draft"}</button>
         <button className="btn" disabled={!envio} onClick={traducir}>{es ? "Traducir" : "Translate"}</button>
         <button className="btn" disabled={!envio} onClick={enviar}>{es ? "Enviar" : "Send"}</button>
+        <button className="btn btn-ghost" disabled={!envio} onClick={aprender}>{es ? "Guardar corrección (aprender)" : "Save correction (learn)"}</button>
       </div>
       {envio && (
         <div style={{ marginTop: 6, fontSize: 12, color: "var(--text-secondary)" }}>
