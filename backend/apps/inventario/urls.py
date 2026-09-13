@@ -33,6 +33,8 @@ nodos_por_linea_view     = NodoAssignmentViewSet.as_view({"get":  "nodos_por_lin
 artifacts_por_exp_view   = NodoAssignmentViewSet.as_view({"get":  "artifacts_por_expediente"})
 # Sprint 2026-05-26 (CEO) · resumen de envio consolidado (ART-05 + transferencia).
 shipping_summary_view    = NodoAssignmentViewSet.as_view({"get":  "shipping_summary"})
+# Etapa 1 · salidas por cantidades (transferencias + líneas asignadas).
+salidas_view             = NodoAssignmentViewSet.as_view({"get":  "salidas"})
 # Sprint 2026-05-13 fase 8 · Transfer engine wiring.
 lineas_en_nodo_view      = NodoAssignmentViewSet.as_view({"get":  "lineas_en_nodo"})
 transfer_view            = NodoAssignmentViewSet.as_view({"post": "transfer"})
@@ -84,6 +86,10 @@ urlpatterns = router.urls + [
     path("inventario/expedientes/<uuid:exp_id>/shipping-summary/",
          shipping_summary_view,
          name="ena-shipping-summary"),
+    # Etapa 1 · todas las salidas del expediente por cantidades.
+    path("inventario/expedientes/<uuid:exp_id>/salidas/",
+         salidas_view,
+         name="ena-salidas"),
     # Sprint 2026-05-13 fase 8 · líneas con stock en un nodo y transfer
     # atómico de asignaciones para el wizard /transferencias/nueva.
     path("inventario/nodos/<uuid:nodo_id>/lineas-en-nodo/",
