@@ -770,54 +770,63 @@ class ExpedienteViewSet(viewsets.ViewSet):
         return Response(ExpedienteSerializer(e, context={"request": request}).data)
 
     def create(self, request):
-        # HARD SHIELD: CLIENT B2B NUNCA crea expedientes por este endpoint
-        # admin. Deben usar /api/expedientes/create-from-oc/.
+        # HARD SHIELD: CLIENT B2B nunca crea por este endpoint admin.
         denied = _deny_client_mutation(request, action_label="expediente.create")
-        if denied is not None: return denied
-
-        # ⚠ Wrap completo: cualquier excepción inesperada se devuelve como
-        # JSON 500 con detalle, NO como página HTML del Django default.
-        # Esto facilita debug en el frontend (la respuesta sigue siendo
-        # JSON parseable) y evita que el wizard explote con un parse error.
-        # Etapa 1 · B7 · idempotencia por token (reintentos no duplican).
+        if denied is not None:
+            return denied
+        # Etapa 1 · OPERACIÓN ÚNICA de creación: delegamos al orquestador
+        # canónico create-from-oc (el mismo que usan el portal y el MCP).
+        # Normalizamos el payload interno (talla→size, cantidad→qty) y
+        # devolvemos el expediente serializado para no romper el wizard.
         try:
-            token = (request.data.get("idempotence_token") or "").strip()
+            raw = dict(request.data or {})
         except Exception:
-            token = ""
-        if token:
-            with connection.cursor() as c:
-                c.execute("SELECT expediente_id::text FROM expedientes.create_idempotency WHERE token=%s", [token])
-                row = c.fetchone()
-            if row:
-                e = Expediente.objects.filter(pk=row[0]).first()
-                if e is not None:
-                    resp = Response(ExpedienteSerializer(e, context={"request": request}).data, status=200)
-                    resp["X-Idempotent-Replay"] = "true"
-                    return resp
+            raw = {}
+        raw_lines = raw.get("lines") or (raw.get("ocr_payload") or {}).get("lines") or []
+        ocr_payload = dict(raw.get("ocr_payload") or {})
+        if raw_lines and not ocr_payload.get("lines"):
+            norm_lines = []
+            for l in raw_lines:
+                if not isinstance(l, dict):
+                    continue
+                nl = {
+                    "sku": l.get("sku"),
+                    "size": l.get("size") or l.get("talla"),
+                    "qty": l.get("qty") if l.get("qty") is not None else l.get("cantidad"),
+                }
+                for k in ("producto_id", "unit_price_client", "unit_price_mwt", "commission_pct"):
+                    if l.get(k) is not None:
+                        nl[k] = l.get(k)
+                if l.get("price_override"):
+                    nl["price_override"] = True
+                norm_lines.append(nl)
+            ocr_payload["lines"] = norm_lines
+        norm = dict(raw)
+        norm["ocr_payload"] = ocr_payload
         try:
-            # Etapa 1 · alta atómica: OC + expediente + líneas en una sola
-            # transacción. Si algo falla (p. ej. una línea), no queda cabecera
-            # huérfana ni expediente parcial.
-            with transaction.atomic():
-                resp = self._do_create(request)
-                if token and getattr(resp, "status_code", None) == 201:
-                    new_id = (resp.data or {}).get("id") if isinstance(resp.data, dict) else None
-                    if new_id:
-                        with connection.cursor() as c:
-                            c.execute(
-                                "INSERT INTO expedientes.create_idempotency (token, expediente_id) "
-                                "VALUES (%s, %s) ON CONFLICT (token) DO NOTHING",
-                                [token, str(new_id)])
-                return resp
+            request._full_data = norm
+        except Exception:
+            pass
+        try:
+            from apps.expedientes.views_wizard import create_from_oc
+            resp = create_from_oc(request)
         except DRFValidationError as ve:
-            # Validación (expediente o líneas) → rollback total y 400 con detalle.
             return Response({"detail": "validation_error", "errors": ve.detail}, status=400)
         except Exception as e:
             log.exception("[expediente.create] unhandled exception")
-            return Response({
-                "detail": f"server_error: {type(e).__name__}",
-                "error":  str(e)[:500],
-            }, status=500)
+            return Response({"detail": f"server_error: {type(e).__name__}",
+                             "error": str(e)[:500]}, status=500)
+        # Adaptar la respuesta al contrato legacy (expediente serializado).
+        if getattr(resp, "status_code", None) == 201:
+            exp_id = (((resp.data or {}).get("expediente") or {}).get("id"))
+            if exp_id:
+                e = Expediente.objects.filter(pk=exp_id).first()
+                if e is not None:
+                    out = Response(ExpedienteSerializer(e, context={"request": request}).data, status=201)
+                    if "X-Idempotent-Replay" in resp:
+                        out["X-Idempotent-Replay"] = resp["X-Idempotent-Replay"]
+                    return out
+        return resp
 
     @action(detail=True, methods=["post"], url_path="anular")
     def anular(self, request, pk=None):

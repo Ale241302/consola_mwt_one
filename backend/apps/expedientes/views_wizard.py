@@ -1326,6 +1326,9 @@ def create_from_oc(request):
                         except Exception as _e:
                             log.warning("[wizard.create] matrix cliente falló sku=%s: %s", _sku, _e)
                             _sku_cache_client[_sku] = None
+                    _plc_ovr = ln.get("unit_price_client")
+                    _plm_ovr = ln.get("unit_price_mwt")
+                    _price_override = bool(ln.get("price_override"))
                     _price_client = _pick_plazo_price(_sku_cache_client.get(_sku), _cd_client)
                     # Sprint 2026-08-02 · fallback al precio manual por
                     # cliente (especificaciones.client_prices) si la
@@ -1359,6 +1362,14 @@ def create_from_oc(request):
                         # Sin operador intermedio: unit_price_mwt = unit_price_client
                         if _price_client is not None:
                             ln["unit_price_mwt"] = str(_price_client)
+
+                    # Etapa 1 · alta manual (price_override): respetar los
+                    # precios fijados explícitamente por el admin.
+                    if _price_override:
+                        if _plc_ovr is not None:
+                            ln["unit_price_client"] = str(_plc_ovr)
+                        if _plm_ovr is not None:
+                            ln["unit_price_mwt"] = str(_plm_ovr)
 
                 # 7.3 — Insertar Líneas (expedientes.linea)
                 # Sprint 2026-05-24 · persistir unit_price_mwt y unit_price_client

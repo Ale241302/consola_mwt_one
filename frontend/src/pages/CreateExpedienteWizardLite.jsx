@@ -30,7 +30,7 @@ import { useRole } from "../context/RoleContext.jsx";
 import { bandaForTC } from "../constants/marluvas.js";
 import { useExchangeRateUSDBRL } from "../hooks/useExchangeRateUSDBRL.js";
 import {
-  clientesApi, expedientesApi, lineasApi, productosApi, tallasApi, getToken,
+  clientesApi, expedientesApi, lineasApi, productosApi, tallasApi, getToken, apiFetch,
 } from "../lib/api.js";
 import {
   ManualLinePanel, RequestAssignmentDialog,
@@ -790,7 +790,35 @@ export default function CreateExpedienteWizardLite() {
         }),
       };
 
-      const resp = await expedientesApi.create(payload);
+      // Etapa 1 · creación ÚNICA: el alta manual usa el mismo endpoint que el
+      // portal y el MCP (`create-from-oc`), mapeando talla→size y cantidad→qty.
+      const cfocLines = payload.lines.map((l) => ({
+        sku: l.sku,
+        size: l.talla,
+        qty: l.cantidad,
+        ...(l.producto_id ? { producto_id: l.producto_id } : {}),
+        ...(l.commission_pct != null ? { commission_pct: l.commission_pct } : {}),
+        ...(l.price_override ? { price_override: true } : {}),
+        ...(l.unit_price_client != null ? { unit_price_client: l.unit_price_client } : {}),
+        ...(l.unit_price_mwt != null ? { unit_price_mwt: l.unit_price_mwt } : {}),
+      }));
+      const cfocResp = await apiFetch("/expedientes/create-from-oc/", {
+        method: "POST",
+        token: getToken(),
+        body: {
+          client_id: payload.client_id,
+          operating_company_id: payload.operating_company_id,
+          forma_pago: payload.forma_pago,
+          credit_days_mwt: payload.credit_days_mwt,
+          credit_days_cliente: payload.credit_days_cliente,
+          lines: cfocLines,
+          ...(payload.tc_usd_brl ? { tc_usd_brl: payload.tc_usd_brl } : {}),
+        },
+      });
+      const resp = {
+        id: cfocResp?.expediente?.id || null,
+        oc_id: cfocResp?.oc?.id || null,
+      };
       // Sprint 2026-05-07 Â· al crear un expediente nuevo, el CEO prefiere
       // aterrizar en la vista de la OC padre (/expedientes/{oc_id}) que
       // ya muestra el grupo de SAPs + el nuevo expediente al fondo.
