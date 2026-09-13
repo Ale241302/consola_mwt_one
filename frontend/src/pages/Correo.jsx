@@ -316,18 +316,19 @@ function Extracciones({ es, selStyle, flash }) {
       <div className="table-scroll" style={{ background: "var(--surface, #fff)", border: "1px solid var(--border-subtle, #E2E8F0)", borderRadius: 12 }}>
         <table className="table-sticky" style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
           <thead><tr style={{ background: "var(--surface-alt, #F1F5F9)" }}>
-            <Th>{es ? "Campo" : "Field"}</Th><Th>{es ? "Fecha" : "Date"}</Th><Th>{es ? "Precisión" : "Precision"}</Th>
+            <Th>{es ? "Campo" : "Field"}</Th><Th>{es ? "Mención" : "Kind"}</Th><Th>{es ? "Fecha" : "Date"}</Th><Th>{es ? "Precisión" : "Precision"}</Th>
             <Th>{es ? "Evidencia" : "Evidence"}</Th><Th>{es ? "Estado" : "Status"}</Th><Th right>{es ? "Acciones" : "Actions"}</Th>
           </tr></thead>
           <tbody>
-            {loading && <tr><td colSpan={6} style={{ padding: 28, textAlign: "center", color: "var(--text-tertiary)" }}>…</td></tr>}
-            {!loading && items.length === 0 && <tr><td colSpan={6} style={{ padding: 28, textAlign: "center", color: "var(--text-tertiary)" }}>{es ? "Sin propuestas." : "No proposals."}</td></tr>}
+            {loading && <tr><td colSpan={7} style={{ padding: 28, textAlign: "center", color: "var(--text-tertiary)" }}>…</td></tr>}
+            {!loading && items.length === 0 && <tr><td colSpan={7} style={{ padding: 28, textAlign: "center", color: "var(--text-tertiary)" }}>{es ? "Sin propuestas." : "No proposals."}</td></tr>}
             {items.map((x) => (
               <tr key={x.id} style={{ borderBottom: "1px solid var(--border-subtle, #F1F5F9)" }}>
                 <Td>
                   {x.campo}
                   {x.conflicto ? <span style={{ marginLeft: 6, padding: "2px 6px", borderRadius: 6, fontSize: 9, fontWeight: 700, background: "rgba(220,38,38,0.14)", color: "#991B1B" }}>CONFLICTO</span> : null}
                 </Td>
+                <Td>{x.tipo_mencion || "—"}</Td>
                 <Td mono>{x.valor_fecha || "—"}</Td>
                 <Td>{x.precision}</Td>
                 <Td>{(x.valor_raw || "").slice(0, 90)}</Td>

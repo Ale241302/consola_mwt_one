@@ -172,6 +172,8 @@ class MensajeViewSet(viewsets.ViewSet):
         creadas = extraccion_svc.crear_propuestas(
             m.id, exp_id, m.body_text or "", fuente="MENSAJE",
             user_id=getattr(request.user, "id", None))
+        creadas += extraccion_svc.extraer_de_adjuntos(
+            m.id, exp_id, getattr(request.user, "id", None))
         return Response(ExtraccionSerializer(creadas, many=True).data, status=201)
 
     @action(detail=False, methods=["post"])

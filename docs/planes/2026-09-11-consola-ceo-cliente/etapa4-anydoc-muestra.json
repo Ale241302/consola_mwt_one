@@ -1,0 +1,127 @@
+{
+  "root": "01 Marluvas",
+  "seleccion": {
+    ".pdf": 30,
+    ".xlsx": 20,
+    ".xls": 10,
+    ".docx": 8
+  },
+  "por_ext": {
+    ".pdf": {
+      "docs": 30,
+      "con_texto": 27,
+      "sin_texto": 3,
+      "errores": 0,
+      "fechas": 3,
+      "chars": 114732,
+      "segundos": 14.40617847442627
+    },
+    ".xlsx": {
+      "docs": 20,
+      "con_texto": 20,
+      "sin_texto": 0,
+      "errores": 0,
+      "fechas": 0,
+      "chars": 706441,
+      "segundos": 2.115450859069824
+    },
+    ".xls": {
+      "docs": 10,
+      "con_texto": 10,
+      "sin_texto": 0,
+      "errores": 0,
+      "fechas": 0,
+      "chars": 498966,
+      "segundos": 0.04731607437133789
+    },
+    ".docx": {
+      "docs": 8,
+      "con_texto": 8,
+      "sin_texto": 0,
+      "errores": 0,
+      "fechas": 1,
+      "chars": 10970,
+      "segundos": 0.0
+    }
+  },
+  "total": {
+    "docs": 68,
+    "con_texto": 65,
+    "sin_texto": 3,
+    "errores": 0,
+    "fechas": 4,
+    "segundos": 16.56894540786743
+  },
+  "campos": {
+    "ETD": 3,
+    "DUE": 1
+  },
+  "precision": {
+    "EXACTA": 4
+  },
+  "tipo_mencion": {
+    "CONFIRMACION": 4
+  },
+  "muestras": [
+    {
+      "file": "Pedido 1936143.pdf",
+      "ext": ".pdf",
+      "kind": "pdf-text",
+      "chars": 2765,
+      "fechas": [
+        {
+          "campo": "ETD",
+          "valor_fecha": "2020-07-23",
+          "precision": "EXACTA",
+          "tipo": "CONFIRMACION"
+        }
+      ],
+      "raw": "Data de Embarque: 23/07/2020"
+    },
+    {
+      "file": "Pedido 1902351.pdf",
+      "ext": ".pdf",
+      "kind": "pdf-text",
+      "chars": 4048,
+      "fechas": [
+        {
+          "campo": "ETD",
+          "valor_fecha": "2020-05-26",
+          "precision": "EXACTA",
+          "tipo": "CONFIRMACION"
+        }
+      ],
+      "raw": "Data de Embarque: 26/05/2020"
+    },
+    {
+      "file": "FE Alfa 1326 (2608004).pdf",
+      "ext": ".pdf",
+      "kind": "pdf-text",
+      "chars": 2077,
+      "fechas": [
+        {
+          "campo": "DUE",
+          "valor_fecha": "2026-08-14",
+          "precision": "EXACTA",
+          "tipo": "CONFIRMACION"
+        }
+      ],
+      "raw": "Fecha de vencimiento: 14-08-2026"
+    },
+    {
+      "file": "Carta de tiempos de entrega Importaciones y comrpas Honduras 2025.docx",
+      "ext": ".docx",
+      "kind": "docx",
+      "chars": 2086,
+      "fechas": [
+        {
+          "campo": "ETD",
+          "valor_fecha": "2026-10-20",
+          "precision": "EXACTA",
+          "tipo": "CONFIRMACION"
+        }
+      ],
+      "raw": "Reiteramos que nuestro equipo está dando máxima prioridad a estas órdenes para cumplir con la salida del 20 de octubre y mantener la calidad que ustedes esperan"
+    }
+  ]
+}

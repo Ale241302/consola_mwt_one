@@ -30,16 +30,30 @@ _MESES = {
 }
 _MES_RE = "|".join(_MESES.keys())
 
-# Campo -> palabras clave (se evalúan en minúsculas).
-_KEYWORDS = {
-    "PRODUCCION": ["produc", "fabric", "termin", "listo", "entrega en fab"],
-    "ETD":        ["etd", "salida", "embarque", "zarpe", "despacho", "sale"],
-    "ETA":        ["eta", "llegada", "arrib", "llega", "recib", "destino"],
-    "BL_AWB":     ["bl", "awb", "guia", "guía", "conocimiento", "mawb", "hawb"],
-    "DUE":        ["due", "vencimiento", "vence", "pago"],
-    "DOCUMENTO":  ["factura", "packing", "certificado", "documento"],
+# Campo -> patrón (con límites de palabra). Se evalúan en minúsculas.
+# Decisión E4 (tras evaluación real): evitar substrings ambiguos que generaban
+# falsos positivos — "bl" en "Bloqueado", "pago" en "Forma de Pago", "llegada"
+# en "90 días desde la llegada a puerto", "due" por el documento DUE (Brasil).
+_KEYWORD_RE = {
+    "PRODUCCION": re.compile(
+        r"\b(producci[oó]n|producc|fabricaci[oó]n|f[aá]brica|terminaci[oó]n|"
+        r"estar[aá]\s+listo|listo\s+para|sale\s+de\s+f[aá]brica)\b", re.I),
+    "BL_AWB": re.compile(
+        r"\b(bl|b/l|awb|mawb|hawb|gu[ií]a\s+a[eé]rea|conocimiento\s+de\s+embarque|"
+        r"bill\s+of\s+lading)\b", re.I),
+    "ETD": re.compile(
+        r"\b(etd|fecha\s+de\s+embarque|data\s+de\s+embarque|fecha\s+de\s+salida|"
+        r"salida|zarpe|despacho|shipped|shipment)\b", re.I),
+    "ETA": re.compile(
+        r"\b(eta|fecha\s+de\s+llegada|fecha\s+de\s+arribo|arribo|arriba\s+a|"
+        r"arrival|delivery)\b", re.I),
+    "DUE": re.compile(
+        r"\b(vencimiento|vence|vto|fecha\s+l[ií]mite|fecha\s+de\s+pago|due\s+date)\b", re.I),
+    "DOCUMENTO": re.compile(
+        r"\b(factura|packing\s+list|packing|certificado|documento)\b", re.I),
 }
-_ORDEN = ["PRODUCCION", "ETD", "ETA", "BL_AWB", "DUE", "DOCUMENTO"]
+# BL_AWB antes de ETD: "conocimiento de embarque" no debe clasificar como ETD.
+_ORDEN = ["PRODUCCION", "BL_AWB", "ETD", "ETA", "DUE", "DOCUMENTO"]
 
 _RE_ISO = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
 _RE_DMY = re.compile(r"\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b")
@@ -48,13 +62,37 @@ _RE_MES = re.compile(r"\b(" + _MES_RE + r")\b(?:\s+(?:de\s+)?(\d{4}))?", re.I)
 _RE_SIN_FECHA = re.compile(r"sin\s+fecha|no\s+hay\s+fecha|no\s+tenemos\s+fecha|sin\s+confirmar", re.I)
 _RE_ULTIMA = re.compile(r"última\s+semana|ultima\s+semana|fin\s+de|a\s+fin\s+de", re.I)
 
+# ── Clasificación de la mención (Etapa 4 · decisión) ──────────────────
+# CONSULTA  = pregunta; no es un hecho -> se descarta (no publicable).
+# PROPUESTA = tentativa/estimación; informativa -> no dispara conflicto.
+# CONFIRMACION = hecho asertado -> propuesta normal (sujeta a conflicto).
+_RE_CONSULTA = re.compile(
+    r"\?|¿|\b(cu[aá]ndo|qu[eé]\s+d[ií]a|es\s+posible|ser[ií]a\s+posible|podr[ií]as?|"
+    r"me\s+confirmas?|necesito\s+saber|tienen\s+alguna|hay\s+alguna|consulto|pregunto|"
+    r"podr[ií]an?\s+confirmar|agradezco\s+confirmar)\b", re.I)
+_RE_PROPUESTA = re.compile(
+    r"\b(propongo|proponemos|sugier[oa]|sugerimos|estim[oa]|estimamos|estimar[ií]a|"
+    r"tentativ|preliminar|aproximad|si\s+todo\s+va\s+bien|esperamos|deber[ií]a|"
+    r"en\s+principio|calculamos|prevemos|planeamos|la\s+idea\s+es|queremos|"
+    r"probablemente|posiblemente)\b", re.I)
+
+
+def _tipo_mencion(sentence: str) -> str:
+    """Clasifica una oración como CONSULTA, PROPUESTA o CONFIRMACION."""
+    s = sentence or ""
+    if _RE_CONSULTA.search(s):
+        return "CONSULTA"
+    if _RE_PROPUESTA.search(s):
+        return "PROPUESTA"
+    return "CONFIRMACION"
+
+
 
 def _campo_de_sentence(s: str) -> str | None:
     low = s.lower()
     for campo in _ORDEN:
-        for kw in _KEYWORDS[campo]:
-            if kw in low:
-                return campo
+        if _KEYWORD_RE[campo].search(low):
+            return campo
     return None
 
 
@@ -91,7 +129,7 @@ def _fechas_de_sentence(s: str):
 
 
 def extraer_de_texto(texto: str) -> list[dict]:
-    """Extrae propuestas {campo, valor_raw, valor_fecha, precision} de un texto."""
+    """Extrae propuestas {campo, valor_raw, valor_fecha, precision, tipo_mencion}."""
     if not texto:
         return []
     out = []
@@ -99,15 +137,16 @@ def extraer_de_texto(texto: str) -> list[dict]:
         campo = _campo_de_sentence(sentence)
         if not campo:
             continue
+        tipo = _tipo_mencion(sentence)
         if _RE_SIN_FECHA.search(sentence):
             out.append({"campo": campo, "valor_raw": sentence.strip()[:300],
-                        "valor_fecha": None, "precision": "DESCONOCIDA"})
+                        "valor_fecha": None, "precision": "DESCONOCIDA",
+                        "tipo_mencion": tipo})
             continue
         for raw, f, prec in _fechas_de_sentence(sentence):
-            if _RE_ULTIMA.search(sentence) and prec == "MES":
-                prec = "MES"
             out.append({"campo": campo, "valor_raw": sentence.strip()[:300],
-                        "valor_fecha": f.isoformat() if f else None, "precision": prec})
+                        "valor_fecha": f.isoformat() if f else None, "precision": prec,
+                        "tipo_mencion": tipo})
     return out
 
 
@@ -156,25 +195,234 @@ def _crear_tarea_revision(expediente_id, campo, valor_raw, user_id=None):
         log.warning("[extraccion.tarea] %s", exc)
 
 
-def crear_propuestas(mensaje_id, expediente_id, texto, fuente="MENSAJE", user_id=None) -> list:
+# ── Tareas de seguimiento (insistencia / reconfirmación) ──────────────
+def _crear_tarea_seguimiento(expediente_id, titulo, descripcion, *, campo, due_date,
+                             prioridad="ALTA", user_id=None):
+    """Crea una tarea de seguimiento evitando duplicar una abierta del mismo tipo."""
+    try:
+        from apps.tareas.models import Tarea
+        # dedup simple por título + expediente en estados abiertos
+        existe = Tarea.objects.filter(
+            is_active=True, expediente_id=expediente_id, titulo=titulo,
+        ).exclude(estado__in=["COMPLETADA", "CANCELADA"]).exists()
+        if existe:
+            return None
+        return Tarea.objects.create(
+            id=uuid.uuid4(), expediente_id=expediente_id, catalogo_codigo=None,
+            titulo=titulo, descripcion=(descripcion or "")[:500],
+            tipo="SEGUIMIENTO", estado="PENDIENTE", prioridad=prioridad,
+            origen="MANUAL", due_date=due_date, is_active=True, created_by_id=user_id,
+            evidence={"origen": "extraccion", "clase": campo.get("clase") if isinstance(campo, dict) else None},
+        )
+    except Exception as exc:
+        log.warning("[extraccion.tarea_seg] %s", exc)
+        return None
+
+
+def _sumar_dias_habiles(d, n: int):
+    from datetime import timedelta
+    cur = d
+    while n > 0:
+        cur = cur + timedelta(days=1)
+        if cur.weekday() < 5:
+            n -= 1
+    return cur
+
+
+def _crear_tarea_insistencia(ex, user_id=None):
+    """'No hay fecha' -> tarea para insistir una fecha concreta (cliente final)."""
+    hoy = date.today()
+    return _crear_tarea_seguimiento(
+        ex.expediente_id,
+        f"Solicitar fecha concreta de {ex.campo}",
+        f"COMEX indicó que no hay fecha para {ex.campo}. Insistir: el cliente final "
+        f"necesita una fecha concreta. Evidencia: {(ex.valor_raw or '')[:200]}",
+        campo={"clase": "INSISTENCIA_FECHA", "campo": ex.campo},
+        due_date=_sumar_dias_habiles(hoy, 5), prioridad="ALTA", user_id=user_id,
+    )
+
+
+def _crear_tarea_reconfirmacion(ex, user_id=None):
+    """Mes/rango impreciso -> reconfirmar la última semana del mes (día hábil)."""
+    from datetime import timedelta
+    base = ex.valor_fecha
+    if base is None:
+        # No tenemos día: usamos el 25 del mes/año en curso como referencia.
+        anio = date.today().year
+        base = date(anio, date.today().month, 25)
+    # Últimos días del mes: día 25 (o el viernes anterior si cae fin de semana).
+    ref = base.replace(day=25) if base.day != 25 else base
+    while ref.weekday() >= 5:
+        ref = ref - timedelta(days=1)
+    return _crear_tarea_seguimiento(
+        ex.expediente_id,
+        f"Reconfirmar fecha {ex.campo} (precisión {ex.precision})",
+        f"La fecha de {ex.campo} solo tiene precisión {ex.precision} "
+        f"('{ex.valor_raw or ''}'). Reconfirmar con fábrica una fecha concreta; "
+        f"al cliente se muestra 'última semana'; no se inventa un día.",
+        campo={"clase": "RECONFIRMAR_MES", "campo": ex.campo},
+        due_date=ref, prioridad="MEDIA", user_id=user_id,
+    )
+
+
+# ── Artefactos Builder (AWB/BL · ART-05) ──────────────────────────────
+# Decisión E4: solo se escriben campos con mapeo semántico claro; nada inventado.
+_ARTIFACT_MAP = {
+    "ETD":    {"template_id": 9, "field": "field-1780150662711", "kind": "date", "label": "Fecha de Despacho"},
+    "ETA":    {"template_id": 9, "field": "field-1780150673285", "kind": "date", "label": "Fecha de Arrivo"},
+    "BL_AWB": {"template_id": 9, "field": "field-0072",           "kind": "text", "label": "Tracking"},
+}
+_ARTIFACT_PENDING = {"template_id": 9, "field": "field-0076", "label": "Itinerario"}
+
+
+def _aplicar_artefactos(ex) -> dict:
+    """Escribe la fecha confirmada en el artefacto AWB/BL del expediente.
+    Devuelve {aplicado, field?, valor?, motivo?} para dejar traza."""
+    if not ex.expediente_id:
+        return {"aplicado": 0, "motivo": "sin expediente"}
+    try:
+        # 'No hay fecha': dejar constancia en el AWB/BL solo si el campo está vacío.
+        if (ex.precision or "").upper() == "DESCONOCIDA":
+            nota = f"PENDIENTE FECHA {ex.campo} — solicitada {date.today().isoformat()}"
+            with connection.cursor() as c:
+                c.execute("""
+                    UPDATE nodos.builder_artifact_instance i
+                       SET data = jsonb_set(COALESCE(i.data, '{}'::jsonb), ARRAY[%s],
+                                            to_jsonb(%s::text), TRUE),
+                           updated_at = NOW()
+                     WHERE i.template_id = %s AND i.is_active = TRUE
+                       AND NOT (COALESCE(i.data, '{}'::jsonb) ? %s)
+                       AND EXISTS (SELECT 1 FROM nodos.builder_artifact_line l
+                                    WHERE l.builder_artifact_instance_id = i.id
+                                      AND l.expediente_id = %s::uuid AND l.is_active = TRUE)
+                """, [_ARTIFACT_PENDING["field"], nota, _ARTIFACT_PENDING["template_id"],
+                      _ARTIFACT_PENDING["field"], str(ex.expediente_id)])
+                n = c.rowcount or 0
+            return {"aplicado": n, "field": _ARTIFACT_PENDING["field"], "nota": nota}
+
+        m = _ARTIFACT_MAP.get(ex.campo)
+        if not m:
+            return {"aplicado": 0, "motivo": "sin mapeo de artefacto"}
+        if m["kind"] == "date":
+            if not ex.valor_fecha:
+                return {"aplicado": 0, "motivo": "sin valor_fecha"}
+            valor = ex.valor_fecha.isoformat()
+        else:
+            valor = (ex.valor_raw or "")
+            if not valor and ex.valor_fecha:
+                valor = ex.valor_fecha.isoformat()
+            valor = valor[:200]
+        if not valor:
+            return {"aplicado": 0, "motivo": "sin valor"}
+        with connection.cursor() as c:
+            c.execute("""
+                UPDATE nodos.builder_artifact_instance i
+                   SET data = jsonb_set(COALESCE(i.data, '{}'::jsonb), ARRAY[%s],
+                                        to_jsonb(%s::text), TRUE),
+                       updated_at = NOW()
+                 WHERE i.template_id = %s AND i.is_active = TRUE
+                   AND EXISTS (SELECT 1 FROM nodos.builder_artifact_line l
+                                WHERE l.builder_artifact_instance_id = i.id
+                                  AND l.expediente_id = %s::uuid AND l.is_active = TRUE)
+            """, [m["field"], valor, m["template_id"], str(ex.expediente_id)])
+            n = c.rowcount or 0
+        return {"aplicado": n, "field": m["field"], "label": m["label"], "valor": valor}
+    except Exception as exc:
+        log.warning("[extraccion.artefactos] %s", exc)
+        return {"aplicado": 0, "error": str(exc)}
+
+
+# ── Extracción desde adjuntos (PDF/XLSX/DOCX/DUA) ─────────────────────
+_MAX_ADJ_BYTES = 15 * 1024 * 1024
+
+
+def extraer_de_adjuntos(mensaje_id, expediente_id, user_id=None) -> list:
+    """Extrae fechas del TEXTO de los adjuntos del mensaje. Reusa el
+    extractor text-native del ai_hub (PyMuPDF/pypdf/openpyxl/docx) — nunca
+    inventa: si no hay texto (PDF escaneado) no produce propuestas."""
+    from .models import Adjunto
+    try:
+        from apps.ai_hub.document_extractor import _to_text_payload
+    except Exception as exc:
+        log.warning("[extraccion.adjuntos] sin document_extractor: %s", exc)
+        return []
+    creadas = []
+    for a in Adjunto.objects.filter(mensaje_id=mensaje_id):
+        if not a.storage_key:
+            continue
+        if a.size_bytes and int(a.size_bytes) > _MAX_ADJ_BYTES:
+            continue
+        # Solo formatos con extractor text-native. Se omiten .xls/.doc (legacy,
+        # no parseables) e imágenes/escaneos (requieren visión/OCR, no disponible).
+        fname = (a.filename or "").lower()
+        mime = (a.mimetype or "").lower()
+        soportado = (
+            fname.endswith((".pdf", ".xlsx", ".xlsm", ".docx", ".txt", ".csv", ".tsv"))
+            or mime == "application/pdf"
+            or "spreadsheetml" in mime
+            or "wordprocessingml" in mime
+            or mime.startswith("text/")
+        )
+        if not soportado:
+            continue
+        try:
+            from apps.storage.services import get_object_stream
+            resp = get_object_stream(a.storage_key)
+            if resp is None:
+                continue
+            try:
+                data = resp.read()
+            finally:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+            text, kind, is_image = _to_text_payload(data, a.mimetype or "", a.filename or "")
+            if not text or len((text or "").strip()) < 10:
+                continue
+            creadas += crear_propuestas(
+                mensaje_id, expediente_id, text, fuente="ADJUNTO", user_id=user_id,
+                evidencias_extra={"adjunto_id": str(a.id), "filename": a.filename, "kind": kind})
+        except Exception as exc:
+            log.warning("[extraccion.adjuntos] %s: %s", a.filename, exc)
+    return creadas
+
+
+def crear_propuestas(mensaje_id, expediente_id, texto, fuente="MENSAJE", user_id=None,
+                     evidencias_extra=None) -> list:
     items = extraer_de_texto(texto or "")
     if not items:
         items = _llm_extraer(texto or "")
     creadas = []
     for it in items:
         campo = (it.get("campo") or "OTRO").upper()
-        if campo not in _KEYWORDS and campo != "OTRO":
+        if campo not in _KEYWORD_RE and campo != "OTRO":
             campo = "OTRO"
+        tipo = (it.get("tipo_mencion") or "CONFIRMACION").upper()
+        if tipo not in ("CONSULTA", "PROPUESTA", "CONFIRMACION"):
+            tipo = "CONFIRMACION"
+        # CONSULTA = pregunta -> se registra pero se descarta (no publicable).
+        estado = "RECHAZADO" if tipo == "CONSULTA" else "PROPUESTO"
+        # Solo un HECHO (CONFIRMACION) puede marcar conflicto / abrir revisión.
+        conflicto = (_conflicto(expediente_id, campo, it.get("valor_fecha"),
+                                it.get("precision") or "EXACTA")
+                     if tipo == "CONFIRMACION" else False)
+        if tipo == "CONSULTA":
+            confianza = 0.1
+        elif tipo == "PROPUESTA":
+            confianza = 0.4
+        else:
+            confianza = 0.6 if it.get("valor_fecha") else 0.3
+        ev = {"mensaje_id": str(mensaje_id) if mensaje_id else None, "tipo_mencion": tipo}
+        if evidencias_extra:
+            ev.update(evidencias_extra)
         try:
             ex = Extraccion.objects.create(
                 id=uuid.uuid4(), mensaje_id=mensaje_id, expediente_id=expediente_id,
                 campo=campo, valor_raw=it.get("valor_raw"), valor_fecha=it.get("valor_fecha"),
                 precision=it.get("precision") or "EXACTA", fuente=fuente,
-                confianza=0.6 if it.get("valor_fecha") else 0.3,
-                estado="PROPUESTO",
-                conflicto=_conflicto(expediente_id, campo, it.get("valor_fecha"), it.get("precision") or "EXACTA"),
-                evidencias={"mensaje_id": str(mensaje_id) if mensaje_id else None},
-                created_by_id=user_id,
+                confianza=confianza, estado=estado, conflicto=conflicto,
+                tipo_mencion=tipo, evidencias=ev, created_by_id=user_id,
             )
         except IntegrityError:
             continue
@@ -208,9 +456,22 @@ def confirmar(extraccion_id, user_id=None):
         Extraccion.objects.filter(
             expediente_id=ex.expediente_id, campo=ex.campo, estado="PROPUESTO",
         ).exclude(id=ex.id).update(estado="SUPERSEDIDO", updated_at=timezone.now())
+
+        # 1) Reflejar en el artefacto Builder (AWB/BL · ART-05) si hay mapeo.
+        traza = _aplicar_artefactos(ex)
+        # 2) Tareas de seguimiento según la certeza de la fecha.
+        prec = (ex.precision or "EXACTA").upper()
+        if prec == "DESCONOCIDA":
+            _crear_tarea_insistencia(ex, user_id)
+        elif prec in ("MES", "RANGO"):
+            _crear_tarea_reconfirmacion(ex, user_id)
+
+        ev = dict(ex.evidencias or {})
+        ev["artefacto"] = traza
+        ex.evidencias = ev
     ex.estado = "CONFIRMADO"
     ex.conflicto = False
-    ex.save(update_fields=["estado", "conflicto", "updated_at"])
+    ex.save(update_fields=["estado", "conflicto", "evidencias", "updated_at"])
     return ex
 
 

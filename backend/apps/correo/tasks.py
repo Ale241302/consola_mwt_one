@@ -52,4 +52,5 @@ def correo_extraer_pendientes_task(self):
     n = 0
     for mid, eid, body in rows:
         n += len(ex_svc.crear_propuestas(mid, eid, body or "", fuente="SYNC"))
+        n += len(ex_svc.extraer_de_adjuntos(mid, eid))
     return {"extraidas": n}
