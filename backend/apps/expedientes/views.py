@@ -1340,6 +1340,54 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 except Exception as e:
                     log.warning("[expediente.create] no pude actualizar OC.lines_count: %s", e)
 
+        # B6 · paridad con el portal: registrar el documento OC (kind='OC') y,
+        # si viene archivo, guardarlo en MinIO. Idempotente (no duplica OC doc).
+        try:
+            if oc_id_val:
+                storage_url = None
+                file_ext = None
+                file_size = 0
+                try:
+                    up = request.FILES.get("file")
+                except Exception:
+                    up = None
+                if up is not None:
+                    try:
+                        import io as _io
+                        from apps.storage.services import make_object_key, put_object_stream
+                        data_bytes = up.read()
+                        key = make_object_key("documento", up.name)
+                        put_object_stream(key, _io.BytesIO(data_bytes),
+                                          content_type=up.content_type or "application/octet-stream")
+                        storage_url = key
+                        file_size = len(data_bytes)
+                        file_ext = up.name.rsplit(".", 1)[-1].lower() if "." in up.name else None
+                    except Exception as e:
+                        log.warning("[expediente.create] no pude subir OC file: %s", e)
+                author = (getattr(request.user, "email", None)
+                          or getattr(request.user, "email_plain", None) or "system")
+                with connection.cursor() as c:
+                    c.execute("SELECT codigo FROM expedientes.oc WHERE id=%s::uuid", [str(oc_id_val)])
+                    row = c.fetchone()
+                    oc_codigo = row[0] if row else None
+                    c.execute("SELECT 1 FROM expedientes.documento "
+                              "WHERE oc_id=%s::uuid AND kind='OC' AND is_active LIMIT 1",
+                              [str(oc_id_val)])
+                    if c.fetchone() is None:
+                        po_codigo = (payload.get("po_number") or oc_codigo or "").strip() or None
+                        c.execute("""
+                            INSERT INTO expedientes.documento
+                              (id, oc_id, expediente_id, kind, codigo, file_ext,
+                               file_size_bytes, storage_url, author, fecha, audience,
+                               is_active, created_at, updated_at)
+                            VALUES (%s, %s::uuid, %s::uuid, 'OC', %s, %s,
+                                    %s, %s, %s, CURRENT_DATE, 'CLIENT',
+                                    TRUE, NOW(), NOW())
+                        """, [str(uuid.uuid4()), str(oc_id_val), str(new_id),
+                              po_codigo, file_ext, file_size, storage_url, author])
+        except Exception as e:
+            log.warning("[expediente.create] no pude registrar documento OC: %s", e)
+
         return Response(s.data, status=201)
 
     def update(self, request, pk=None):
