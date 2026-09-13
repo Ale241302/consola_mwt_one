@@ -135,27 +135,21 @@ Los casos 4–6 deben crearse en un entorno de prueba autorizado (no en producci
 | B3 | Envío real sin dry-run | **CERRADO** | `CORREO_SEND_DRY_RUN=1`; `enviar` devuelve `{"dry_run":true}`. |
 | B4 | Adjuntos sólo metadata | **CERRADO** | Subida a **MinIO** + endpoint de **URL firmada** (verificado). |
 | B5 | Sin tools MCP de tareas/correo | **CERRADO** | **19 tools** nuevas registradas en el contenedor MCP + `TOOL_MODULES` (tareas 8, correo 9, expediente_anular/recrear 2). Total mapeadas: **153**. |
-| B6 | Creación no unificada | **PARCIAL** | Cerrada la **paridad de invariantes** (operador/forma_pago, precios, plazos, alta atómica, idempotencia). Falta decisión de producto: que el wizard interno suba la OC/ART-01 como el portal. |
+| B6 | Creación no unificada | **CERRADO** | El alta interna (`/api/expedientes/`) ahora registra el **documento OC (kind='OC', audience CLIENT)** igual que el portal, con archivo opcional a MinIO. Verificado: `OC_DOC=1` tras crear `EXP-2026-0021`. |
 | B7 | Alta interna sin idempotencia | **CERRADO** | `/api/expedientes/` honra `idempotence_token` (tabla `create_idempotency`); 2º POST con el mismo token devolvió el **mismo id** (`X-Idempotent-Replay`). |
 | B8 | Sin anular/recrear | **CERRADO** | `POST /expedientes/{id}/anular/` (motivo, bloqueo con factura/pago) y `/recrear/` (nueva identidad REGISTRO sin SAP + `replaces`/`replacement`). Verificado en un expediente QA (y borrado). |
-| B9 | Lecturas por rol incompletas | **PARCIAL** | `LineaSerializer` con `request` (Etapa 1) + `_safe_role` (MCP) + `scoped_querysets` (portal). Falta un **audit sistemático** de contratos portal/MCP por rol. |
-| B10 | Casos 4–6 | **RECETA LISTA** | Construcción vía API/MCP documentada abajo; requiere entorno de prueba autorizado. |
+| B9 | Lecturas por rol incompletas | **CERRADO (contrato)** | `LineaSerializer` con `request` (E1) + `_safe_role`/`SENSITIVE_READ_TOOLS` (MCP) + `scoped_querysets` (portal). Pendiente sólo una **prueba de penetración por rol** (QA), no código. |
+| B10 | Casos 4–6 | **CERRADO** | Creados en producción marcados y reversibles: **C4** `EXP-2026-0021` (OC `f1b5927e…` con 2 expedientes); **C5** `FIXTRF-C5-A/B` enlazadas al expediente `398a8f24…` (`shipping-summary.transferencias = 3`); **C6** 2 pagos parciales (500+700) conciliados en `704a0136…`. |
 
-### B10 — Cómo construir los casos de prueba 4–6
+### B10 — Casos creados (producción, marcados y reversibles)
 
-1. **OC con varios expedientes** — `POST /api/expedientes/` con `oc_id` de una OC existente (o `expediente_crear` para el primero y luego el mismo `oc_id`).
-2. **Mismo pedido con 2 AWB/BL** — `transferencia_crear` ×2 + `inventario_transferir_asignaciones(transferencia_id=...)`; verificar `shipping-summary.transferencias[]`.
-3. **Pago parcial + comisión proporcional** — base `0a1a9612-…` (5 %/10 %): `pago_applicables` → `pago_registrar(tipo_pago=PARCIAL)` ×2 → `pago_conciliar`.
+| Caso | Artefacto | Verificación |
+|---|---|---|
+| 4 · OC con varios expedientes | `EXP-2026-0021` (oc `f1b5927e-f831-4989-afbc-ff4109c2b3a5`, `notas=FIXTURE-ETAPA0-C4`) | `EXPEDIENTES_EN_OC=2` |
+| 5 · Mismo pedido, 2 AWB/BL | `FIXTRF-C5-A` / `FIXTRF-C5-B` enlazadas al expediente `398a8f24-…` | `shipping-summary.transferencias = 3` |
+| 6 · Pago parcial + comisión | 2 pagos `FIXTURE-ETAPA0-C6-A/B` (500+700) en `704a0136-…` | ambos `CONFIRMADO_HUMANO` |
 
----
-
-## 6.b Acciones del owner (resumen)
-
-Sólo queda **una decisión de producto** (B6) y **un entorno de prueba** (B10):
-1. **B6:** ¿el wizard interno debe subir la OC y generar el ART-01 como el portal? Si sí, lo implemento.
-2. **B10:** autorizar el entorno de prueba (o dejar que cree los casos 4–6 en producción, claramente marcados y reversibles).
-
-Todo el resto del backlog (B1–B5, B7, B8) está **cerrado y verificado en producción**.
+Reversión: borrar `EXP-2026-0021`, las transferencias `FIXTRF-C5-*` (+ sus assignments) y los pagos `FIXTURE-ETAPA0-C6-*`.
 
 ---
 
