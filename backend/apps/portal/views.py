@@ -581,6 +581,7 @@ class PortalViewSet(viewsets.ViewSet):
               SELECT d.codigo
                 FROM expedientes.documento d
                WHERE d.is_active = TRUE
+                 AND d.audience = 'CLIENT'
                  AND d.kind ~* '^OC([ _]|$)'
                  AND COALESCE(d.codigo, '') <> ''
                  AND (d.oc_id = o.id OR d.expediente_id IN (
@@ -672,6 +673,7 @@ class PortalViewSet(viewsets.ViewSet):
               SELECT d.codigo
                 FROM expedientes.documento d
                WHERE d.is_active = TRUE
+                 AND d.audience = 'CLIENT'
                  AND d.kind ~* '^OC([ _]|$)'
                  AND COALESCE(d.codigo, '') <> ''
                  AND (d.oc_id = o.id OR d.expediente_id = e.id)
@@ -781,6 +783,7 @@ class PortalViewSet(viewsets.ViewSet):
               d.fecha, d.storage_url
             FROM expedientes.documento d
             WHERE d.is_active = TRUE
+              AND d.audience = 'CLIENT'
               AND (
                 d.oc_id IN (SELECT id FROM expedientes.oc
                             WHERE lower(client_id::text) IN ({placeholders})

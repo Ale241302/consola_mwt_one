@@ -898,6 +898,60 @@ class ExpedienteViewSet(viewsets.ViewSet):
         return Response({"ok": True, "new_expediente_id": new_id,
                          "replaces": str(exp.id), "motivo": motivo}, status=201)
 
+    @action(detail=True, methods=["get"], url_path="referencias")
+    def referencias(self, request, pk=None):
+        """Etapa 1 · Formaliza OC -> expedientes -> proforma y detecta
+        referencias ambiguas (proforma en varios expedientes o varias
+        proformas en un expediente)."""
+        e = (Expediente.objects.filter(pk=pk, is_active=True).first()
+             or Expediente.objects.filter(codigo=pk, is_active=True).first())
+        if not e:
+            return Response({"detail": "Expediente no existe"}, status=404)
+        with connection.cursor() as c:
+            c.execute("""SELECT DISTINCT codigo FROM expedientes.documento
+                          WHERE expediente_id = %s::uuid AND kind = 'PROFORMA'
+                            AND is_active AND COALESCE(codigo, '') <> ''""", [str(e.id)])
+            proformas = [r[0] for r in c.fetchall()]
+            oc = None
+            expedientes = []
+            if e.oc_id:
+                c.execute("SELECT codigo FROM expedientes.oc WHERE id = %s::uuid", [str(e.oc_id)])
+                r = c.fetchone()
+                oc = {"id": str(e.oc_id), "codigo": r[0] if r else None}
+                c.execute("""
+                    SELECT ex.id::text, ex.codigo, ex.estado,
+                           (SELECT d.codigo FROM expedientes.documento d
+                             WHERE d.expediente_id = ex.id AND d.kind = 'PROFORMA'
+                               AND d.is_active AND COALESCE(d.codigo, '') <> ''
+                             ORDER BY d.created_at DESC LIMIT 1) AS proforma
+                      FROM expedientes.expediente ex
+                     WHERE ex.oc_id = %s::uuid AND ex.is_active
+                     ORDER BY ex.codigo
+                """, [str(e.oc_id)])
+                expedientes = [{"id": x[0], "codigo": x[1], "estado": x[2], "proforma": x[3]}
+                               for x in c.fetchall()]
+            ambiguous = []
+            if proformas:
+                c.execute("""
+                    SELECT d.codigo, COUNT(DISTINCT d.expediente_id) n
+                      FROM expedientes.documento d
+                      JOIN expedientes.expediente ex ON ex.id = d.expediente_id
+                     WHERE d.kind = 'PROFORMA' AND d.is_active AND ex.is_active
+                       AND d.codigo = ANY(%s)
+                     GROUP BY d.codigo HAVING COUNT(DISTINCT d.expediente_id) > 1
+                """, [proformas])
+                ambiguous += [{"tipo": "proforma_multi_expediente", "codigo": cod, "expedientes": n}
+                              for cod, n in c.fetchall()]
+            if len(proformas) > 1:
+                ambiguous.append({"tipo": "expediente_multi_proforma", "codigos": proformas})
+        return Response({
+            "expediente": {"id": str(e.id), "codigo": e.codigo},
+            "oc": oc,
+            "expedientes": expedientes,
+            "proformas": proformas,
+            "ambiguous": ambiguous,
+        })
+
     def _do_create(self, request):
         # Sprint Wizard Simplificado (2026-04-29):
         #   El wizard manda payload mínimo (client_id + estado + lines[])
@@ -1387,6 +1441,56 @@ class ExpedienteViewSet(viewsets.ViewSet):
                               po_codigo, file_ext, file_size, storage_url, author])
         except Exception as e:
             log.warning("[expediente.create] no pude registrar documento OC: %s", e)
+
+        # Etapa 1 · unificación de registros: el alta interna deja los mismos
+        # registros que el portal (ART-01 + evento de creación). Best-effort.
+        try:
+            import json as _json
+            _corr = uuid.uuid4()
+            _oc_codigo_evt = None
+            with connection.cursor() as c:
+                if oc_id_val:
+                    c.execute("SELECT codigo FROM expedientes.oc WHERE id=%s::uuid", [str(oc_id_val)])
+                    _r = c.fetchone()
+                    _oc_codigo_evt = _r[0] if _r else None
+                _auth = (getattr(request.user, "email", None)
+                         or getattr(request.user, "email_plain", None) or "system")
+                _role = str(getattr(request.user, "role_default", None)
+                            or getattr(request.user, "role", None) or "INTERNAL")
+                c.execute("""
+                    INSERT INTO expedientes.artifact_instances
+                      (id, expediente_id, oc_id, artifact_code, kind, codigo,
+                       ocr_status, ocr_engine, ocr_confidence, ocr_payload,
+                       action_source, correlation_id, author, fecha,
+                       visibility_tier, is_active, created_at, updated_at,
+                       operating_company_id, forma_pago, payment_days)
+                    VALUES (%s, %s::uuid, %s::uuid, 'ART-01', 'OC Cliente', %s,
+                            'DONE', 'manual', 0, %s::jsonb,
+                            'C1', %s::uuid, %s, CURRENT_DATE,
+                            'INTERNAL', TRUE, NOW(), NOW(),
+                            %s::uuid, %s, %s)
+                """, [str(uuid.uuid4()), str(new_id),
+                      (str(oc_id_val) if oc_id_val else None),
+                      (payload.get("po_number") or _oc_codigo_evt),
+                      _json.dumps({"source": "internal_wizard", "lines_count": line_count}),
+                      str(_corr), _auth,
+                      (str(operating_company_id) if operating_company_id else None),
+                      payload.get("forma_pago"),
+                      (int(payload.get("credit_days_cliente")) if payload.get("credit_days_cliente") else None)])
+                c.execute("""
+                    INSERT INTO pipeline.event_log
+                      (id, correlation_id, event_type, aggregate_type, aggregate_id,
+                       action_source, previous_status, new_status, payload,
+                       emitted_by_role, is_active, created_at, updated_at,
+                       phase_from, phase_to)
+                    VALUES (%s, %s::uuid, 'expediente.created', 'expediente', %s::uuid,
+                            'C1', NULL, 'REGISTRO', %s::jsonb,
+                            %s, TRUE, NOW(), NOW(), NULL, 'REGISTRO')
+                """, [str(uuid.uuid4()), str(_corr), str(new_id),
+                      _json.dumps({"source": "internal_wizard", "lines_count": line_count,
+                                   "oc_codigo": _oc_codigo_evt}), _role])
+        except Exception as e:
+            log.warning("[expediente.create] no pude registrar ART-01/evento: %s", e)
 
         return Response(s.data, status=201)
 
@@ -4412,6 +4516,22 @@ class ExpedienteViewSet(viewsets.ViewSet):
             log.exception("[edit_full] patch failed: %s", e)
             return Response({"detail": "patch_failed", "error": str(e)[:200]}, status=500)
 
+        # Etapa 1 · intención del split: modo (LOGISTICO|COMERCIAL) + motivo.
+        _split_modo = (payload.get("split_modo") or "LOGISTICO").strip().upper()
+        _split_motivo = (payload.get("split_motivo") or "").strip() or None
+        if split_res and split_res.get("new_expediente_id") and _split_motivo:
+            try:
+                with connection.cursor() as c:
+                    c.execute("""
+                        UPDATE expedientes.expediente
+                           SET notas = COALESCE(notas || E'\n', '') || %s,
+                               updated_at = NOW()
+                         WHERE id = %s::uuid
+                    """, [f"[SPLIT {_split_modo}] {_split_motivo}",
+                          str(split_res["new_expediente_id"])])
+            except Exception as e:
+                log.warning("[edit_full] no pude guardar split_motivo: %s", e)
+
         return Response({
             "ok": True,
             "expediente_id": str(exp.id),
@@ -4426,6 +4546,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
             "new_expediente_id": (split_res or {}).get("new_expediente_id"),
             "new_expediente_codigo": (split_res or {}).get("new_codigo"),
             "new_oc_id": (split_res or {}).get("new_oc_id"),
+            "split_modo": _split_modo,
+            "split_motivo": _split_motivo,
         }, status=200)
 
     def _get_full(self, request, pk=None):

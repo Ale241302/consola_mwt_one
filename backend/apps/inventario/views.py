@@ -960,6 +960,41 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
         resp["Pragma"]        = "no-cache"
         return resp
 
+    # ── 9ter) Salidas por cantidades (Etapa 1) ──────────────────────
+    @action(detail=False, methods=["get"],
+            url_path=r"expedientes/(?P<exp_id>[^/.]+)/salidas")
+    def salidas(self, request, exp_id=None):
+        """Representa TODAS las salidas del expediente por cantidades: por cada
+        transferencia, las líneas (producto/talla/cantidad) asignadas."""
+        try:
+            uuid.UUID(str(exp_id))
+        except (TypeError, ValueError):
+            return Response({"detail": "exp_id invalido"}, status=400)
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT t.id::text, t.codigo, t.estado, t.eta, t.ref_tracking,
+                       a.producto_id::text, COALESCE(a.talla, ''), SUM(a.qty_asignada)
+                  FROM inventario.expediente_nodo_assignment a
+                  JOIN transfers.transferencia t ON t.id = a.transferencia_id
+                 WHERE a.expediente_id = %s::uuid AND a.is_active
+                   AND a.transferencia_id IS NOT NULL
+                 GROUP BY t.id, t.codigo, t.estado, t.eta, t.ref_tracking,
+                          a.producto_id, a.talla
+                 ORDER BY t.created_at DESC, a.producto_id, a.talla
+            """, [str(exp_id)])
+            rows = c.fetchall()
+        salidas: dict = {}
+        for r in rows:
+            s = salidas.setdefault(r[0], {
+                "transferencia_id": r[0], "codigo": r[1], "estado": r[2],
+                "eta": r[3].isoformat() if r[3] else None,
+                "ref_tracking": r[4], "lineas": [],
+            })
+            s["lineas"].append({"producto_id": r[5], "talla": r[6], "qty": float(r[7] or 0)})
+        return Response({"expediente_id": str(exp_id),
+                         "salidas": list(salidas.values()),
+                         "total_salidas": len(salidas)})
+
     # ── 9) Artefactos del Builder relacionados a un expediente ──
     # Sprint 2026-05-11 fase 6 · La tab "Artefactos" del detalle de
     # expediente lista todas las instancias de Builder (de cualquier
