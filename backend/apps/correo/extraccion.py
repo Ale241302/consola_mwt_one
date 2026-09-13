@@ -348,35 +348,68 @@ def _aplicar_artefactos(ex) -> dict:
 # ── Extracción desde adjuntos (PDF/XLSX/DOCX/DUA) ─────────────────────
 _MAX_ADJ_BYTES = 15 * 1024 * 1024
 
+# Formatos con extractor text-native propio.
+_ADJ_BASE_EXT = (".pdf", ".xlsx", ".xlsm", ".docx", ".txt", ".csv", ".tsv")
+# Formatos adicionales que AnyDoc sí convierte (incluye legacy .xls/.doc).
+_ADJ_ANYDOC_EXT = (".pdf", ".xlsx", ".xlsm", ".xls", ".docx", ".doc", ".docm",
+                   ".pptx", ".rtf", ".odt", ".ods", ".odp", ".txt", ".csv", ".tsv")
+
+
+def _to_markdown_anydoc(data: bytes, filename: str):
+    """Convierte bytes a Markdown con AnyDoc (firecrawl-anydoc). None si no está
+    instalado o la conversión falla (p. ej. escaneo → NeedsOcr)."""
+    try:
+        import anydoc  # type: ignore
+    except Exception:
+        return None
+    try:
+        return anydoc.to_markdown_bytes(data)
+    except Exception as exc:  # noqa: BLE001
+        log.info("[extraccion.anydoc] %s -> %s", filename, type(exc).__name__)
+        return None
+
+
+def _texto_de_adjunto(data: bytes, mime: str, filename: str, anydoc_enabled: bool):
+    """Devuelve (texto, etiqueta_conversor). AnyDoc primero (mejor cobertura);
+    fallback al texto propio. None si no hay texto útil."""
+    from django.conf import settings
+    from apps.ai_hub.document_extractor import _to_text_payload
+
+    fname = (filename or "").lower()
+    own_text, own_kind, is_image = ("", "unknown", False)
+    if any(fname.endswith(e) for e in _ADJ_BASE_EXT) or mime.startswith("text/") \
+            or mime in ("application/pdf",) or "spreadsheetml" in mime or "wordprocessingml" in mime:
+        own_text, own_kind, is_image = _to_text_payload(data, mime, filename)
+
+    md = None
+    if anydoc_enabled and not is_image:
+        md = _to_markdown_anydoc(data, filename)
+
+    min_chars = int(getattr(settings, "CORREO_ANYDOC_MIN_CHARS", 20) or 20)
+    # Preferimos AnyDoc si aporta contenido suficiente; si no, el texto propio.
+    if md and len(md.strip()) >= min_chars and len(md) >= 0.5 * len(own_text or ""):
+        return md, "anydoc-md"
+    if own_text and len(own_text.strip()) >= 10 and not (fname.endswith((".xls", ".doc"))):
+        return own_text, own_kind
+    return None, None
+
 
 def extraer_de_adjuntos(mensaje_id, expediente_id, user_id=None) -> list:
-    """Extrae fechas del TEXTO de los adjuntos del mensaje. Reusa el
-    extractor text-native del ai_hub (PyMuPDF/pypdf/openpyxl/docx) — nunca
-    inventa: si no hay texto (PDF escaneado) no produce propuestas."""
+    """Extrae fechas del TEXTO de los adjuntos del mensaje. AnyDoc (si está
+    habilitado e instalado) convierte el adjunto a Markdown; fallback al
+    extractor text-native del ai_hub. Nunca inventa: sin texto → sin propuestas."""
+    from django.conf import settings
     from .models import Adjunto
-    try:
-        from apps.ai_hub.document_extractor import _to_text_payload
-    except Exception as exc:
-        log.warning("[extraccion.adjuntos] sin document_extractor: %s", exc)
-        return []
+    anydoc_enabled = bool(getattr(settings, "CORREO_ANYDOC_ENABLED", True))
+    permitidos = _ADJ_ANYDOC_EXT if anydoc_enabled else _ADJ_BASE_EXT
     creadas = []
     for a in Adjunto.objects.filter(mensaje_id=mensaje_id):
         if not a.storage_key:
             continue
         if a.size_bytes and int(a.size_bytes) > _MAX_ADJ_BYTES:
             continue
-        # Solo formatos con extractor text-native. Se omiten .xls/.doc (legacy,
-        # no parseables) e imágenes/escaneos (requieren visión/OCR, no disponible).
         fname = (a.filename or "").lower()
-        mime = (a.mimetype or "").lower()
-        soportado = (
-            fname.endswith((".pdf", ".xlsx", ".xlsm", ".docx", ".txt", ".csv", ".tsv"))
-            or mime == "application/pdf"
-            or "spreadsheetml" in mime
-            or "wordprocessingml" in mime
-            or mime.startswith("text/")
-        )
-        if not soportado:
+        if not fname.endswith(permitidos):
             continue
         try:
             from apps.storage.services import get_object_stream
@@ -390,8 +423,8 @@ def extraer_de_adjuntos(mensaje_id, expediente_id, user_id=None) -> list:
                     resp.close()
                 except Exception:
                     pass
-            text, kind, is_image = _to_text_payload(data, a.mimetype or "", a.filename or "")
-            if not text or len((text or "").strip()) < 10:
+            text, kind = _texto_de_adjunto(data, a.mimetype or "", a.filename or "", anydoc_enabled)
+            if not text or len(text.strip()) < 10:
                 continue
             creadas += crear_propuestas(
                 mensaje_id, expediente_id, text, fuente="ADJUNTO", user_id=user_id,

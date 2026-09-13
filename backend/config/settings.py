@@ -127,6 +127,12 @@ CORREO_SENT_FOLDER   = os.environ.get("CORREO_SENT_FOLDER", "INBOX.Sent")
 # Seguridad QA: por defecto el envío es SIMULADO (no manda correo real).
 # Pon CORREO_SEND_DRY_RUN=0 para habilitar el envío efectivo.
 CORREO_SEND_DRY_RUN  = os.environ.get("CORREO_SEND_DRY_RUN", "1")
+
+# Etapa 4 · AnyDoc (firecrawl-anydoc) como convertidor de adjuntos a Markdown.
+# Si está habilitado y el paquete está instalado, se usa AnyDoc para el texto de
+# los adjuntos (PDF/Word/Excel/…); si falla o no está, cae al texto propio.
+CORREO_ANYDOC_ENABLED   = os.environ.get("CORREO_ANYDOC_ENABLED", "1") == "1"
+CORREO_ANYDOC_MIN_CHARS = int(os.environ.get("CORREO_ANYDOC_MIN_CHARS", "20"))
 # Sync por API de Hostinger Mail (preferido si hay HOSTINGER_MAIL_API_KEY).
 HOSTINGER_MAIL_API_KEY   = os.environ.get("HOSTINGER_MAIL_API_KEY", "")
 HOSTINGER_MAIL_BASE_URL  = os.environ.get("HOSTINGER_MAIL_BASE_URL", "https://api.mail.hostinger.com")

@@ -1,4 +1,4 @@
-# MWT.ONE · backend requirements
+﻿# MWT.ONE Â· backend requirements
 Django==5.0.8
 djangorestframework==3.15.2
 djangorestframework-simplejwt==5.3.1
@@ -11,32 +11,36 @@ psycopg[binary]==3.2.1
 celery==5.4.0
 redis==5.0.8
 minio==7.2.8
-# Render de plantillas de email (apps.email_templates · apps.tickets)
+# Render de plantillas de email (apps.email_templates Â· apps.tickets)
 Jinja2==3.1.4
 requests==2.32.3
 python-dotenv==1.0.1
 gunicorn==23.0.0
 # AI Hub (apps.ai_hub)
 anthropic==0.39.0
-# OCR Aduanal del Motor de Transferencias (apps.transfers.ocr_customs · gpt-5-nano)
-# Sprint 2026-05-11 · subido a 1.66.0 para que client.responses.create
+# OCR Aduanal del Motor de Transferencias (apps.transfers.ocr_customs Â· gpt-5-nano)
+# Sprint 2026-05-11 Â· subido a 1.66.0 para que client.responses.create
 # acepte input_file (PDF directo al LLM, sin convertir a imagen). Este
 # parche permite que apps.ai_hub.document_extractor procese PDFs
-# escaneados sin texto extraíble — el modelo ve el PDF como archivo
+# escaneados sin texto extraÃ­ble â€” el modelo ve el PDF como archivo
 # nativo. Ver https://platform.openai.com/docs/api-reference/responses
-# La versión 1.55.3+ ya parchó el TypeError proxies=None de httpx 0.28
-# (PR openai/openai-python#1839), así que se quita el pin de httpx<0.28.
+# La versiÃ³n 1.55.3+ ya parchÃ³ el TypeError proxies=None de httpx 0.28
+# (PR openai/openai-python#1839), asÃ­ que se quita el pin de httpx<0.28.
 openai==1.66.0
 # 2026-05-02 (AG-03): pymupdf usado SOLO por apps.expedientes.proforma_extractor
 # para renderizar PDFs a PNG y mandar a vision API. Aislado de la OC: si
-# pymupdf falla o no está, el módulo proforma devuelve error sin afectar OC.
+# pymupdf falla o no estÃ¡, el mÃ³dulo proforma devuelve error sin afectar OC.
 pymupdf==1.24.10
 pypdf==5.1.0
 pillow==10.4.0
-# Ficha técnica PDF de producto (Sprint 2026-07-24 · ReportLab)
+# Ficha tÃ©cnica PDF de producto (Sprint 2026-07-24 Â· ReportLab)
 reportlab==4.2.2
-# Motor de Precios COMEX — parseo Excel (Tabela de preços v6+)
+# Motor de Precios COMEX â€” parseo Excel (Tabela de preÃ§os v6+)
 openpyxl==3.1.5
 
 # Validacion de tokens Microsoft Entra ID (M365 Copilot MCP) - RS256 via JWKS
 cryptography>=42.0
+
+# Etapa 4 - AnyDoc (firecrawl-anydoc): convierte PDF/Word/Excel a Markdown.
+# Conversor de adjuntos en apps.correo.extraccion; fallback al texto propio.
+firecrawl-anydoc
