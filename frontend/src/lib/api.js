@@ -651,6 +651,9 @@ export const tareasApi = {
   },
   adjuntoEliminar: (id, idx) => apiFetch(`/tareas/${id}/adjuntos/${idx}/eliminar/`, { method: "POST", token: getToken() }),
   asignar:     (id, body)    => apiFetch(`/tareas/${id}/asignar/`, { method: "POST", body, token: getToken() }),
+  reasignar:   (body)        => apiFetch(`/tareas/reasignar/`, { method: "POST", body, token: getToken() }),
+  agendaUsuario: (userId)    => apiFetch(`/tareas/agenda-usuario/?user_id=${encodeURIComponent(userId)}`, { token: getToken() }),
+  vencidas:    (userId)      => apiFetch(`/tareas/vencidas/${userId ? `?user_id=${encodeURIComponent(userId)}` : ""}`, { token: getToken() }),
   selectUsuarios: ()         => apiFetch(`/tareas/select-usuarios/`, { token: getToken() }),
   selectResponsables: ()     => apiFetch(`/tareas/select_responsables/`, { token: getToken() }),
   catalogo: {

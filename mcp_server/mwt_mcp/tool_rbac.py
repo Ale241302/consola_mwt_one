@@ -238,6 +238,9 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "tarea_completar":       ("tareas", "update"),
     "tarea_reprogramar":     ("tareas", "update"),
     "tarea_cancelar":        ("tareas", "update"),
+    "tarea_reasignar":       ("tareas", "update"),
+    "tarea_agenda_usuario":  ("tareas", "view"),
+    "tarea_vencidas":        ("tareas", "view"),
 
     # Etapa 3 · Correo (bandeja + contactos + envíos)
     "correo_mensaje_listar":   ("correo", "view"),

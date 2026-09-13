@@ -294,6 +294,57 @@ class TareaViewSet(viewsets.ViewSet):
             return Response([{"id": r[0], "nombre": r[1], "email": r[2], "role": r[3]}
                              for r in c.fetchall()])
 
+    @action(detail=False, methods=["post"], url_path="reasignar")
+    def reasignar(self, request):
+        """Delegación en lote: reasigna tareas ABIERTAS a otro usuario.
+
+        body: { tarea_ids?: [uuid], from_user_id?, to_user_id (req), motivo? }
+        Si hay `tarea_ids` se usa esa lista; si no, todas las abiertas de `from_user_id`.
+        """
+        body = request.data or {}
+        to_id = body.get("to_user_id")
+        if not to_id:
+            return Response({"detail": "to_user_id requerido"}, status=400)
+        ids = body.get("tarea_ids") or []
+        qs = Tarea.objects.filter(is_active=True).exclude(estado__in=["RESUELTA", "CANCELADA"])
+        if ids:
+            qs = qs.filter(id__in=ids)
+        elif body.get("from_user_id"):
+            qs = qs.filter(responsable_user_id=body["from_user_id"])
+        else:
+            return Response({"detail": "tarea_ids o from_user_id requerido"}, status=400)
+        target_ids = list(qs.values_list("id", flat=True))
+        n = qs.update(responsable_user_id=to_id, updated_at=timezone.now())
+        motivo = (body.get("motivo") or "")[:300]
+        uid = getattr(request.user, "id", None)
+        for tid in target_ids:
+            services.log_evento(tid, "REASIGNADA",
+                                {"to_user_id": to_id, "motivo": motivo}, uid)
+        return Response({"ok": True, "reasignadas": n, "to_user_id": to_id})
+
+    @action(detail=False, methods=["get"], url_path="agenda-usuario")
+    def agenda_usuario(self, request):
+        """Agenda de un usuario: sus tareas ABIERTAS ordenadas por vencimiento."""
+        uid = request.query_params.get("user_id")
+        if not uid:
+            return Response({"detail": "user_id requerido"}, status=400)
+        qs = (Tarea.objects.filter(is_active=True, responsable_user_id=uid)
+              .exclude(estado__in=["RESUELTA", "CANCELADA"])
+              .order_by(F("due_date").asc(nulls_last=True), "prioridad"))
+        return Response(TareaSerializer(qs[:500], many=True).data)
+
+    @action(detail=False, methods=["get"])
+    def vencidas(self, request):
+        """Tareas ABIERTAS con due_date < hoy (revisión diaria)."""
+        uid = request.query_params.get("user_id")
+        qs = (Tarea.objects.filter(is_active=True, due_date__lt=date.today())
+              .exclude(estado__in=["RESUELTA", "CANCELADA"]))
+        if uid:
+            qs = qs.filter(responsable_user_id=uid)
+        qs = qs.order_by("due_date")
+        data = TareaSerializer(qs[:500], many=True).data
+        return Response({"count": len(data), "hoy": date.today().isoformat(), "results": data})
+
     # ---- acciones --------------------------------------------------
     @action(detail=True, methods=["post"])
     def enviar(self, request, pk=None):

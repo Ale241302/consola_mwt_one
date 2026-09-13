@@ -215,6 +215,8 @@ export default function Tareas() {
   const [fEstado, setFEstado] = useState("");
   const [fTipo, setFTipo] = useState("");
   const [fResponsable, setFResponsable] = useState("");
+  const [delegFrom, setDelegFrom] = useState("");
+  const [delegTo, setDelegTo] = useState("");
 
   const loadMesa = useCallback(async () => {
     setLoading(true); setError(null);
@@ -264,6 +266,14 @@ export default function Tareas() {
 
   const asignar = (t, rid) => act(() => tareasApi.asignar(t.id, { responsable_user_id: rid || null }),
                                   es ? "Responsable actualizado" : "Assignee updated");
+  const delegar = async () => {
+    if (!delegTo) return;
+    const body = { to_user_id: delegTo };
+    if (delegFrom) body.from_user_id = delegFrom;
+    else body.tarea_ids = (mesa.items || []).map((t) => t.id);
+    await act(() => tareasApi.reasignar(body), es ? "Tareas reasignadas" : "Tasks reassigned");
+    setDelegFrom(""); setDelegTo("");
+  };
   const abrirEvidencia = async (t) => {
     setEvidencia(t);
     try { setAdjuntos(await tareasApi.adjuntos(t.id)); } catch { setAdjuntos([]); }
@@ -365,6 +375,23 @@ export default function Tareas() {
             <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary, #94A3B8)", alignSelf: "center" }}>
               {mesa.items.length} {es ? "tareas" : "tasks"}
             </span>
+          </div>
+
+          {/* Etapa 6 · Delegación en lote */}
+          <div className="flex ai-center" style={{ gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <span className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "Delegar" : "Delegate"}</span>
+            <select value={delegFrom} onChange={(e) => setDelegFrom(e.target.value)} style={{ ...selStyle, maxWidth: 200 }}>
+              <option value="">{es ? "de: (las del filtro)" : "from: (filtered)"}</option>
+              {usuarios.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+            </select>
+            <span className="micro" style={{ color: "var(--text-tertiary)" }}>→</span>
+            <select value={delegTo} onChange={(e) => setDelegTo(e.target.value)} style={{ ...selStyle, maxWidth: 200 }}>
+              <option value="">{es ? "a: elegir" : "to: choose"}</option>
+              {usuarios.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+            </select>
+            <button type="button" className="btn btn-secondary btn-sm" disabled={!delegTo} onClick={delegar}>
+              {es ? "Reasignar" : "Reassign"}
+            </button>
           </div>
 
           <div className="table-scroll" style={{ background: "var(--surface, #fff)",

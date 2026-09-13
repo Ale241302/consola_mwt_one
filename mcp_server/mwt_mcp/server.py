@@ -3261,6 +3261,34 @@ def tarea_cancelar(tarea_id: str, motivo: str | None = None) -> Any:
     return _safe_role(lambda: api.post(f"tareas/{tarea_id}/cancelar/", {"motivo": motivo}))
 
 
+@mcp.tool()
+@write_tool
+def tarea_reasignar(to_user_id: str, from_user_id: str | None = None,
+                    tarea_ids: list[str] | None = None, motivo: str | None = None) -> Any:
+    """Delegación en lote: reasigna tareas ABIERTAS a otro usuario.
+    Pasa `tarea_ids` (lista) o `from_user_id` (todas las abiertas de ese usuario)."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post("tareas/reasignar/", {
+        "to_user_id": to_user_id, "from_user_id": from_user_id,
+        "tarea_ids": tarea_ids or [], "motivo": motivo}))
+
+
+@mcp.tool()
+def tarea_agenda_usuario(user_id: str) -> Any:
+    """Agenda de un usuario: sus tareas abiertas ordenadas por vencimiento."""
+    return _safe_role_read(lambda: api.get("tareas/agenda-usuario/", _params(user_id=user_id)),
+                           "tarea_agenda_usuario")
+
+
+@mcp.tool()
+def tarea_vencidas(user_id: str | None = None) -> Any:
+    """Tareas abiertas pasadas de fecha (revisión diaria), opcionalmente de un usuario."""
+    return _safe_role_read(lambda: api.get("tareas/vencidas/", _params(user_id=user_id)),
+                           "tarea_vencidas")
+
+
 # =========================================================================== #
 # CORREO — bandeja, contactos y envíos (Etapa 3)
 # =========================================================================== #

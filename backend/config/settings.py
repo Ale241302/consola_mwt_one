@@ -397,6 +397,13 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": _crontab(hour=8, minute=0),
         "options":  {"queue": "default", "expires": 3600},
     },
+    # Etapa 6 · automatización: marca las tareas abiertas vencidas (evento
+    # VENCIDA, idempotente por día) para la revisión diaria. 7:30 AM MX.
+    "tareas_revisar_vencidas": {
+        "task":     "tareas.revisar_vencidas",
+        "schedule": _crontab(hour=7, minute=30),
+        "options":  {"queue": "default", "expires": 3600},
+    },
     # Etapa 3 · sincroniza la bandeja de correo (recibidos no leídos +
     # enviados) cada 5 minutos. No-op sin credenciales IMAP.
     "correo_sync": {
