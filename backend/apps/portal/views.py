@@ -128,6 +128,30 @@ def _fetchall(sql, params=None):
         return []
 
 
+_MESES_ES = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+             "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def _fecha_display(valor_fecha, valor_raw, precision):
+    """Etapa 4/12 · frase de cara al cliente, honesta con la precisión.
+    MES → 'última semana de <mes>; pendiente de confirmación' (no inventar día)."""
+    p = (precision or "EXACTA").upper()
+    if p == "MES":
+        try:
+            from apps.correo.extraccion import _mes_de_raw
+            d = _mes_de_raw(valor_raw)
+            if d:
+                return f"Última semana de {_MESES_ES[d.month]} {d.year}; pendiente de confirmación"
+        except Exception:
+            pass
+        return "Mes por confirmar (pendiente de confirmación de fábrica)"
+    if p == "RANGO":
+        return f"Estimado: {valor_raw or 'rango'}; pendiente de confirmación"
+    if p == "DESCONOCIDA":
+        return "Sin fecha; pendiente de confirmación de fábrica"
+    return valor_fecha.isoformat() if hasattr(valor_fecha, "isoformat") else (valor_fecha or valor_raw)
+
+
 def _fetchone(sql, params=None):
     try:
         with connection.cursor() as c:
@@ -824,6 +848,9 @@ class PortalViewSet(viewsets.ViewSet):
             """,
             cids + cids,
         )
+        for r in rows:
+            r["display"] = _fecha_display(r.get("valor_fecha"), r.get("valor_raw"),
+                                          r.get("precision"))
         return Response(rows)
 
     # ── /api/portal/expediente_detail/?id=<uuid> ──────────────
@@ -957,6 +984,9 @@ class PortalViewSet(viewsets.ViewSet):
         """, [exp_id])
         r["fechas"].sort(key=lambda x: self._FECHA_ORDEN.index(x["campo"])
                          if x["campo"] in self._FECHA_ORDEN else 99)
+        for f in r["fechas"]:
+            f["display"] = _fecha_display(f.get("valor_fecha"), f.get("valor_raw"),
+                                          f.get("precision"))
         r["proximo_hito"] = r["fechas"][0] if r["fechas"] else None
 
         salidas = _fetchall("""
