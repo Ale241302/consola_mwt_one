@@ -55,7 +55,9 @@ class MensajeViewSet(viewsets.ViewSet):
         user_email = (getattr(request.user, "email", None)
                       or getattr(request.user, "email_plain", None) or "").lower()
         is_admin = user_is_ceo_or_admin(request.user)
-        if mailbox and mailbox != "all":
+        if mailbox == "all":
+            pass  # admin: sin filtro de buzón
+        elif mailbox:
             qs = qs.filter(owner_email=mailbox)
         elif user_email:
             qs = qs.filter(owner_email=user_email)
