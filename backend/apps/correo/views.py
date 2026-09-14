@@ -391,6 +391,10 @@ class EnvioViewSet(viewsets.ViewSet):
         data = dict(request.data or {})
         data["id"] = data.get("id") or str(uuid.uuid4())
         data["created_by_id"] = str(getattr(request.user, "id", "") or "") or None
+        # Remitente = buzón del usuario (para responder desde su cuenta).
+        if not data.get("from_email"):
+            data["from_email"] = (getattr(request.user, "email", None)
+                                  or getattr(request.user, "email_plain", None) or None)
         if data.get("expediente_id") and not data.get("oc_id"):
             with connection.cursor() as c:
                 c.execute("SELECT oc_id::text FROM expedientes.expediente WHERE id=%s::uuid",

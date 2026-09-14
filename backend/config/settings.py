@@ -122,6 +122,15 @@ CORREO_SMTP_STARTTLS = os.environ.get("CORREO_SMTP_STARTTLS", "0")
 CORREO_SMTP_USER     = os.environ.get("CORREO_SMTP_USER", CORREO_IMAP_USER)
 CORREO_SMTP_PASSWORD = os.environ.get("CORREO_SMTP_PASSWORD", CORREO_IMAP_PASSWORD)
 CORREO_FROM          = os.environ.get("CORREO_FROM", os.environ.get("DEFAULT_FROM_EMAIL", CORREO_SMTP_USER))
+
+# Correo por buzón: credenciales SMTP por dirección. JSON en la variable de
+# entorno CORREO_SMTP_CREDENTIALS, ej. {"alejandro@muitowork.com":"clave"}.
+# Si un buzón no está aquí, se envía con la cuenta SMTP por defecto.
+import json as _json_correo
+try:
+    CORREO_SMTP_CREDENTIALS = _json_correo.loads(os.environ.get("CORREO_SMTP_CREDENTIALS", "") or "{}")
+except Exception:
+    CORREO_SMTP_CREDENTIALS = {}
 CORREO_INBOX_FOLDER  = os.environ.get("CORREO_INBOX_FOLDER", "INBOX")
 CORREO_SENT_FOLDER   = os.environ.get("CORREO_SENT_FOLDER", "INBOX.Sent")
 # Seguridad QA: por defecto el envío es SIMULADO (no manda correo real).

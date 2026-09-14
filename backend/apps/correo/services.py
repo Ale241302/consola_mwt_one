@@ -594,10 +594,18 @@ def enviar_envio(envio: Envio, user_id=None) -> dict:
     dest = envio.destinatarios or []
     if not dest:
         return {"ok": False, "reason": "sin_destinatarios"}
+    # Remitente por buzón: si el usuario tiene credenciales propias, se envía
+    # desde su cuenta y con su 'From'; si no, con la cuenta por defecto (para
+    # no ser rechazado por 'From' distinto al autenticado).
+    sender = (getattr(envio, "from_email", None) or "").strip().lower()
+    creds = (getattr(settings, "CORREO_SMTP_CREDENTIALS", {}) or {}).get(sender) if sender else None
+    smtp_user, smtp_pass, from_hdr = s["user"], s["password"], s["from"]
+    if sender and creds:
+        smtp_user, smtp_pass, from_hdr = sender, creds, sender
     body = envio.body_traducido or envio.body_es or ""
     msg = MIMEMultipart("mixed")
     msg["Subject"] = envio.subject or ""
-    msg["From"] = s["from"]
+    msg["From"] = from_hdr
     msg["To"] = ", ".join(dest)
     if envio.cc:
         msg["Cc"] = ", ".join(envio.cc)
@@ -612,9 +620,9 @@ def enviar_envio(envio: Envio, user_id=None) -> dict:
             smtp = smtplib.SMTP(s["host"], int(s["port"]), timeout=30)
             if s["starttls"]:
                 smtp.starttls(context=ssl.create_default_context())
-        if s["user"]:
-            smtp.login(s["user"], s["password"])
-        smtp.sendmail(s["from"], all_rcpt, msg.as_string())
+        if smtp_user:
+            smtp.login(smtp_user, smtp_pass)
+        smtp.sendmail(from_hdr, all_rcpt, msg.as_string())
         smtp.quit()
     except Exception as exc:
         envio.estado = "ERROR"

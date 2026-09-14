@@ -173,6 +173,7 @@ class Envio(models.Model):
     id             = models.UUIDField(primary_key=True)
     expediente_id  = models.UUIDField(null=True, blank=True)
     oc_id          = models.UUIDField(null=True, blank=True)
+    from_email     = models.CharField(max_length=254, null=True, blank=True)
     destinatarios  = ArrayField(models.TextField(), default=list, blank=True)
     cc             = ArrayField(models.TextField(), default=list, blank=True)
     bcc            = ArrayField(models.TextField(), default=list, blank=True)
