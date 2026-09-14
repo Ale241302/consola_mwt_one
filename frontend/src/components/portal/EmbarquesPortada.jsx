@@ -6,8 +6,11 @@
 // AWB/BL) y documentos vigentes. Sin datos internos (R3).
 // =====================================================================
 import React, { useCallback, useEffect, useState } from "react";
-import { portalApi } from "../../lib/api.js";
+import { portalApi, apiFetch, getToken } from "../../lib/api.js";
 import { fmtDate } from "../../lib/i18n.js";
+
+const PHASE_ORDER = ["REGISTRO", "PRODUCCION", "PREPARACION_DESPACHO", "TRANSITO", "EN_DESTINO", "CERRADO"];
+const _norm = (s) => (s === "PREPARACION" || s === "DESPACHO") ? "PREPARACION_DESPACHO" : s;
 
 const PREC = {
   EXACTA:      { es: "confirmada",        en: "confirmed" },
@@ -59,6 +62,29 @@ export default function EmbarquesPortada({ lang = "es", clientId }) {
   const [err, setErr] = useState(null);
   const [detalle, setDetalle] = useState({});   // expId -> detail
   const [openId, setOpenId] = useState(null);
+  const [stats, setStats] = useState(null);
+
+  // Tiempos promedio por fase (para estimar cuando no hay fecha concreta).
+  useEffect(() => {
+    const q = clientId ? `?client=${encodeURIComponent(clientId)}` : "";
+    apiFetch(`/expedientes/phase-stats/${q}`, { token: getToken() })
+      .then(setStats).catch(() => {});
+  }, [clientId]);
+
+  const estimar = useCallback((estado) => {
+    const all = stats?.phase_stats?._ALL;
+    if (!all || !estado) return null;
+    const cur = PHASE_ORDER.indexOf(_norm(estado));
+    if (cur < 0) return null;
+    let days = 0;
+    for (let i = cur + 1; i < PHASE_ORDER.length; i++) {
+      const v = Number(all[PHASE_ORDER[i]]?.avg || 0);
+      if (v) days += v;
+    }
+    if (!days) return null;
+    const d = new Date(); d.setDate(d.getDate() + Math.round(days));
+    return d.toLocaleDateString("es-CR", { day: "2-digit", month: "short", year: "numeric" });
+  }, [stats]);
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
@@ -125,6 +151,7 @@ export default function EmbarquesPortada({ lang = "es", clientId }) {
       ) : items.map((it) => {
         const hito = it.proximo_hito;
         const prec = hito ? (PREC[hito.precision] || PREC.EXACTA) : null;
+        const est = hito ? null : estimar(it.estado);
         const open = openId === it.id;
         const det = detalle[it.id];
         return (
@@ -146,6 +173,11 @@ export default function EmbarquesPortada({ lang = "es", clientId }) {
                       {hito.campo}: {hito.valor_fecha || hito.valor_raw || "—"}
                     </div>
                     <Chip text={es ? prec.es : prec.en} tone={hito.precision === "EXACTA" ? "ok" : "warn"} />
+                  </>
+                ) : est ? (
+                  <>
+                    <div className="tabular-nums" style={{ fontSize: 12, color: "var(--text-primary)" }}>≈ {est}</div>
+                    <Chip text={es ? "estimada (promedio)" : "estimated (avg)"} tone="warn" />
                   </>
                 ) : (
                   <Chip text={es ? "sin fecha concreta" : "no concrete date"} tone="warn" />

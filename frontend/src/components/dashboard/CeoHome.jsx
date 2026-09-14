@@ -22,6 +22,7 @@ const CERT = {
   RECONFIRMADA: ["var(--success-bg, #DCFCE7)", "var(--success-fg, #166534)", "Reconfirmada"],
   POR_RECONFIRMAR: ["var(--warning-bg, #FEF3C7)", "var(--warning-fg, #92400E)", "Por reconfirmar"],
   CAMBIO: ["var(--danger-bg, #FEE2E2)", "var(--danger-fg, #991B1B)", "Cambio"],
+  SIN_FECHA: ["var(--surface-hover, #F1F5F9)", "var(--text-secondary, #475569)", "Sin fecha"],
 };
 
 function Kpi({ label, value, sub, tone }) {
@@ -90,6 +91,15 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   // El panel prioriza correos LIGADOS a un expediente; el resto es ruido.
   const respOp = resp.filter((r) => r.expediente_id);
   const salidas = rad?.proximas_salidas || [];
+  const sinFecha = rad?.sin_fecha || [];
+  // "Próximas salidas" = fechas publicadas + expedientes en registro/producción sin fecha.
+  const salidasAll = [
+    ...salidas,
+    ...sinFecha.map((s) => ({
+      expediente_id: s.expediente_id, display_id: s.display_id, cliente: s.cliente,
+      campo: s.exp_estado, valor_fecha: null, estado_fecha: "SIN_FECHA",
+    })),
+  ];
   const cambios = rad?.bloqueos?.cambios_fecha || [];
   const tareasRev = rad?.bloqueos?.tareas_revision || [];
   const t = flujo?.totales || {};
@@ -105,7 +115,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           <Kpi label={es ? "Respuestas pendientes" : "Pending replies"} value={respOp.length}
                sub={resp.length > respOp.length ? `${resp.length - respOp.length} ${es ? "sin vincular" : "unlinked"}` : null} />
           <Kpi label={es ? "Borradores por revisar" : "Drafts to review"} value={(rad?.borradores_por_revisar || []).length} />
-          <Kpi label={es ? `Próximas salidas (${rad?.window_days || 21}d)` : `Upcoming (${rad?.window_days || 21}d)`} value={salidas.length} />
+          <Kpi label={es ? `Próximas salidas (${rad?.window_days || 21}d)` : `Upcoming (${rad?.window_days || 21}d)`} value={salidasAll.length} />
           <Kpi label={es ? "Sin fecha concreta" : "No date"} value={(rad?.sin_fecha || []).length} />
           <Kpi label={es ? "Neto USD (90d)" : "Net USD (90d)"} value={dinero(t.neto_usd)} tone="var(--success-fg, #166534)" />
           <Kpi label={es ? "Comisión devengable" : "Accruable commission"} value={money(com.reduce((s, m) => s + Number(m.comision_total || 0), 0))} />
@@ -130,15 +140,15 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
               ))}
             </Section>
 
-            <Section title={es ? "PRÓXIMAS SALIDAS DE PRODUCCIÓN" : "UPCOMING SHIPMENTS"} count={salidas.length}>
-              {salidas.length === 0 ? <Empty>{es ? "Sin fechas publicadas en la ventana." : "No published dates in window."}</Empty> : salidas.slice(0, 12).map((s) => {
+            <Section title={es ? "PRÓXIMAS SALIDAS DE PRODUCCIÓN" : "UPCOMING SHIPMENTS"} count={salidasAll.length}>
+              {salidasAll.length === 0 ? <Empty>{es ? "Sin expedientes en producción." : "No files in production."}</Empty> : salidasAll.slice(0, 12).map((s) => {
                 const c = CERT[s.estado_fecha] || CERT.POR_RECONFIRMAR;
                 return (
                   <Row key={`${s.expediente_id}-${s.campo}`} grid="1.1fr 1fr .8fr 1fr 1fr" onClick={() => open(s.expediente_id)}>
                     <div style={{ fontWeight: 700 }}>{s.display_id}</div>
                     <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cliente || "—"}</div>
                     <div style={{ color: "var(--text-tertiary)" }}>{s.campo}</div>
-                    <div className="tabular-nums">{s.valor_fecha}</div>
+                    <div className="tabular-nums">{s.valor_fecha || "—"}</div>
                     <div><span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: c[0], color: c[1] }}>{c[2]}</span></div>
                   </Row>
                 );

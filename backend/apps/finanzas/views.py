@@ -926,14 +926,17 @@ def flujo(request):
     def _wk(d):
         return d - timedelta(days=d.weekday())
 
-    weeks: dict = {}
-    for direction, moneda, fecha, monto_usd, monto in pagos:
-        ws = _wk(fecha)
-        b = weeks.setdefault(ws, {
+    def _bucket(d):
+        ws = _wk(d)
+        return weeks.setdefault(ws, {
             "semana": ws.isoformat(), "fin": (ws + timedelta(days=6)).isoformat(),
             "entradas_usd": Decimal("0"), "salidas_usd": Decimal("0"),
             "entradas_crc": Decimal("0"), "salidas_crc": Decimal("0"),
         })
+
+    weeks: dict = {}
+    for direction, moneda, fecha, monto_usd, monto in pagos:
+        b = _bucket(fecha)
         if direction == "IN":
             b["entradas_usd"] += _dec(monto_usd)
             if (moneda or "").upper() == "CRC":
@@ -942,6 +945,38 @@ def flujo(request):
             b["salidas_usd"] += _dec(monto_usd)
             if (moneda or "").upper() == "CRC":
                 b["salidas_crc"] += _dec(monto)
+
+    # Proyecciones desde EXPEDIENTES (lo que realmente va a entrar/salir).
+    #   Entrada = cobro del cliente en fecha_pago_aprox (total cliente).
+    #   Salida  = pago a proveedor (vencimiento compra) para MWT-operados.
+    proy_e = Decimal("0")
+    proy_s = Decimal("0")
+    try:
+        for it in [_build_item(r, today) for r in _fetch_expedientes()]:
+            fp = it.get("fecha_pago_aprox")
+            if fp:
+                try:
+                    d = date.fromisoformat(fp)
+                except (TypeError, ValueError):
+                    d = None
+                if d and today <= d <= today + timedelta(days=dias):
+                    amt = _dec(it.get("total_client"))
+                    _bucket(d)["entradas_usd"] += amt
+                    proy_e += amt
+            if str(it.get("operating_company_id") or "") == MWT_OPERATING_CLIENT_ID:
+                base = it.get("shipment_date")
+                cd_mwt = it.get("credit_days_mwt")
+                if base and cd_mwt is not None:
+                    try:
+                        cv = date.fromisoformat(base) + timedelta(days=int(cd_mwt))
+                    except (TypeError, ValueError):
+                        cv = None
+                    if cv and today <= cv <= today + timedelta(days=dias):
+                        amt = _dec(it.get("total_mwt"))
+                        _bucket(cv)["salidas_usd"] += amt
+                        proy_s += amt
+    except Exception:
+        pass
 
     series = []
     tot = {"entradas_usd": Decimal("0"), "salidas_usd": Decimal("0"),
@@ -973,6 +1008,11 @@ def flujo(request):
             "entradas_crc": str(tot["entradas_crc"].quantize(Decimal("0.01"))),
             "salidas_crc": str(tot["salidas_crc"].quantize(Decimal("0.01"))),
             "neto_crc": str(neto_crc.quantize(Decimal("0.01"))),
+        },
+        "proyecciones": {
+            "entradas_usd": str(proy_e.quantize(Decimal("0.01"))),
+            "salidas_usd": str(proy_s.quantize(Decimal("0.01"))),
+            "fuente": "cobros/pagos esperados de expedientes (fecha_pago_aprox y vencimiento compra)",
         },
         "saldo_final_proyectado": {
             "USD": str((saldo_usd + neto_usd).quantize(Decimal("0.01"))),
