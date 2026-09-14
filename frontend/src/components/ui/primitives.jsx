@@ -34,7 +34,7 @@ export function StatusBadge({ status, lang='es' }) {
     <Badge kind={map[key] || 'neutral'} dot
            title={tr(lang, displayStage(key))}
            style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    maxWidth: 150, flexShrink: 0 }}>
+                    maxWidth: 200, flexShrink: 0 }}>
       {tr(lang, displayStage(key))}
     </Badge>
   );
