@@ -69,6 +69,7 @@ class Mensaje(models.Model):
     thread_key      = models.TextField(null=True, blank=True)
     folder          = models.CharField(max_length=96, null=True, blank=True)
     direction       = models.CharField(max_length=3, default="IN")
+    owner_email     = models.CharField(max_length=254, null=True, blank=True)
     from_email      = models.TextField(null=True, blank=True)
     from_name       = models.TextField(null=True, blank=True)
     to_emails       = ArrayField(models.TextField(), default=list, blank=True)

@@ -274,6 +274,7 @@ def upsert_mensaje(data: dict) -> dict | None:
             thread_key=data.get("thread_key"),
             folder=data.get("folder"),
             direction=data.get("direction", "IN"),
+            owner_email=data.get("owner_email"),
             from_email=data.get("from_email"),
             from_name=data.get("from_name"),
             to_emails=data.get("to_emails") or [],
@@ -401,6 +402,15 @@ def _hostinger_mailbox_id():
     return boxes[0].get("resourceId") if boxes else None
 
 
+def _hostinger_mailboxes() -> list[dict]:
+    """Lista todos los buzones de la cuenta: [{resourceId, address}]."""
+    data = _hostinger_get("/api/v1/me")
+    d = data.get("data") or {}
+    if isinstance(d.get("data"), dict):
+        d = d["data"]
+    return [b for b in (d.get("mailboxes") or []) if b.get("resourceId") and b.get("address")]
+
+
 def _hostinger_folder_messages(mb, folder, limit):
     data = _hostinger_get(f"/api/v1/mailboxes/{mb}/folders/{folder}/messages",
                           {"perPage": min(max(limit, 1), 100), "page": 1, "sort": "-uid"})
@@ -418,62 +428,81 @@ def _hostinger_message_text(mb, folder, uid):
     return d if isinstance(d, dict) else {}
 
 
-def sync_via_hostinger(limit=25) -> dict:
+def sync_via_hostinger(limit=25, mailbox=None) -> dict:
+    """Sincroniza uno o varios buzones. `mailbox` = dirección; si None, todos.
+    Cada mensaje se guarda con `owner_email` = buzón de origen."""
     if not (getattr(settings, "HOSTINGER_MAIL_API_KEY", "") or os.environ.get("HOSTINGER_MAIL_API_KEY")):
         return {"ok": False, "reason": "no_key"}
     try:
-        mb = _hostinger_mailbox_id()
-        if not mb:
-            return {"ok": False, "reason": "no_mailbox"}
+        boxes = _hostinger_mailboxes()
     except Exception as exc:
         return {"ok": False, "reason": f"api_error: {str(exc)[:160]}"}
 
+    if mailbox:
+        target = str(mailbox).lower()
+        boxes = [b for b in boxes if (b.get("address") or "").lower() == target]
+    if not boxes:
+        # Fallback: buzón configurado.
+        mb = _hostinger_mailbox_id()
+        addr = getattr(settings, "CORREO_HOSTINGER_MAILBOX", "") or None
+        boxes = [{"resourceId": mb, "address": addr}] if mb else []
+    if not boxes:
+        return {"ok": False, "reason": "no_mailbox"}
+
     importados = 0
-    for folder, direction in (
-        (getattr(settings, "CORREO_INBOX_FOLDER", "INBOX"), "IN"),
-        (getattr(settings, "CORREO_SENT_FOLDER", "INBOX.Sent"), "OUT"),
-    ):
-        try:
-            msgs = _hostinger_folder_messages(mb, folder, limit)
-        except Exception as exc:
-            log.warning("[correo.sync] hostinger list %s: %s", folder, exc)
-            continue
-        for m in msgs:
-            uid = m.get("uid")
-            body = {}
+    por_buzon = {}
+    for b in boxes:
+        mb = b["resourceId"]
+        owner = (b.get("address") or "").lower()
+        n_before = importados
+        for folder, direction in (
+            (getattr(settings, "CORREO_INBOX_FOLDER", "INBOX"), "IN"),
+            (getattr(settings, "CORREO_SENT_FOLDER", "INBOX.Sent"), "OUT"),
+        ):
             try:
-                body = _hostinger_message_text(mb, folder, uid)
-            except Exception:
-                pass
-            frm = m.get("from") or {}
-            data = {
-                "message_id": m.get("messageId"),
-                "folder": folder,
-                "direction": direction,
-                "from_email": frm.get("address"),
-                "from_name": frm.get("name"),
-                "to_emails": [x.get("address") for x in (m.get("to") or []) if x.get("address")],
-                "cc_emails": [x.get("address") for x in (m.get("cc") or []) if x.get("address")],
-                "subject": m.get("subject"),
-                "sent_at": m.get("date"),
-                "received_at": m.get("date") if direction == "IN" else None,
-                "body_text": body.get("text"),
-                "body_html": body.get("html"),
-                "adjuntos": [{"filename": a.get("filename"), "mimetype": a.get("contentType"),
-                              "size_bytes": a.get("sizeBytes")}
-                             for a in (m.get("attachments") or [])],
-                "source": "HOSTINGER",
-            }
-            r = upsert_mensaje(data)
-            if r and not r.get("dedup"):
-                importados += 1
-    return {"ok": True, "importados": importados, "mailbox": mb}
+                msgs = _hostinger_folder_messages(mb, folder, limit)
+            except Exception as exc:
+                log.warning("[correo.sync] hostinger list %s/%s: %s", owner, folder, exc)
+                continue
+            for m in msgs:
+                uid = m.get("uid")
+                body = {}
+                try:
+                    body = _hostinger_message_text(mb, folder, uid)
+                except Exception:
+                    pass
+                frm = m.get("from") or {}
+                data = {
+                    "message_id": m.get("messageId"),
+                    "folder": folder,
+                    "direction": direction,
+                    "owner_email": owner or None,
+                    "from_email": frm.get("address"),
+                    "from_name": frm.get("name"),
+                    "to_emails": [x.get("address") for x in (m.get("to") or []) if x.get("address")],
+                    "cc_emails": [x.get("address") for x in (m.get("cc") or []) if x.get("address")],
+                    "subject": m.get("subject"),
+                    "sent_at": m.get("date"),
+                    "received_at": m.get("date") if direction == "IN" else None,
+                    "body_text": body.get("text"),
+                    "body_html": body.get("html"),
+                    "adjuntos": [{"filename": a.get("filename"), "mimetype": a.get("contentType"),
+                                  "size_bytes": a.get("sizeBytes")}
+                                 for a in (m.get("attachments") or [])],
+                    "source": "HOSTINGER",
+                }
+                r = upsert_mensaje(data)
+                if r and not r.get("dedup"):
+                    importados += 1
+        por_buzon[owner] = importados - n_before
+    return {"ok": True, "importados": importados, "buzones": por_buzon}
 
 
-def sync_mailbox(direction=None, limit=25) -> dict:
+
+def sync_mailbox(direction=None, limit=25, mailbox=None) -> dict:
     # Preferir la API de Hostinger Mail si hay key configurada.
     if getattr(settings, "HOSTINGER_MAIL_API_KEY", "") or os.environ.get("HOSTINGER_MAIL_API_KEY"):
-        return sync_via_hostinger(limit=limit)
+        return sync_via_hostinger(limit=limit, mailbox=mailbox)
     p = _imap_params()
     if not (p["host"] and p["user"] and p["password"]):
         return {"ok": False, "reason": "no_credentials", "importados": 0}

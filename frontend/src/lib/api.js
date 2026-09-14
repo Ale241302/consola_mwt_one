@@ -683,6 +683,7 @@ export const correoApi = {
     adjuntos:      (id)     => apiFetch(`/correo/mensajes/${id}/adjuntos/`, { token: getToken() }),
     adjuntoUrl:    (id, aid) => apiFetch(`/correo/mensajes/${id}/adjuntos/${aid}/url/`, { token: getToken() }),
     diagnostico:   ()       => apiFetch(`/correo/mensajes/diagnostico/`, { token: getToken() }),
+    mailboxes:     ()       => apiFetch(`/correo/mensajes/mailboxes/`, { token: getToken() }),
   },
   contactos: {
     list:   (params)    => apiFetch(`/correo/contactos/${qs(params)}`, { token: getToken() }),

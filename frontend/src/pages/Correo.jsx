@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { correoApi } from "../lib/api.js";
 import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
+import { useRole } from "../context/RoleContext.jsx";
 
 function fmtDT(iso) {
   if (!iso) return "—";
@@ -70,6 +71,8 @@ export default function Correo() {
 }
 
 function Bandeja({ es, selStyle, flash }) {
+  const { user, isAdmin } = useRole();
+  const userEmail = (user?.email || user?.email_plain || "").toLowerCase();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
@@ -77,11 +80,17 @@ function Bandeja({ es, selStyle, flash }) {
   const [porVincular, setPorVincular] = useState(false);
   const [noLeidos, setNoLeidos] = useState(false);
   const [detalle, setDetalle] = useState(null);
+  const [reply, setReply] = useState(null);          // borrador de respuesta
+  const [mailbox, setMailbox] = useState(isAdmin ? "all" : userEmail);
+  const [mailboxes, setMailboxes] = useState([]);
+
+  useEffect(() => { correoApi.mensajes.mailboxes().then((d) => setMailboxes(Array.isArray(d) ? d : [])).catch(() => {}); }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = {};
+      if (mailbox) params.mailbox = mailbox;
       if (q) params.q = q;
       if (direction) params.direction = direction;
       if (porVincular) params.por_vincular = 1;
@@ -89,22 +98,83 @@ function Bandeja({ es, selStyle, flash }) {
       const d = await correoApi.mensajes.list(params);
       setItems(Array.isArray(d) ? d : (d?.results || []));
     } catch { setItems([]); } finally { setLoading(false); }
-  }, [q, direction, porVincular, noLeidos]);
+  }, [q, direction, porVincular, noLeidos, mailbox]);
   useEffect(() => { load(); }, [load]);
 
   const { pageItems, page, setPage, perPage, setPerPage, totalPages, total } =
     usePagination(items, { defaultPerPage: 20 });
-  useEffect(() => { setPage(1); }, [q, direction, porVincular, noLeidos, setPage]);
+  useEffect(() => { setPage(1); }, [q, direction, porVincular, noLeidos, mailbox, setPage]);
 
   const sync = async () => {
-    try { const r = await correoApi.mensajes.sync({}); flash(r?.ok ? `Sync: ${r.importados ?? 0}` : `Sync: ${r?.reason || "no-op"}`); load(); }
-    catch (e) { flash(e?.body?.detail || "Error"); }
+    try {
+      const body = {};
+      if (mailbox && mailbox !== "all") body.mailbox = mailbox;
+      const r = await correoApi.mensajes.sync(body);
+      flash(r?.ok ? `Sync: ${r.importados ?? 0}` : `Sync: ${r?.reason || "no-op"}`);
+      load();
+    } catch (e) { flash(e?.body?.detail || "Error"); }
   };
   const open = async (m) => {
     try { const full = await correoApi.mensajes.get(m.id); setDetalle(full);
           if (!m.is_read) correoApi.mensajes.marcarLeido(m.id).then(load).catch(() => {}); }
     catch { setDetalle(m); }
   };
+
+  if (detalle) {
+    const toReply = detalle.from_email || "";
+    return (
+      <>
+        <div className="card card-pad-lg">
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setDetalle(null)}>{es ? "← Volver" : "← Back"}</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn btn-primary btn-sm" disabled={!toReply} onClick={() => setReply({
+                destinatarios: toReply ? [toReply] : [],
+                subject: (detalle.subject || "").startsWith("Re:") ? detalle.subject : `Re: ${detalle.subject || ""}`,
+                body: `\n\n---\n${(detalle.body_text || "").slice(0, 1000)}`,
+              })}>{es ? "Responder" : "Reply"}</button>
+              <button className="btn btn-sm btn-ghost" onClick={async () => { await correoApi.mensajes.ignorar(detalle.id); flash("OK"); setDetalle(null); load(); }}>
+                {es ? "Ignorar" : "Ignore"}</button>
+              <button className="btn btn-sm" onClick={async () => {
+                try { const r = await correoApi.mensajes.extraer(detalle.id); flash(`${es ? "Extracciones" : "Extractions"}: ${r?.length || 0}`); }
+                catch (e) { flash(e?.body?.detail || "Error"); }
+              }}>{es ? "Extraer fechas" : "Extract dates"}</button>
+            </div>
+          </div>
+          <h2 style={{ margin: "4px 0" }}>{detalle.subject || "(sin asunto)"}</h2>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0 14px" }}>
+            <div><b>{es ? "De" : "From"}:</b> {detalle.from_email || "—"}{detalle.owner_email ? <span className="micro"> · {detalle.owner_email}</span> : null}</div>
+            <div><b>{es ? "Para" : "To"}:</b> {(detalle.to_emails || []).join(", ") || "—"}</div>
+            <div><b>{es ? "Fecha" : "Date"}:</b> {fmtDT(detalle.sent_at || detalle.created_at)}</div>
+            <div style={{ marginTop: 6 }}><Chip text={detalle.match_status} style={MATCH_STYLE[detalle.match_status]} /> {detalle.match_reason}</div>
+          </div>
+          {detalle.adjuntos?.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div className="micro">{es ? "ADJUNTOS" : "ATTACHMENTS"}</div>
+              {detalle.adjuntos.map((a) => (
+                <div key={a.id} style={{ fontSize: 12, display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
+                  <span>• {a.filename} ({a.size_bytes} B)</span>
+                  {a.storage_key ? (
+                    <button className="btn btn-sm btn-ghost" onClick={async () => {
+                      try { const r = await correoApi.mensajes.adjuntoUrl(detalle.id, a.id); if (r?.url) window.open(r.url, "_blank"); }
+                      catch { flash(es ? "Sin archivo" : "No file"); }
+                    }}>{es ? "Descargar" : "Download"}</button>
+                  ) : <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>({es ? "sin binario" : "no binary"})</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ whiteSpace: "pre-wrap", fontSize: 13, color: "var(--text-primary)",
+                        borderTop: "1px solid var(--border-subtle, #EEF2F6)", paddingTop: 12 }}>
+            {detalle.body_text || "(sin cuerpo)"}
+          </div>
+        </div>
+        {reply && <ReplyModal es={es} flash={flash} initial={reply} expedienteId={detalle.expediente_id}
+                              onClose={() => setReply(null)}
+                              onSent={() => { setReply(null); flash(es ? "Enviado" : "Sent"); }} />}
+      </>
+    );
+  }
 
   return (
     <>
@@ -122,6 +192,14 @@ function Bandeja({ es, selStyle, flash }) {
         <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
           <input type="checkbox" checked={noLeidos} onChange={(e) => setNoLeidos(e.target.checked)} /> {es ? "No leídos" : "Unread"}
         </label>
+        {(isAdmin || mailboxes.length > 1) && (
+          <select value={mailbox} onChange={(e) => setMailbox(e.target.value)} style={selStyle}>
+            {isAdmin && <option value="all">{es ? "Buzón: todos" : "Mailbox: all"}</option>}
+            {(mailboxes.length ? mailboxes : [userEmail]).filter(Boolean).map((mb) => (
+              <option key={mb} value={mb}>{mb}</option>
+            ))}
+          </select>
+        )}
         <button className="btn btn-ghost btn-sm" onClick={sync}>{es ? "Sincronizar" : "Sync"}</button>
         <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-tertiary, #94A3B8)" }}>{items.length} {es ? "mensajes" : "messages"}</span>
       </div>
@@ -151,57 +229,7 @@ function Bandeja({ es, selStyle, flash }) {
       </div>
       <TablePagination page={page} totalPages={totalPages} perPage={perPage} setPerPage={setPerPage} setPage={setPage} total={total} lang={es ? "es" : "en"} />
 
-      {detalle && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.45)", display: "flex", justifyContent: "flex-end" }}
-             onClick={() => setDetalle(null)}>
-          <div style={{ background: "var(--surface,#fff)", width: 640, maxWidth: "92%", height: "100%", overflow: "auto", padding: 22 }}
-               onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-              <h3 style={{ margin: 0 }}>{detalle.subject || "(sin asunto)"}</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setDetalle(null)}>✕</button>
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", margin: "8px 0 14px" }}>
-              <div><b>{es ? "De" : "From"}:</b> {detalle.from_email || "—"}</div>
-              <div><b>{es ? "Para" : "To"}:</b> {(detalle.to_emails || []).join(", ") || "—"}</div>
-              <div><b>{es ? "Fecha" : "Date"}:</b> {fmtDT(detalle.sent_at || detalle.created_at)}</div>
-              <div style={{ marginTop: 6 }}><Chip text={detalle.match_status} style={MATCH_STYLE[detalle.match_status]} /> {detalle.match_reason}</div>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-              <button className="btn btn-sm" onClick={async () => {
-                const id = window.prompt(es ? "UUID del expediente a vincular:" : "File UUID:");
-                if (id) { await correoApi.mensajes.vincular(detalle.id, { expediente_id: id }); flash(es ? "Vinculado" : "Linked"); setDetalle(null); load(); }
-              }}>{es ? "Vincular a expediente" : "Link to file"}</button>
-              <button className="btn btn-sm btn-ghost" onClick={async () => { await correoApi.mensajes.ignorar(detalle.id); flash("OK"); setDetalle(null); load(); }}>
-                {es ? "Ignorar" : "Ignore"}</button>
-              <button className="btn btn-sm" onClick={async () => {
-                try { const r = await correoApi.mensajes.extraer(detalle.id); flash(`${es ? "Extracciones" : "Extractions"}: ${r?.length || 0}`); }
-                catch (e) { flash(e?.body?.detail || "Error"); }
-              }}>{es ? "Extraer fechas" : "Extract dates"}</button>
-            </div>
-            {detalle.adjuntos?.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div className="micro">{es ? "ADJUNTOS" : "ATTACHMENTS"}</div>
-                {detalle.adjuntos.map((a) => (
-                  <div key={a.id} style={{ fontSize: 12, display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
-                    <span>• {a.filename} ({a.size_bytes} B)</span>
-                    {a.storage_key ? (
-                      <button className="btn btn-sm btn-ghost" onClick={async () => {
-                        try {
-                          const r = await correoApi.mensajes.adjuntoUrl(detalle.id, a.id);
-                          if (r?.url) window.open(r.url, "_blank");
-                        } catch { flash(es ? "Sin archivo" : "No file"); }
-                      }}>{es ? "Descargar" : "Download"}</button>
-                    ) : <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>({es ? "sin binario" : "no binary"})</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, color: "var(--text-primary)" }}>
-              {detalle.body_text || detalle.body_html || "(sin cuerpo)"}
-            </pre>
-          </div>
-        </div>
-      )}
+      {/* El detalle del mensaje ahora es una vista interna (early return). */}
     </>
   );
 }
@@ -374,6 +402,56 @@ function Estilo({ es, inp, flash }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ReplyModal({ es, flash, initial, expedienteId, onClose, onSent }) {
+  const [to, setTo] = useState((initial?.destinatarios || []).join(", "));
+  const [subject, setSubject] = useState(initial?.subject || "");
+  const [body, setBody] = useState(initial?.body || "");
+  const [sending, setSending] = useState(false);
+  const send = async () => {
+    setSending(true);
+    try {
+      const env = await correoApi.envios.create({
+        expediente_id: expedienteId || null,
+        destinatarios: to.split(",").map((s) => s.trim()).filter(Boolean),
+        subject,
+        body_es: body,
+      });
+      await correoApi.envios.enviar(env.id);
+      onSent && onSent();
+    } catch (e) { flash(e?.body?.detail || e?.message || "Error"); }
+    finally { setSending(false); }
+  };
+  const box = { padding: "8px 10px", border: "1px solid var(--border-subtle, #E2E8F0)", borderRadius: 8, fontSize: 13, width: "100%" };
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}
+         onClick={onClose}>
+      <div className="card card-pad-lg" style={{ width: 660, maxWidth: "92%", background: "var(--surface, #fff)", maxHeight: "90%", overflow: "auto" }}
+           onClick={(e) => e.stopPropagation()}>
+        <div className="flex ai-center jc-between" style={{ marginBottom: 10 }}>
+          <h3 style={{ margin: 0 }}>{es ? "Responder" : "Reply"}</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          <input value={to} onChange={(e) => setTo(e.target.value)} placeholder={es ? "Para (emails separados por coma)" : "To"} style={box} />
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder={es ? "Asunto" : "Subject"} style={box} />
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} style={{ ...box, fontFamily: "inherit", resize: "vertical" }} />
+        </div>
+        <div className="flex ai-center jc-between" style={{ marginTop: 12, gap: 8, flexWrap: "wrap" }}>
+          <span className="micro" style={{ color: "var(--text-tertiary)" }}>
+            {es ? "El envío es explícito (revisa antes de enviar)." : "Sending is explicit."}
+          </span>
+          <div className="flex gap-2">
+            <button className="btn btn-ghost btn-sm" onClick={onClose}>{es ? "Cancelar" : "Cancel"}</button>
+            <button className="btn btn-primary btn-sm" disabled={sending || !to || !body} onClick={send}>
+              {sending ? "…" : (es ? "Enviar" : "Send")}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

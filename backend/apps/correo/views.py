@@ -49,6 +49,16 @@ class MensajeViewSet(viewsets.ViewSet):
     def list(self, request):
         qs = Mensaje.objects.filter(is_active=True)
         qp = request.query_params
+        # Bandeja por usuario: cada quien ve su buzón (owner_email). Admin/CEO
+        # puede pasar ?mailbox=<email> o ?mailbox=all.
+        mailbox = (qp.get("mailbox") or "").strip().lower()
+        user_email = (getattr(request.user, "email", None)
+                      or getattr(request.user, "email_plain", None) or "").lower()
+        is_admin = user_is_ceo_or_admin(request.user)
+        if mailbox and mailbox != "all":
+            qs = qs.filter(owner_email=mailbox)
+        elif not is_admin and user_email:
+            qs = qs.filter(owner_email=user_email)
         for param, field in (("direction", "direction"), ("expediente", "expediente_id"),
                              ("match_status", "match_status"), ("proforma", "proforma"),
                              ("sap", "sap")):
@@ -80,6 +90,11 @@ class MensajeViewSet(viewsets.ViewSet):
         m = Mensaje.objects.filter(pk=pk, is_active=True).first()
         if not m:
             return Response({"detail": "Mensaje no existe"}, status=404)
+        if not user_is_ceo_or_admin(request.user):
+            ue = (getattr(request.user, "email", None)
+                  or getattr(request.user, "email_plain", None) or "").lower()
+            if ue and (m.owner_email or "").lower() != ue:
+                return Response({"detail": "Fuera de tu bandeja"}, status=403)
         data = MensajeSerializer(m).data
         data["adjuntos"] = AdjuntoSerializer(
             Adjunto.objects.filter(mensaje_id=m.id), many=True).data
@@ -180,7 +195,19 @@ class MensajeViewSet(viewsets.ViewSet):
     def sync(self, request):
         direction = request.data.get("direction")
         limit = int(request.data.get("limit") or 25)
-        return Response(services.sync_mailbox(direction=direction, limit=limit))
+        mailbox = (request.data.get("mailbox") or "").strip().lower() or None
+        if not mailbox and not user_is_ceo_or_admin(request.user):
+            mailbox = (getattr(request.user, "email", None)
+                       or getattr(request.user, "email_plain", None) or "").lower() or None
+        return Response(services.sync_mailbox(direction=direction, limit=limit, mailbox=mailbox))
+
+    @action(detail=False, methods=["get"])
+    def mailboxes(self, request):
+        """Buzones disponibles (distintos owner_email en la bandeja)."""
+        with connection.cursor() as c:
+            c.execute("""SELECT DISTINCT owner_email FROM correo.mensaje
+                          WHERE is_active AND owner_email IS NOT NULL ORDER BY 1""")
+            return Response([r[0] for r in c.fetchall()])
 
     @action(detail=False, methods=["get"], url_path="buscar")
     def buscar(self, request):
