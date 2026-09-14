@@ -272,7 +272,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
             // logo de login es el ícono correcto para el estado colapsado.
             src={collapsed
               ? "/img/Recurso%203logo_login.png"
-              : "https://mwt.one/images/2024/12/04/recurso-1logo_foot.png"}
+              : "/img/recurso-1logo_foot.png"}
             alt="MWT ONE"
             className="sidebar-logo-img"
             onError={(e) => {
