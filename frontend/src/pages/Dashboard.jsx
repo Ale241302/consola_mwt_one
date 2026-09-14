@@ -174,7 +174,9 @@ export default function ScreenDashboard() {
       {/* Sprint 2026-08-02 · ADMIN/CEO: grid personalizable con scope por
           widget. CLIENT: su dashboard propio (intacto). */}
       {isAdmin
-        ? <CeoHome lang={lang} onOpenExpediente={onOpenExpediente} onGoFinanzas={() => navigate("/finanzas")} />
+        ? <CeoHome lang={lang} onOpenExpediente={onOpenExpediente}
+                   onGoFinanzas={() => navigate("/finanzas")}
+                   onGoCorreo={() => navigate("/correo")} />
         : <ClientHome lang={lang} />}
 
       {/* Footer informativo */}

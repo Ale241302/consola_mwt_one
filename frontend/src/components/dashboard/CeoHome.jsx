@@ -63,7 +63,7 @@ function Row({ grid, onClick, children }) {
   );
 }
 
-export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas }) {
+export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, onGoCorreo }) {
   const es = lang !== "en";
   const [rad, setRad] = useState(null);
   const [com, setCom] = useState([]);
@@ -87,6 +87,8 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas })
 
   const open = (id) => { if (id && onOpenExpediente) onOpenExpediente(id); };
   const resp = rad?.respuestas_pendientes || [];
+  // El panel prioriza correos LIGADOS a un expediente; el resto es ruido.
+  const respOp = resp.filter((r) => r.expediente_id);
   const salidas = rad?.proximas_salidas || [];
   const cambios = rad?.bloqueos?.cambios_fecha || [];
   const tareasRev = rad?.bloqueos?.tareas_revision || [];
@@ -100,7 +102,8 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas })
       {!loading && !err && <>
         {/* KPIs */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 14 }}>
-          <Kpi label={es ? "Respuestas pendientes" : "Pending replies"} value={resp.length} />
+          <Kpi label={es ? "Respuestas pendientes" : "Pending replies"} value={respOp.length}
+               sub={resp.length > respOp.length ? `${resp.length - respOp.length} ${es ? "sin vincular" : "unlinked"}` : null} />
           <Kpi label={es ? "Borradores por revisar" : "Drafts to review"} value={(rad?.borradores_por_revisar || []).length} />
           <Kpi label={es ? `Próximas salidas (${rad?.window_days || 21}d)` : `Upcoming (${rad?.window_days || 21}d)`} value={salidas.length} />
           <Kpi label={es ? "Sin fecha concreta" : "No date"} value={(rad?.sin_fecha || []).length} />
@@ -112,8 +115,13 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas })
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
           {/* Columna principal */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-            <Section title={es ? "PENDIENTES DE RESPONDER" : "TO REPLY"} count={resp.length}>
-              {resp.length === 0 ? <Empty>{es ? "Sin correos pendientes." : "Nothing pending."}</Empty> : resp.slice(0, 12).map((r) => (
+            <Section title={es ? "PENDIENTES DE RESPONDER" : "TO REPLY"} count={respOp.length}
+                     right={(resp.length > respOp.length && onGoCorreo) ? (
+                       <button className="btn btn-ghost btn-sm" onClick={onGoCorreo}>
+                         {es ? `Ver correo (${resp.length - respOp.length})` : `Mail (${resp.length - respOp.length})`}
+                       </button>
+                     ) : null}>
+              {respOp.length === 0 ? <Empty>{es ? "Sin correos de expedientes pendientes." : "No pending file replies."}</Empty> : respOp.slice(0, 12).map((r) => (
                 <Row key={r.mensaje_id} grid="1.1fr 2fr 1fr" onClick={() => open(r.expediente_id)}>
                   <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>{r.display_id}</div>
                   <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.subject || "—"}</div>
