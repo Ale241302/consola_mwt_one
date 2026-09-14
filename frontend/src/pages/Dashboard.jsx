@@ -138,7 +138,7 @@ export default function ScreenDashboard() {
             className="btn btn-primary"
             onClick={() => setOcChoiceOpen(true)}
           >
-            <IconPlus size={14} /> {tr(lang, "new_expediente")}
+            <IconPlus size={14} /> {isAdmin ? tr(lang, "new_expediente") : (lang === "en" ? "Upload PO" : "Subir OC")}
           </button>
           <FxToggle
             currency={displayCcy}
