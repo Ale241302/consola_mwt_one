@@ -871,6 +871,7 @@ class PortalViewSet(viewsets.ViewSet):
         rows = _fetchall(f"""
             SELECT
               e.id, e.codigo, e.estado, e.origin, e.destination,
+              e.oc_id::text AS oc_id, e.fusion_id::text AS fusion_id,
               e.freight_mode, e.eta, e.last_event_at,
               o.codigo AS oc_codigo, o.display_label AS oc_display, o.proforma AS oc_proforma,
               COALESCE(c.nombre_comercial, c.razon_social) AS client_name,
@@ -943,6 +944,7 @@ class PortalViewSet(viewsets.ViewSet):
         ph = ",".join(["%s"] * len(cids))
         _rows = _fetchall(f"""
             SELECT e.id, e.codigo, e.estado, e.origin, e.destination,
+                   e.oc_id::text AS oc_id, e.fusion_id::text AS fusion_id,
                    e.freight_mode, e.eta, e.last_event_at,
                    o.codigo AS oc_codigo, o.display_label AS oc_display, o.proforma AS oc_proforma,
                    COALESCE(c.nombre_comercial, c.razon_social) AS client_name,

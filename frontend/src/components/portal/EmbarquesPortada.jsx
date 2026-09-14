@@ -6,6 +6,7 @@
 // AWB/BL) y documentos vigentes. Sin datos internos (R3).
 // =====================================================================
 import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { portalApi, apiFetch, getToken } from "../../lib/api.js";
 import { fmtDate } from "../../lib/i18n.js";
 
@@ -57,6 +58,12 @@ function Funnel({ c, es }) {
 
 export default function EmbarquesPortada({ lang = "es", clientId }) {
   const es = lang === "es";
+  const navigate = useNavigate();
+  const go = useCallback((it) => {
+    if (it?.fusion_id) navigate(`/expedientes/fusion/${it.fusion_id}`);
+    else if (it?.oc_id) navigate(`/expedientes/${it.oc_id}`);
+    else if (it?.id) navigate(`/expedientes/${it.id}`);
+  }, [navigate]);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -155,7 +162,8 @@ export default function EmbarquesPortada({ lang = "es", clientId }) {
         const open = openId === it.id;
         const det = detalle[it.id];
         return (
-          <div key={it.id} style={{ borderTop: "1px solid var(--border-subtle, #EEF2F6)", padding: "10px 2px" }}>
+          <div key={it.id} onClick={() => go(it)}
+               style={{ borderTop: "1px solid var(--border-subtle, #EEF2F6)", padding: "10px 2px", cursor: "pointer" }}>
             <div className="flex ai-center jc-between" style={{ gap: 10, flexWrap: "wrap" }}>
               <div style={{ minWidth: 180 }}>
                 <div style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: 13 }}>
@@ -183,9 +191,14 @@ export default function EmbarquesPortada({ lang = "es", clientId }) {
                   <Chip text={es ? "sin fecha concreta" : "no concrete date"} tone="warn" />
                 )}
               </div>
-              <button type="button" className="btn btn-secondary btn-sm" onClick={() => toggle(it.id)}>
-                {open ? (es ? "Cerrar" : "Close") : (es ? "Ver" : "View")}
-              </button>
+              <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => toggle(it.id)}>
+                  {open ? (es ? "Ocultar" : "Hide") : (es ? "Archivos" : "Files")}
+                </button>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => go(it)}>
+                  {es ? "Ver" : "View"}
+                </button>
+              </div>
             </div>
 
             {open && (
