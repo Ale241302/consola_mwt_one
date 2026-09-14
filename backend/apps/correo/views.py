@@ -57,7 +57,7 @@ class MensajeViewSet(viewsets.ViewSet):
         is_admin = user_is_ceo_or_admin(request.user)
         if mailbox and mailbox != "all":
             qs = qs.filter(owner_email=mailbox)
-        elif not is_admin and user_email:
+        elif user_email:
             qs = qs.filter(owner_email=user_email)
         for param, field in (("direction", "direction"), ("expediente", "expediente_id"),
                              ("match_status", "match_status"), ("proforma", "proforma"),

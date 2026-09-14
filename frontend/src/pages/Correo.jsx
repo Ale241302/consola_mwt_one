@@ -81,7 +81,7 @@ function Bandeja({ es, selStyle, flash }) {
   const [noLeidos, setNoLeidos] = useState(false);
   const [detalle, setDetalle] = useState(null);
   const [reply, setReply] = useState(null);          // borrador de respuesta
-  const [mailbox, setMailbox] = useState(isAdmin ? "all" : userEmail);
+  const [mailbox, setMailbox] = useState(userEmail || "all");
   const [mailboxes, setMailboxes] = useState([]);
 
   useEffect(() => { correoApi.mensajes.mailboxes().then((d) => setMailboxes(Array.isArray(d) ? d : [])).catch(() => {}); }, []);
