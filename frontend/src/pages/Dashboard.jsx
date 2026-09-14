@@ -36,11 +36,11 @@ import { OCS } from "../data/mockData.js";
 // click en cualquier registro del dashboard abra el DETALLE de la OC.
 import { expedientesApi } from "../lib/api.js";
 // Sprint 2026-06-11 (CEO) · dashboard enriquecido para usuarios CLIENTE.
-import ClientDashboard from "../components/dashboard/ClientDashboard.jsx";
+// Etapa 7 · reemplazado por ClientHome (rediseño).
 // Sprint 2026-08-02 · grid personalizable ADMIN/CEO (scope por widget).
-import AdminDashboard from "../components/dashboard/AdminDashboard.jsx";
-// Etapa 5 · Portada CEO (respuestas pendientes + próximas salidas de producción).
-import PortadaCEO from "../components/dashboard/PortadaCEO.jsx";
+// Etapa 7 · rediseño de paneles (CEO/Admin y Cliente B2B).
+import CeoHome from "../components/dashboard/CeoHome.jsx";
+import ClientHome from "../components/dashboard/ClientHome.jsx";
 import { FxToggle } from "../components/dashboard/DashboardPrimitives.jsx";
 
 const LS_CCY = "mwt:dashboard-fx-display";
@@ -174,17 +174,8 @@ export default function ScreenDashboard() {
       {/* Sprint 2026-08-02 · ADMIN/CEO: grid personalizable con scope por
           widget. CLIENT: su dashboard propio (intacto). */}
       {isAdmin
-        ? <>
-            <PortadaCEO lang={lang} onOpenExpediente={onOpenExpediente} />
-            <AdminDashboard
-              lang={lang}
-              fmtAmount={fmtAmount}
-              secondaryBrl={secondaryBrl}
-              refreshNonce={refreshNonce}
-              onOpenExpediente={onOpenExpediente}
-            />
-          </>
-        : <ClientDashboard lang={lang}/>}
+        ? <CeoHome lang={lang} onOpenExpediente={onOpenExpediente} onGoFinanzas={() => navigate("/finanzas")} />
+        : <ClientHome lang={lang} />}
 
       {/* Footer informativo */}
       <div

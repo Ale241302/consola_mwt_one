@@ -257,12 +257,6 @@ export default function Finanzas({ lang = "es" }) {
         </p>
       </div>
 
-      {/* Etapa 5 · Comisiones por marca + flujo 90 días */}
-      <ComisionesFlujo lang={lang} />
-
-      {/* Etapa 6 · Objetivos y evolución de clientes */}
-      <ObjetivosCliente lang={lang} />
-
       {/* KPIs hero */}
       <div style={{
         display: "grid",
@@ -309,16 +303,9 @@ export default function Finanzas({ lang = "es" }) {
         </div>
       )}
 
-      {/* Sprint 2026-05-30 (CEO) - 2 graficas: scatter margen + bar comision por mes */}
-      <div style={{
-        display: "grid", gridTemplateColumns: "1.4fr 1fr",
-        gap: 14, marginBottom: 20,
-      }}>
-        {/* Scatter margen proyectado vs real */}
-        <FinanzasScatter points={scatterPoints} lang={lang} />
-        {/* Bar chart comision por mes */}
-        <FinanzasMonthlyBar buckets={monthlyCommission} lang={lang} />
-      </div>
+      {/* Comisiones por marca + flujo 90 días + arbitraje + objetivos */}
+      <ComisionesFlujo lang={lang} />
+      <ObjetivosCliente lang={lang} />
 
       {/* Filtros */}
       <div style={{
