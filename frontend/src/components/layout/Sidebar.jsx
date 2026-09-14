@@ -210,7 +210,7 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
     { key: 'correo',         icon: <IconMail/>,       label: lang === 'en' ? 'Mail'          : 'Correo',         group: 'communications' },
     { key: 'collections',    icon: <IconCreditCard/>, label: lang === 'en' ? 'Portfolio'     : 'Cartera',        group: 'communications' },
     // Soporte
-      { key: 'tickets',        icon: <IconClipboard/>,  label: tr(lang,'tickets')  || 'Gestor de Tickets', group: 'core' },
+      { key: 'tickets',        icon: <IconClipboard/>,  label: (lang === 'en' ? 'Tickets' : 'Tickets'),            group: 'core' },
     // M3 CORE — gestión de acceso del ERP. Sólo visibles para admin
     // (el whitelist de CLIENT_ALLOWED_MODULES NO los incluye).
     { key: 'usuarios',       icon: <IconUsers/>,      label: tr(lang,'users')    || 'Usuarios',         group: 'core_admin' },
