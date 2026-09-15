@@ -1723,7 +1723,6 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
                 {lang === "es" ? "Unidades" : "Units"}
               </th>
               <th style={{ width: 140 }}>{lang === "es" ? "Creado" : "Created"}</th>
-              <th style={{ width: 140 }}>{lang === "es" ? "Por" : "By"}</th>
             </tr></thead>
             <tbody>
               {items.map((a) => (
@@ -1767,7 +1766,6 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
                     {Number(a.total_qty || 0).toLocaleString()}
                   </td>
                   <td className="caption tabular-nums">{fmt(a.created_at)}</td>
-                  <td className="caption">{a.created_by_name || "—"}</td>
                 </tr>
               ))}
             </tbody>

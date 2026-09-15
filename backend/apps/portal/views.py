@@ -1039,6 +1039,25 @@ class PortalViewSet(viewsets.ViewSet):
         r["documentos"] = docs
         r["awb_bl"] = _art[0] if _art else None
 
+        # Fallback de fecha: si el expediente no tiene fecha publicada
+        # (correo.expediente_fecha), usamos la del artefacto AWB/BL —
+        # que es la fuente de verdad del envío. Preferimos arribo (ETA)
+        # sobre despacho (ETD) porque es el hito que el cliente espera.
+        if not r.get("proximo_hito") and r.get("awb_bl"):
+            awb = r["awb_bl"] or {}
+            _es_eta = bool(awb.get("fecha_arrivo"))
+            _fecha = awb.get("fecha_arrivo") or awb.get("fecha_despacho")
+            if _fecha:
+                r["proximo_hito"] = {
+                    "campo": "ETA" if _es_eta else "ETD",
+                    "valor_fecha": _fecha,
+                    "valor_raw": None,
+                    "precision": "EXACTA",
+                    "updated_at": None,
+                    "display": _fecha,
+                    "source": "awb_bl",
+                }
+
         return Response(r)
 
     @action(detail=False, methods=["post"], url_path="subir_documento")
