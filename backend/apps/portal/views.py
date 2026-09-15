@@ -930,6 +930,47 @@ class PortalViewSet(viewsets.ViewSet):
                 "actualizado": x["updated_at"],
             } for x in fs]
             r["proximo_hito"] = r["fechas"][0] if r["fechas"] else None
+
+        # Fallback de fecha (Sprint 2026-09): si el expediente NO tiene
+        # fecha publicada (correo.expediente_fecha está vacío), usamos la
+        # ETA/ETD del artefacto AWB/BL (fuente de verdad del envío).
+        # Así el dashboard del cliente muestra la fecha real que ya consta
+        # en el BL/AWB en vez de "sin fecha concreta / estimada (promedio)".
+        missing = [str(r["id"]) for r in rows if not r.get("proximo_hito")]
+        if missing:
+            awbs = _fetchall("""
+                SELECT DISTINCT ON (l.expediente_id)
+                       l.expediente_id::text AS expediente_id,
+                       i.data->>'field-1780150673285' AS fecha_arrivo,
+                       i.data->>'field-1780150662711' AS fecha_despacho,
+                       i.updated_at
+                  FROM nodos.builder_artifact_instance i
+                  JOIN nodos.builder_artifact_line l
+                    ON l.builder_artifact_instance_id = i.id AND l.is_active = TRUE
+                 WHERE i.template_id = 9 AND i.is_active = TRUE
+                   AND l.expediente_id::text = ANY(%s::text[])
+                 ORDER BY l.expediente_id, i.updated_at DESC NULLS LAST
+            """, [missing])
+            awb_by = {str(a["expediente_id"]): a for a in awbs}
+            for r in rows:
+                if r.get("proximo_hito"):
+                    continue
+                a = awb_by.get(str(r["id"]))
+                if not a:
+                    continue
+                fecha = a.get("fecha_arrivo") or a.get("fecha_despacho")
+                if not fecha:
+                    continue
+                es_eta = bool(a.get("fecha_arrivo"))
+                r["proximo_hito"] = {
+                    "campo": "ETA" if es_eta else "ETD",
+                    "valor_fecha": fecha,
+                    "valor_raw": None,
+                    "precision": "EXACTA",
+                    "actualizado": a.get("updated_at"),
+                    "display": fecha,
+                    "source": "awb_bl",
+                }
         return Response(rows)
 
     @action(detail=False, methods=["get"], url_path="embarque")
