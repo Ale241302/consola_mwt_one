@@ -152,10 +152,10 @@ export default function PortadaCEO({ lang = "es", onOpenExpediente }) {
                 cells: (
                   <>
                     <div style={{ color: "var(--text-primary)", fontWeight: 600 }}>{r.display_id}</div>
-                    <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <div title={r.subject || ""} style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {r.subject || "—"}
                     </div>
-                    <div style={{ color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <div title={r.from_name || r.from_email || ""} style={{ color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {r.from_name || r.from_email || "—"}
                     </div>
                     <div className="tabular-nums" style={{ color: "var(--text-tertiary)" }}>
@@ -226,7 +226,7 @@ export default function PortadaCEO({ lang = "es", onOpenExpediente }) {
                     <>
                       <div style={{ color: "var(--text-primary)", fontWeight: 600 }}>{b.display_id}</div>
                       <div style={{ color: "var(--text-secondary)" }}>{b.cliente || "—"}</div>
-                      <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <div title={b.subject || (Array.isArray(b.destinatarios) ? b.destinatarios.join(", ") : "")} style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {b.subject || (Array.isArray(b.destinatarios) ? b.destinatarios.join(", ") : "—")}
                       </div>
                       <div className="tabular-nums" style={{ color: "var(--text-tertiary)" }}>

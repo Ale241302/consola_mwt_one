@@ -139,7 +139,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
               {respOp.length === 0 ? <Empty>{es ? "Sin correos de expedientes pendientes." : "No pending file replies."}</Empty> : respOp.slice(0, 12).map((r) => (
                 <Row key={r.mensaje_id} grid="1.1fr 2fr 1fr" onClick={() => open(r.expediente_id)}>
                   <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>{r.display_id}</div>
-                  <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.subject || "—"}</div>
+                  <div title={r.subject || ""} style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.subject || "—"}</div>
                   <div className="tabular-nums" style={{ color: "var(--text-tertiary)", textAlign: "right" }}>{r.fecha ? fmtDate(r.fecha, lang) : "—"}</div>
                 </Row>
               ))}
@@ -218,7 +218,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                 {tareasRev.slice(0, 6).map((x) => (
                   <Row key={x.tarea_id} grid="1fr .9fr" onClick={() => open(x.expediente_id)}>
                     <div style={{ fontWeight: 700, fontSize: 12.5 }}>{x.exp_codigo || "—"}</div>
-                    <div style={{ color: "var(--text-tertiary)", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.titulo}</div>
+                    <div title={x.titulo || ""} style={{ color: "var(--text-tertiary)", fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.titulo}</div>
                   </Row>
                 ))}
               </>}
