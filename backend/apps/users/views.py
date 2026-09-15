@@ -932,6 +932,10 @@ class ProfileResetPasswordView(APIView):
 class ActivityFeedViewSet(viewsets.ReadOnlyModelViewSet):
     """Feed de notificaciones del usuario actual."""
     required_module = "usuarios"
+    # Sprint 2026-09 · endpoint auto-scopeado (solo notificaciones del
+    # propio user) → cualquier autenticado puede ver/marcar las suyas,
+    # incluido client_b2b (que no tiene el módulo `usuarios`).
+    rbac_bypass = True
     serializer_class = ActivityFeedSerializer
 
     def get_queryset(self):

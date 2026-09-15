@@ -238,6 +238,17 @@ class RoleBasedPermission(BasePermission):
             return declared
         return self._METHOD_TO_ACTION.get((request.method or "GET").upper(), "view")
 
+    def _match_module(self, required_module, required_any, modules):
+        """Devuelve el módulo autorizado: el principal o cualquiera de los
+        alternos (`required_module_any`). Permite que una vista reutilice un
+        módulo que el rol ya tiene (ej. client_b2b tiene `pagos` y `portal`)
+        sin concederle el módulo "staff-only" original ni mostrarlo en el
+        sidebar (los módulos alternos NO se agregan a la matriz del rol)."""
+        for m in [required_module] + list(required_any or []):
+            if m and m in modules:
+                return m
+        return None
+
     def has_permission(self, request, view):
         # Auth ya fue validada por JWTAuthentication / ServiceTokenAuthentication
         if not request.user or not request.auth:
@@ -245,6 +256,11 @@ class RoleBasedPermission(BasePermission):
 
         required_module = getattr(view, "required_module", None)
         view_name = f"{view.__class__.__module__}.{view.__class__.__name__}"
+
+        # ── Vistas auto-scopeadas (solo devuelven datos del propio user) ──
+        # Ej.: activity-feed. Cualquier usuario autenticado puede usarlas.
+        if getattr(view, "rbac_bypass", False):
+            return True
 
         # ── Vista sin required_module ────────────────────────────────────
         # Durante la transición de RBAC, permitimos por defecto para no
@@ -263,6 +279,11 @@ class RoleBasedPermission(BasePermission):
                 view_name,
             )
             return True
+
+        # Módulos alternos opcionales: si la vista declara
+        # `required_module_any`, basta con que el rol tenga CUALQUIERA de
+        # ellos (el principal o los alternos) para autorizar.
+        required_any = list(getattr(view, "required_module_any", None) or [])
 
         # ── ¿Es una llamada del MCP? ─────────────────────────────────────
         # El JWT mint por McpTokenView lleva claim mcp=True. Para el MCP
@@ -284,13 +305,14 @@ class RoleBasedPermission(BasePermission):
             actions = perms.get("actions") or []
             if "*" in modules:
                 return True
-            if required_module not in modules:
+            matched = self._match_module(required_module, required_any, modules)
+            if matched is None:
                 return False
             if not actions or "*" in actions:
                 return True
             required_action = self._effective_action(request, view)
             # Igual que consola: actions son "<modulo>.<accion>".
-            return f"{required_module}.{required_action}" in actions
+            return f"{matched}.{required_action}" in actions
 
         if isinstance(request.auth, dict):
             role_slug = request.auth.get("role")
@@ -308,7 +330,8 @@ class RoleBasedPermission(BasePermission):
             # MCP: sin wildcard. modules=['*'] explícito -> acceso total.
             if "*" in modules:
                 return True
-            if required_module not in modules:
+            matched = self._match_module(required_module, required_any, modules)
+            if matched is None:
                 log.info(
                     "[RoleBasedPermission][MCP] módulo %r denegado para rol %r (action=%s)",
                     required_module, role_slug, required_action,
@@ -316,11 +339,11 @@ class RoleBasedPermission(BasePermission):
                 return False
             if not actions or "*" in actions:
                 return True
-            ok = f"{required_module}.{required_action}" in actions
+            ok = f"{matched}.{required_action}" in actions
             if not ok:
                 log.info(
                     "[RoleBasedPermission][MCP] action %s.%s denegado para rol %r",
-                    required_module, required_action, role_slug,
+                    matched, required_action, role_slug,
                 )
             return ok
 
@@ -339,11 +362,12 @@ class RoleBasedPermission(BasePermission):
 
         if "*" in modules:
             return True
-        if required_module not in modules:
+        matched = self._match_module(required_module, required_any, modules)
+        if matched is None:
             return False
         if not actions or "*" in actions:
             return True
         required_action = self._effective_action(request, view)
         # Las actions se guardan como "<modulo>.<accion>" (ej. "portal.view").
         # Comparar SOLO la acción ("view" in actions) era un bug: nunca coincide.
-        return f"{required_module}.{required_action}" in actions
+        return f"{matched}.{required_action}" in actions

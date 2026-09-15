@@ -249,6 +249,12 @@ class ClienteViewSet(viewsets.ViewSet):
       hacemos en `_ctx()` y pasamos a cada Serializer).
     """
     required_module = "clientes"
+    # Sprint 2026-09 · client_b2b no tiene el módulo `clientes`, pero las
+    # acciones están scopeadas por `_cliente_in_scope` (solo su propio
+    # cliente). Permitimos el módulo `expedientes` (que sí tiene) para
+    # lectura; las mutaciones siguen bloqueadas (requieren
+    # `expedientes.create/update/delete`, que el cliente no posee).
+    required_module_any = ["expedientes"]
 
     def _ctx(self, request):
         """Context estándar DRF — requerido para POL_VISIBILIDAD."""

@@ -19,6 +19,10 @@ from .serializers import (
 
 class MarcaViewSet(viewsets.ViewSet):
     required_module = "marcas"
+    # Sprint 2026-09 · client_b2b no tiene `marcas`, pero el detalle de
+    # expediente muestra la marca. Permitimos lectura vía `expedientes`
+    # (que sí tiene); mutaciones siguen bloqueadas.
+    required_module_any = ["expedientes"]
     def list(self, request):
         qs = Marca.objects.filter(is_active=True).order_by("nombre")
         mapping = {

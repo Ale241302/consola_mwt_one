@@ -67,6 +67,11 @@ class PaymentViewSet(viewsets.ViewSet):
     """
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     required_module = "finance"
+    # Sprint 2026-09 · client_b2b no tiene `finance` pero sí `pagos`;
+    # el listado ya está scopeado por client_id (multi-tenant), así que
+    # el cliente puede leer SOLO sus pagos. Mutaciones siguen bloqueadas
+    # porque requieren `pagos.create/update/delete` (el cliente no las tiene).
+    required_module_any = ["pagos"]
 
     # ── List ──────────────────────────────────────────────
     def list(self, request):
