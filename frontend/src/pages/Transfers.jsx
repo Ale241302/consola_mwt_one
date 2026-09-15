@@ -435,22 +435,10 @@ export default function ScreenTransfers() {
                   type="button"
                   className="trf-row-main"
                   onClick={() => {
-                    const nextId = isExp ? null : t.id;
-                    setExpanded(nextId);
-                    // Sprint 2026-05-14 · Fase 11 — lazy-fetch detalle.
-                    if (nextId && t._backend_id && !linesByTrfId[t._backend_id]
-                        && linesLoading !== t._backend_id) {
-                      setLinesLoading(t._backend_id);
-                      transferenciasApi.get(t._backend_id)
-                        .then((full) => {
-                          const arr = Array.isArray(full?.lineas) ? full.lineas : [];
-                          setLinesByTrfId((p) => ({ ...p, [t._backend_id]: arr }));
-                        })
-                        .catch(() => {
-                          setLinesByTrfId((p) => ({ ...p, [t._backend_id]: [] }));
-                        })
-                        .finally(() => setLinesLoading(null));
-                    }
+                    // Sprint 2026-09 · El click en la fila abre el DETALLE del
+                    // movimiento (ahí se aprueba/rechaza). Se quitó el
+                    // "resumen de SKU" expandible y los botones de acción.
+                    navigate(`/transferencias/${t._backend_id || t.id}`);
                   }}
                 >
                   {/* Sprint 2026-05-14 · Fase 12 — checkbox por fila. */}
