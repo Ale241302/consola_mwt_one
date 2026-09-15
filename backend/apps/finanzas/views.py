@@ -197,6 +197,8 @@ def _fetch_expedientes() -> list[dict]:
                 e.forma_pago                                      AS forma_pago,
                 COALESCE(e.balance, 0)                            AS balance,
                 COALESCE(e.total_paid, 0)                         AS total_paid,
+                COALESCE(e.total_invoiced, 0)                     AS total_invoiced,
+                COALESCE(pay.paid, 0)                             AS paid_from_payments,
                 COALESCE(e.commission_pct, cl.comision_pct)       AS commission_rate,
                 CASE
                     WHEN e.commission_pct IS NOT NULL THEN 'expediente.commission_pct'
@@ -242,11 +244,24 @@ def _fetch_expedientes() -> list[dict]:
                 ORDER BY bai.updated_at DESC NULLS LAST, bai.created_at DESC
                 LIMIT 1
             ) a05 ON TRUE
+            LEFT JOIN LATERAL (
+                -- Sprint 2026-09 · el "pagado" del expediente se deriva de
+                -- los pagos CONFIRMADOS (IN) registrados en finance.payment,
+                -- para que cada pago nuevo dispare el devengo de comisión sin
+                -- depender de que alguien actualice expediente.total_paid.
+                SELECT COALESCE(SUM(p.monto_usd), 0) AS paid
+                  FROM finance.payment p
+                 WHERE p.expediente_id = e.id
+                   AND p.is_active = TRUE
+                   AND COALESCE(p.direction, 'IN') = 'IN'
+                   AND p.estado IN ('CONFIRMADO_HUMANO', 'CONFIRMADO_AI')
+            ) pay ON TRUE
             WHERE e.is_active = TRUE
             GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
                      oc.id, oc.razon_social,
                      e.brand_id, bm.nombre,
-                     a05.shipment_date_artifact, a05.eta_artifact
+                     a05.shipment_date_artifact, a05.eta_artifact,
+                     pay.paid
             ORDER BY proforma_codigo ASC NULLS LAST, e.codigo ASC
             """
         )
@@ -294,6 +309,22 @@ def _build_item(row: dict, today: date) -> dict:
     cd_cli = int(row["credit_days_cliente"] or row.get("cliente_dias_credito") or 90)
     cd_mwt = int(row["credit_days_mwt"]) if row.get("credit_days_mwt") is not None else None
 
+    # Sprint 2026-09 · el "pagado" se deriva de finance.payment (pagos
+    # CONFIRMADOS IN); el campo denormalizado del expediente queda como
+    # fallback. Así, registrar un pago dispara el devengo automáticamente.
+    paid_payments = _dec(row.get("paid_from_payments"))
+    paid_legacy   = _dec(row.get("total_paid"))
+    paid_total    = paid_payments if paid_payments > 0 else paid_legacy
+
+    invoiced = _dec(row.get("total_invoiced"))
+    if invoiced <= 0:
+        invoiced = _dec(row.get("balance")) + paid_legacy
+    if invoiced <= 0:
+        invoiced = total_client
+    balance_computed = invoiced - paid_total
+    if balance_computed < 0:
+        balance_computed = Decimal("0.00")
+
     estado, _fecha_devengo_credito = _resolve_devengo_estado(
         commission_rate=_dec(commission_rate) if commission_rate is not None else None,
         shipment_date=(row.get("shipment_date_artifact") or row["shipment_date"]),
@@ -301,8 +332,8 @@ def _build_item(row: dict, today: date) -> dict:
         created_at_date=row.get("created_at_date"),
         credit_days_cliente=cd_cli,
         credit_days_mwt=cd_mwt,
-        balance=_dec(row["balance"]),
-        total_paid=_dec(row["total_paid"]),
+        balance=balance_computed,
+        total_paid=paid_total,
         today=today,
     )
 
