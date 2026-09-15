@@ -653,7 +653,7 @@ class CreditEffectService:
         # Buscar nombre legible (best-effort).
         with connection.cursor() as c:
             c.execute("""
-                SELECT id, razon_social, nombre
+                SELECT id, razon_social, nombre_comercial
                   FROM clientes.cliente
                  WHERE id = %s::uuid
                  LIMIT 1

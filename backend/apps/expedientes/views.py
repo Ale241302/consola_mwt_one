@@ -3830,7 +3830,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
                 with connection.cursor() as c:
                     c.execute(
                         """
-                        SELECT COALESCE(razon_social, nombre)
+                        SELECT COALESCE(razon_social, nombre_comercial)
                           FROM clientes.cliente
                          WHERE id = %s::uuid
                          LIMIT 1
@@ -4639,7 +4639,7 @@ class ExpedienteViewSet(viewsets.ViewSet):
             try:
                 with connection.cursor() as c:
                     c.execute(
-                        "SELECT COALESCE(razon_social, nombre) FROM clientes.cliente "
+                        "SELECT COALESCE(razon_social, nombre_comercial) FROM clientes.cliente "
                         "WHERE id = %s::uuid LIMIT 1",
                         [str(client_id_val)],
                     )
