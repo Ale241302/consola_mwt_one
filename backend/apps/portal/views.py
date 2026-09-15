@@ -22,6 +22,7 @@ Si no se resuelve client_id → 403.
 =====================================================================
 """
 import hashlib
+import json
 import logging
 import secrets
 import uuid
@@ -970,7 +971,13 @@ class PortalViewSet(viewsets.ViewSet):
             _iso = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
             bk_by = {}
             for b in bks:
-                ds = sorted(v for v in (b.get("data") or {}).values()
+                d = b.get("data")
+                if isinstance(d, str):
+                    try:
+                        d = json.loads(d)
+                    except Exception:
+                        d = {}
+                ds = sorted(v for v in (d or {}).values()
                             if isinstance(v, str) and _iso.match(v))
                 if ds:
                     bk_by[str(b["expediente_id"])] = {"etd": ds[0], "eta": ds[-1]}
