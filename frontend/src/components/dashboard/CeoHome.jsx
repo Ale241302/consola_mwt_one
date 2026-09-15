@@ -97,7 +97,12 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     ...salidas,
     ...sinFecha.map((s) => ({
       expediente_id: s.expediente_id, display_id: s.display_id, cliente: s.cliente,
-      campo: s.exp_estado, valor_fecha: null, estado_fecha: "SIN_FECHA",
+      campo: s.exp_estado,
+      valor_fecha: s.fecha_fin || null,
+      fecha_inicio: s.fecha_inicio || null,
+      fecha_fin: s.fecha_fin || null,
+      fin_estimada: !!s.fin_estimada,
+      estado_fecha: "SIN_FECHA",
     })),
   ];
   const cambios = rad?.bloqueos?.cambios_fecha || [];
@@ -143,13 +148,20 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
             <Section title={es ? "PRÓXIMAS SALIDAS DE PRODUCCIÓN" : "UPCOMING SHIPMENTS"} count={salidasAll.length}>
               {salidasAll.length === 0 ? <Empty>{es ? "Sin expedientes en producción." : "No files in production."}</Empty> : salidasAll.slice(0, 12).map((s) => {
                 const c = CERT[s.estado_fecha] || CERT.POR_RECONFIRMAR;
+                const est = !!s.fin_estimada;
+                const fin = s.fecha_fin || s.valor_fecha || null;
                 return (
-                  <Row key={`${s.expediente_id}-${s.campo}`} grid="1.1fr 1fr .8fr 1fr 1fr" onClick={() => open(s.expediente_id)}>
+                  <Row key={`${s.expediente_id}-${s.campo}`} grid="1.1fr 1fr .7fr 1fr 1fr 1fr" onClick={() => open(s.expediente_id)}>
                     <div style={{ fontWeight: 700 }}>{s.display_id}</div>
                     <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cliente || "—"}</div>
                     <div style={{ color: "var(--text-tertiary)" }}>{s.campo}</div>
-                    <div className="tabular-nums">{s.valor_fecha || "—"}</div>
-                    <div><span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: c[0], color: c[1] }}>{c[2]}</span></div>
+                    <div className="tabular-nums">{s.fecha_inicio ? fmtDate(s.fecha_inicio, lang) : "—"}</div>
+                    <div className="tabular-nums" style={{ fontWeight: fin ? 600 : 400 }}>{fin ? `${est ? "≈ " : ""}${fmtDate(fin, lang)}` : "—"}</div>
+                    <div>
+                      {est
+                        ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: "#FEF3C7", color: "#92400E" }}>{es ? "estimada (promedio)" : "estimated (avg)"}</span>
+                        : <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: c[0], color: c[1] }}>{c[2]}</span>}
+                    </div>
                   </Row>
                 );
               })}

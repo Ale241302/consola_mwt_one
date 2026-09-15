@@ -30,6 +30,7 @@ debe ver el negocio completo, no solo lo operado directamente por MWT).
 """
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -672,6 +673,61 @@ def radiografia_ceo(request):
     window_days = max(1, min(window_days, 180))
     today = date.today()
 
+    # ── Promedio de días por fase (para estimar la fecha fin cuando falta)
+    #    Misma idea que el dashboard del cliente (phase-stats): si un
+    #    expediente en PRODUCCION no tiene fecha fin, la estimamos con el
+    #    promedio histórico de esa fase.
+    avg_rows = _query("""
+        SELECT m.key AS fase,
+               AVG(NULLIF((m.value->>'days'), '')::numeric) AS avg_days
+          FROM expedientes.expediente e,
+               jsonb_each(COALESCE(e.phase_durations_json, '{}'::jsonb)) m
+         WHERE e.is_active = TRUE
+         GROUP BY m.key
+    """)
+    avg_phase = {r["fase"]: float(r["avg_days"]) for r in avg_rows
+                 if r.get("avg_days") is not None}
+    default_phase_days = 45
+
+    def _fase_dates(item, fin_override=None):
+        """Añade fecha_inicio / fecha_fin / fin_estimada a un item."""
+        pdj = item.get("phase_durations_json")
+        if isinstance(pdj, str):
+            try:
+                pdj = json.loads(pdj)
+            except (ValueError, TypeError):
+                pdj = {}
+        pdj = pdj if isinstance(pdj, dict) else {}
+        estado = (item.get("exp_estado") or "").upper()
+        cur = pdj.get(estado) or {}
+        inicio = cur.get("start")
+        fin = fin_override or cur.get("end")
+        if not inicio:
+            base = item.get("last_event_at") or item.get("created_at")
+            if base is not None:
+                try:
+                    d0 = base.date() if hasattr(base, "date") else date.fromisoformat(str(base)[:10])
+                    inicio = (d0 - timedelta(days=int(item.get("time_in_phase") or 0))).isoformat()
+                except (ValueError, TypeError):
+                    inicio = None
+        estimada = False
+        if not fin and inicio:
+            try:
+                avg = avg_phase.get(estado) or default_phase_days
+                fin = (date.fromisoformat(str(inicio)[:10])
+                       + timedelta(days=round(avg))).isoformat()
+                estimada = True
+            except (ValueError, TypeError):
+                fin = None
+        item["fecha_inicio"] = str(inicio)[:10] if inicio else None
+        item["fecha_fin"] = str(fin)[:10] if fin else None
+        item["fin_estimada"] = estimada
+        item.pop("phase_durations_json", None)
+        item.pop("created_at", None)
+        item.pop("last_event_at", None)
+        item.pop("time_in_phase", None)
+        return item
+
     # ── Respuestas pendientes ─────────────────────────────────────────
     respuestas = _query(f"""
         WITH ranked AS (
@@ -733,6 +789,7 @@ def radiografia_ceo(request):
                ef.valor_fecha, ef.precision, ef.updated_at,
                e.codigo AS exp_codigo, e.estado AS exp_estado,
                cl.razon_social AS cliente,
+               e.phase_durations_json, e.created_at, e.last_event_at, e.time_in_phase,
                {_PROFORMA_SUBSELECT} AS proforma_codigo,
                EXISTS (
                    SELECT 1 FROM correo.extraccion x
@@ -762,11 +819,14 @@ def radiografia_ceo(request):
             s["estado_fecha"] = "POR_RECONFIRMAR"
         else:
             s["estado_fecha"] = "RECONFIRMADA"
+        # fecha inicio (entrada a la fase) + fin = fecha publicada.
+        _fase_dates(s, fin_override=s.get("valor_fecha"))
 
     # ── Sin fecha concreta (en registro/produccion sin fecha publicada) ─
     sin_fecha = _query(f"""
         SELECT e.id::text AS expediente_id, e.codigo AS exp_codigo, e.estado AS exp_estado,
                e.shipment_date, e.eta, cl.razon_social AS cliente,
+               e.phase_durations_json, e.created_at, e.last_event_at, e.time_in_phase,
                {_PROFORMA_SUBSELECT} AS proforma_codigo
           FROM expedientes.expediente e
           LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
@@ -784,6 +844,7 @@ def radiografia_ceo(request):
     """)
     for s in sin_fecha:
         s["display_id"] = _resolve_display_id(s.get("exp_codigo"), s.get("proforma_codigo"))
+        _fase_dates(s)
 
     # ── Bloqueos (cambios de fecha + tareas de revision) ──────────────
     cambios = _query(f"""
