@@ -72,10 +72,21 @@ def _hash_file(file) -> str:
 
 
 def _client_id_for_expediente(expediente_id: uuid.UUID) -> Optional[uuid.UUID]:
-    """Best-effort lookup del client_id desde expedientes.files
+    """Best-effort lookup del client_id desde expedientes.expediente
     (denormalizado en Payment.client_id para queries rápidas).
-    Si la tabla/columna no existe en el entorno, devolvemos None
-    sin hacer fallar el registro del pago."""
+    Fallback legacy: expedientes.files.client_account_uuid.
+    Si nada resuelve, devolvemos None sin hacer fallar el registro."""
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT client_id FROM expedientes.expediente WHERE id = %s::uuid",
+                [str(expediente_id)],
+            )
+            row = cur.fetchone()
+        if row and row[0]:
+            return row[0]
+    except Exception as e:  # pragma: no cover — degradación silenciosa
+        log.info("client_id lookup (expediente) falló: %s", e)
     try:
         with connection.cursor() as cur:
             cur.execute(
@@ -85,7 +96,7 @@ def _client_id_for_expediente(expediente_id: uuid.UUID) -> Optional[uuid.UUID]:
             row = cur.fetchone()
         return row[0] if row and row[0] else None
     except Exception as e:  # pragma: no cover — degradación silenciosa
-        log.info("client_id lookup falló: %s", e)
+        log.info("client_id lookup (files) falló: %s", e)
         return None
 
 
