@@ -815,6 +815,8 @@ export const finanzasApi = {
     apiFetch(`/finanzas/radiografia/${qs(windowDays ? { window_days: windowDays } : null)}`, { token: getToken() }),
   comisionesPorMarca: () =>
     apiFetch(`/finanzas/comisiones-por-marca/`, { token: getToken() }),
+  comisionesHistoricas: () =>
+    apiFetch(`/finanzas/comisiones-historicas/`, { token: getToken() }),
   flujo: (dias) =>
     apiFetch(`/finanzas/flujo/${qs(dias ? { dias } : null)}`, { token: getToken() }),
   saldoInicial: () =>
