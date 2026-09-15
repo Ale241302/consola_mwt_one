@@ -146,25 +146,42 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
             </Section>
 
             <Section title={es ? "PRÓXIMAS SALIDAS DE PRODUCCIÓN" : "UPCOMING SHIPMENTS"} count={salidasAll.length}>
-              {salidasAll.length === 0 ? <Empty>{es ? "Sin expedientes en producción." : "No files in production."}</Empty> : salidasAll.slice(0, 12).map((s) => {
+              {salidasAll.length === 0 ? <Empty>{es ? "Sin expedientes en producción." : "No files in production."}</Empty> : <>
+                <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr .7fr 1fr 1fr 1fr", gap: 12, padding: "0 4px 6px", borderBottom: "1px solid var(--border-subtle, #EEF2F6)", marginBottom: 2 }}>
+                  {[
+                    es ? "Proforma" : "Proforma",
+                    es ? "Cliente" : "Client",
+                    es ? "Estado" : "State",
+                    es ? "Fecha inicio" : "Start date",
+                    es ? "Fecha fin" : "End date",
+                    es ? "Certeza" : "Certainty",
+                  ].map((h, i) => (
+                    <div key={i} className="micro" style={{ color: "var(--text-tertiary)", fontWeight: 800, letterSpacing: ".04em" }}>{h}</div>
+                  ))}
+                </div>
+                {salidasAll.slice(0, 12).map((s) => {
                 const c = CERT[s.estado_fecha] || CERT.POR_RECONFIRMAR;
                 const est = !!s.fin_estimada;
                 const fin = s.fecha_fin || s.valor_fecha || null;
+                const hasFin = !!fin;
+                const chip = est
+                  ? { bg: "var(--warning-bg, #FEF3C7)", fg: "var(--warning-fg, #92400E)", txt: es ? "estimada (promedio)" : "estimated (avg)" }
+                  : s.estado_fecha === "SIN_FECHA"
+                    ? (hasFin
+                        ? { bg: "var(--success-bg, #DCFCE7)", fg: "var(--success-fg, #166534)", txt: es ? "fecha fijada" : "date set" }
+                        : { bg: "var(--surface-hover, #F1F5F9)", fg: "var(--text-secondary, #475569)", txt: es ? "sin fecha" : "no date" })
+                    : { bg: c[0], fg: c[1], txt: c[2] };
                 return (
                   <Row key={`${s.expediente_id}-${s.campo}`} grid="1.1fr 1fr .7fr 1fr 1fr 1fr" onClick={() => open(s.expediente_id)}>
                     <div style={{ fontWeight: 700 }}>{s.display_id}</div>
                     <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cliente || "—"}</div>
                     <div style={{ color: "var(--text-tertiary)" }}>{s.campo}</div>
                     <div className="tabular-nums">{s.fecha_inicio ? fmtDate(s.fecha_inicio, lang) : "—"}</div>
-                    <div className="tabular-nums" style={{ fontWeight: fin ? 600 : 400 }}>{fin ? `${est ? "≈ " : ""}${fmtDate(fin, lang)}` : "—"}</div>
-                    <div>
-                      {est
-                        ? <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: "#FEF3C7", color: "#92400E" }}>{es ? "estimada (promedio)" : "estimated (avg)"}</span>
-                        : <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: c[0], color: c[1] }}>{c[2]}</span>}
-                    </div>
+                    <div className="tabular-nums" style={{ fontWeight: hasFin ? 700 : 400 }}>{hasFin ? `${est ? "≈ " : ""}${fmtDate(fin, lang)}` : "—"}</div>
+                    <div><span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 700, background: chip.bg, color: chip.fg }}>{chip.txt}</span></div>
                   </Row>
                 );
-              })}
+              })}</>}
             </Section>
 
             <Section title={es ? "COMISIONES POR MARCA · ventana 10–20" : "COMMISSIONS BY BRAND"} count={com.length}
