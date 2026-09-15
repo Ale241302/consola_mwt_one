@@ -23,6 +23,27 @@ from .serializers import (
 from .cost_proration import operative_per_unit_map
 
 
+def _client_can_see_expediente(request, exp_id) -> bool:
+    """Sprint 2026-09 · Scope multi-tenant para endpoints de inventario
+    scopeados por expediente (artifacts / shipping-summary / nodos-por-linea).
+
+    Staff (no client) → True. client_b2b → True solo si el expediente está
+    dentro de su scope (`scoped_expediente_ids`). Evita que un cliente lea
+    documentos/envíos de expedientes ajenos pasando otro exp_id."""
+    try:
+        from apps.core.permissions import _is_client_viewer
+        if not _is_client_viewer(request.user):
+            return True
+        from apps.core.scoped_querysets import scoped_expediente_ids
+        ids = scoped_expediente_ids(request.user)
+        if ids is None:            # bypass
+            return True
+        return str(exp_id) in {str(x) for x in ids}
+    except Exception:  # noqa: BLE001 — fail-closed ante error de scope
+        log.warning("_client_can_see_expediente falló; denegando", exc_info=True)
+        return False
+
+
 # ============================================================
 # StockViewSet  — /api/stock/
 # ============================================================
@@ -803,6 +824,8 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             uuid.UUID(str(exp_id))
         except (TypeError, ValueError):
             return Response({"detail": "exp_id inválido"}, status=400)
+        if not _client_can_see_expediente(request, exp_id):
+            return Response({"detail": "No autorizado"}, status=403)
 
         sql = """
             SELECT
@@ -848,6 +871,8 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             uuid.UUID(str(exp_id))
         except (TypeError, ValueError):
             return Response({"detail": "exp_id invalido"}, status=400)
+        if not _client_can_see_expediente(request, exp_id):
+            return Response({"detail": "No autorizado"}, status=403)
 
         out = {
             "expediente_id":  str(exp_id),
@@ -1006,6 +1031,8 @@ class NodoAssignmentViewSet(viewsets.ViewSet):
             uuid.UUID(str(exp_id))
         except (TypeError, ValueError):
             return Response({"detail": "exp_id inválido"}, status=400)
+        if not _client_can_see_expediente(request, exp_id):
+            return Response({"detail": "No autorizado"}, status=403)
 
         # Sprint 2026-05-26 (CEO) - enriquecer la respuesta con shipping
         # summary cuando el artefacto es ART-05 AWB/BL (template_id=9).
