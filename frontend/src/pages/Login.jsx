@@ -62,15 +62,16 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false);
   const [localErr, setLocalErr] = useState("");
 
+  // Todos los hooks ANTES de cualquier return condicional (React #300).
+  useEffect(() => {
+    document.title = "MWT ONE · Ingreso";
+  }, []);
+
   // Si ya hay sesión activa → redirigir directo
   if (user) {
     const to = location.state?.from?.pathname || "/dashboard";
     return <Navigate to={to} replace />;
   }
-
-  useEffect(() => {
-    document.title = "MWT ONE · Ingreso";
-  }, []);
 
   const onSubmit = async (e) => {
     e.preventDefault();
