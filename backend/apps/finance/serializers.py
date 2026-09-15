@@ -90,6 +90,7 @@ class PaymentDetailSerializer(serializers.ModelSerializer):
             "monto", "moneda", "tasa_cambio_a_usd", "monto_usd",
             "fecha", "metodo", "tipo_pago", "referencia",
             "estado", "notas",
+            "direction", "counterparty_type", "counterparty_id",
             "created_by", "created_at", "updated_at",
             "confirmed_at", "confirmed_by",
             "reverted_at", "reverted_by", "reverted_reason",

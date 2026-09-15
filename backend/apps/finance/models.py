@@ -100,6 +100,9 @@ class Payment(models.Model):
         default=PaymentStatus.PENDIENTE_AI,
     )
     notas              = models.TextField(null=True, blank=True)
+    direction          = models.CharField(max_length=8, null=True, blank=True)
+    counterparty_type  = models.TextField(null=True, blank=True)
+    counterparty_id    = models.UUIDField(null=True, blank=True)
     created_by         = models.UUIDField(null=True, blank=True)
     confirmed_at       = models.DateTimeField(null=True, blank=True)
     confirmed_by       = models.UUIDField(null=True, blank=True)
