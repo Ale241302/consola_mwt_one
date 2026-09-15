@@ -174,7 +174,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                 return (
                   <Row key={`${s.expediente_id}-${s.campo}`} grid="1.1fr 1fr .7fr 1fr 1fr 1fr" onClick={() => open(s.expediente_id)}>
                     <div style={{ fontWeight: 700 }}>{s.display_id}</div>
-                    <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cliente || "—"}</div>
+                    <div title={s.cliente || ""} style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cliente || "—"}</div>
                     <div style={{ color: "var(--text-tertiary)" }}>{s.campo}</div>
                     <div className="tabular-nums">{s.fecha_inicio ? fmtDate(s.fecha_inicio, lang) : "—"}</div>
                     <div className="tabular-nums" style={{ fontWeight: hasFin ? 700 : 400 }}>{hasFin ? `${est ? "≈ " : ""}${fmtDate(fin, lang)}` : "—"}</div>
