@@ -1462,4 +1462,52 @@ def cliente_objetivos(request):
     })
 
 
+# ---------------------------------------------------------------------
+# Sprint 2026-09 · COMISIONES HISTÓRICAS (conciliación FE ↔ cobros)
+# ---------------------------------------------------------------------
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def comisiones_historicas(request):
+    """Histórico de comisiones según las FE (facturas de comisión de MWT a
+    Marluvas), conciliadas contra los cobros reales. Cubre periodos con PFs
+    que no tienen expediente operativo (p. ej. 2024/2025)."""
+    with connection.cursor() as c:
+        c.execute(
+            """
+            SELECT ch.periodo, ch.fe_codigo, ch.fecha_emision, ch.cliente_nombre,
+                   ch.pf_ref, ch.pais_iso2, ch.monto_cobrado_usd, ch.comision_pct,
+                   ch.comision_usd, ch.tipo, ch.estado, ch.expediente_id::text,
+                   e.codigo AS expediente_codigo
+              FROM finance.comision_historica ch
+              LEFT JOIN expedientes.expediente e ON e.id = ch.expediente_id
+             WHERE ch.is_active = TRUE
+             ORDER BY ch.periodo DESC, ch.fe_codigo, ch.cliente_nombre
+            """
+        )
+        cols = [d[0] for d in c.description]
+        rows = [dict(zip(cols, r)) for r in c.fetchall()]
+
+    total = Decimal("0")
+    por_periodo: dict[str, Decimal] = {}
+    for r in rows:
+        for k, v in list(r.items()):
+            if hasattr(v, "isoformat"):
+                r[k] = v.isoformat()
+            elif isinstance(v, Decimal):
+                r[k] = str(v)
+        amt = Decimal(str(r.get("comision_usd") or 0))
+        total += amt
+        per = r.get("periodo") or "—"
+        por_periodo[per] = por_periodo.get(per, Decimal("0")) + amt
+
+    return Response({
+        "comisiones": rows,
+        "total_usd": str(total.quantize(Decimal("0.01"))),
+        "por_periodo": [
+            {"periodo": k, "comision_usd": str(v.quantize(Decimal("0.01")))}
+            for k, v in sorted(por_periodo.items(), reverse=True)
+        ],
+    })
+
+
 

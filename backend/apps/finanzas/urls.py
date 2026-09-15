@@ -20,6 +20,7 @@ urlpatterns = [
     path("finanzas/radiografia/",                    views.radiografia_ceo,    name="finanzas-radiografia"),
     # Etapa 5 · Comisiones por marca + ventana 10–20
     path("finanzas/comisiones-por-marca/",           views.comisiones_por_marca, name="finanzas-comisiones-marca"),
+    path("finanzas/comisiones-historicas/",          views.comisiones_historicas, name="finanzas-comisiones-historicas"),
     # Etapa 5 · Flujo de dinero (90 dias, USD+CRC) + saldo inicial
     path("finanzas/flujo/",                           views.flujo,              name="finanzas-flujo"),
     path("finanzas/saldo-inicial/",                   views.saldo_inicial,      name="finanzas-saldo-inicial"),
