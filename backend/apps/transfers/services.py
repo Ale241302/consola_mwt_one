@@ -95,7 +95,7 @@ def _upsert_stock(nodo_id, producto_id, lote, delta_disponible=Decimal("0"),
                     GREATEST(%s, 0), GREATEST(%s, 0),
                     COALESCE(%s, 0), CURRENT_TIMESTAMP,
                     TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-            ON CONFLICT (nodo_id, producto_id, lote) DO UPDATE
+            ON CONFLICT (nodo_id, producto_id, lote, COALESCE(size, '')) DO UPDATE
               SET cantidad_disponible  = inventario.stock.cantidad_disponible  + EXCLUDED.cantidad_disponible
                                        + CASE WHEN %s < 0 THEN %s ELSE 0 END,  -- restas explícitas
                   cantidad_en_transito = inventario.stock.cantidad_en_transito + EXCLUDED.cantidad_en_transito

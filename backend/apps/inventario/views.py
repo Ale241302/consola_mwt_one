@@ -329,7 +329,7 @@ class StockViewSet(viewsets.ViewSet):
                             (id, nodo_id, producto_id, lote, cantidad_disponible,
                              costo_unitario_usd, costo_actual_usd, last_movement_at)
                         VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, NOW())
-                        ON CONFLICT (nodo_id, producto_id, lote)
+                        ON CONFLICT (nodo_id, producto_id, lote, COALESCE(size, ''))
                         DO UPDATE SET
                             cantidad_disponible = inventario.stock.cantidad_disponible + EXCLUDED.cantidad_disponible,
                             costo_actual_usd    = EXCLUDED.costo_actual_usd,
