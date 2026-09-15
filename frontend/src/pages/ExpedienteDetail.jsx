@@ -1609,7 +1609,8 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
   // (template_id=13) cuando el viewer simula cliente. El backend ya filtra
   // para CLIENT_* reales; el frontend re-filtra defensive para que el
   // Tweaks sea fiel.
-  const { isClient: _isClientSim } = useRole();
+  const { isClient: _isClientSim, isAdmin, isCeoAdmin } = useRole();
+  const canEditArtifact = !_isClientSim && (isAdmin || isCeoAdmin);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1617,6 +1618,9 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
   // viewing = instancia completa (data + structure_snapshot + lines).
   const [viewing,    setViewing]    = useState(null);
   const [viewLoading, setViewLoading] = useState(false);
+  // Sprint 2026-08 (CEO) · edición in-situ desde el expediente.
+  const [editing, setEditing] = useState(false);
+  const [saving,  setSaving]  = useState(false);
 
   // Fetch detail + apertura del modal en modo view. Filtramos las
   // líneas para mostrar SOLO las del expediente actual (las del modal
@@ -1624,6 +1628,7 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
   const openView = async (row) => {
     if (!row?.nodo_id || !row?.id) return;
     setViewLoading(true);
+    setEditing(false);
     try {
       const full = await nodoBuilderArtifactsApi.get(row.nodo_id, row.id);
       const allLines = Array.isArray(full?.lines) ? full.lines : [];
@@ -1636,6 +1641,33 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
         || (lang === "es" ? "Error al cargar artefacto" : "Error loading artifact"));
     } finally {
       setViewLoading(false);
+    }
+  };
+
+  // Sprint 2026-08 (CEO) · recarga la lista (post-guardado) reusando el
+  // mismo filtro de visibilidad que el useEffect.
+  const reloadItems = async () => {
+    const data = await nodoAssignmentsApi.artifactsPorExpediente(expedienteId);
+    const arr = Array.isArray(data) ? data : (data?.results || []);
+    setItems(_isClientSim
+      ? arr.filter((a) => Number(a?.template_id) !== 13 && a.publicado === true)
+      : arr);
+  };
+
+  // Guarda la edición del artefacto (PATCH) y refresca.
+  const handleSaveArtifact = async (data) => {
+    if (!viewing?.nodo_id || !viewing?.id) return;
+    setSaving(true);
+    try {
+      await nodoBuilderArtifactsApi.update(viewing.nodo_id, viewing.id, { data });
+      await reloadItems();
+      setViewing(null);
+      setEditing(false);
+    } catch (e) {
+      alert(e?.body?.detail || e?.message
+        || (lang === "es" ? "No se pudo guardar el artefacto" : "Could not save artifact"));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1778,13 +1810,17 @@ function ArtifactsByExpedienteTab({ expedienteId, lang = "es", navigate }) {
           a las líneas del expediente actual. Sin dropzone IA. */}
       {viewing && (
         <ArtifactFillModal
-          mode="view"
+          mode={editing ? "edit" : "view"}
           templateTitle={viewing.template_title}
           structure={viewing.structure_snapshot || { sections: [] }}
           initialData={viewing.data || {}}
           linesScope={viewing._filteredLines || []}
           lang={lang}
-          onCancel={() => setViewing(null)}
+          saving={saving}
+          canEdit={canEditArtifact}
+          onEnableEdit={() => setEditing(true)}
+          onSubmit={handleSaveArtifact}
+          onCancel={() => { setViewing(null); setEditing(false); }}
         />
       )}
     </div>

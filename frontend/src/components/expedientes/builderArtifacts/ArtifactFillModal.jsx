@@ -27,6 +27,10 @@ export default function ArtifactFillModal({
   // Cuando viene poblado, se renderiza una tabla al final del modal con
   // SKU / Nombre / Talla / Cantidad. Es informativo en cualquier modo.
   linesScope = null,   // [{sku, nombre, talla, qty, expediente_codigo?, expediente_id?}]
+  // Sprint 2026-08 (CEO) · permite pasar de "Ver artefacto" a edición sin
+  // salir del detalle del expediente. Sólo admin/CEO (el padre decide).
+  canEdit = false,
+  onEnableEdit,
 }) {
   const isView = mode === "view";
   const [data, setData] = useState(initialData || {});
@@ -580,13 +584,24 @@ export default function ArtifactFillModal({
           </span>
           {/* Sprint 2026-05-11 fase 7+ · en mode=view sólo "Cerrar". */}
           {isView ? (
-            <button
-              className="btn btn-primary"
-              onClick={onCancel}
-              type="button"
-            >
-              {lang === "es" ? "Cerrar" : "Close"}
-            </button>
+            <>
+              {canEdit && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={onEnableEdit}
+                  type="button"
+                >
+                  {lang === "es" ? "Editar" : "Edit"}
+                </button>
+              )}
+              <button
+                className="btn btn-primary"
+                onClick={onCancel}
+                type="button"
+              >
+                {lang === "es" ? "Cerrar" : "Close"}
+              </button>
+            </>
           ) : (
             <>
               <button
