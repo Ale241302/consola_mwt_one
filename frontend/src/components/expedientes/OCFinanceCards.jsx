@@ -27,7 +27,7 @@ export function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
     if (!ocId) return;
     let cancel = false;
     setLoading(true); setError(null);
-    financePaymentsApi.list({ oc_id: ocId })
+    financePaymentsApi.list({ oc_id_all: ocId })
       .then((data) => {
         if (cancel) return;
         const arr = Array.isArray(data) ? data : (data?.results || []);
@@ -43,12 +43,12 @@ export function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
       <div className="flex ai-center jc-between" style={{ marginBottom: 12 }}>
         <div>
           <h3 className="heading-md" style={{ margin: 0 }}>
-            {lang === 'es' ? 'Pagos de costos logísticos' : 'Logistics cost payments'}
+            {lang === 'es' ? 'Pagos' : 'Payments'}
           </h3>
           <div className="caption" style={{ color: 'var(--text-tertiary)', marginTop: 2 }}>
             {lang === 'es'
-              ? 'Pagos registrados contra costos de movimientos de esta OC.'
-              : 'Payments registered against transfer costs of this OC.'}
+              ? 'Todos los pagos registrados en los expedientes de esta OC.'
+              : 'All payments registered on the expedientes of this OC.'}
           </div>
         </div>
         {onOpenWizard && (
@@ -68,8 +68,8 @@ export function OCPagosCard({ ocId, lang, refreshKey, onOpenWizard }) {
       ) : pagos.length === 0 ? (
         <div className="caption" style={{ color: 'var(--text-tertiary)', padding: '18px 0' }}>
           {lang === 'es'
-            ? 'Sin pagos registrados contra costos de esta OC.'
-            : 'No payments registered against costs of this OC.'}
+            ? 'Sin pagos registrados en esta OC.'
+            : 'No payments registered on this OC.'}
         </div>
       ) : (
         <table className="table">

@@ -155,6 +155,32 @@ class PaymentViewSet(viewsets.ViewSet):
                     status=500,
                 )
 
+        # ── Sprint 2026-09 · alcance OC COMPLETO ────────────────
+        # A diferencia de `oc_id` (que solo devuelve pagos aplicados a
+        # COSTO / costos logísticos), `oc_id_all` devuelve TODOS los
+        # pagos de cualquier expediente de esa OC (factura, producto,
+        # costo, etc.). Lo usa el bloque "Pagos" del expediente/OC.
+        oc_id_all = request.query_params.get("oc_id_all")
+        if oc_id_all:
+            try:
+                with connection.cursor() as _c:
+                    _c.execute(
+                        "SELECT id::text FROM expedientes.expediente WHERE oc_id=%s::uuid",
+                        [oc_id_all],
+                    )
+                    _exp_ids = [r[0] for r in _c.fetchall()]
+                qs = qs.filter(expediente_id__in=_exp_ids) if _exp_ids else qs.none()
+            except Exception as exc:  # noqa: BLE001
+                log.exception(
+                    "[PaymentViewSet.list] oc_id_all filter failed: oc_id=%s err=%s",
+                    oc_id_all, exc,
+                )
+                return Response(
+                    {"detail": "oc_id_all filter failed",
+                     "error":  f"{type(exc).__name__}: {exc}"},
+                    status=500,
+                )
+
         # Sprint 2026-05-25 · filtro por tipo de aplicación (COSTO/PRODUCTO/…)
         payment_target_type = request.query_params.get("payment_target_type")
         if payment_target_type:

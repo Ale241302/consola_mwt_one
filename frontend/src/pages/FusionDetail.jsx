@@ -204,7 +204,7 @@ function FusionPagosCard({ sources, lang }) {
     (async () => {
       try {
         const all = await Promise.all(sources.map(async (s) => {
-          const data = await financePaymentsApi.list({ oc_id: s.ocId }).catch(() => []);
+          const data = await financePaymentsApi.list({ oc_id_all: s.ocId }).catch(() => []);
           const arr = Array.isArray(data) ? data : (data?.results || []);
           return arr.map((p) => ({ ...p, __origin: s.origin }));
         }));
@@ -223,12 +223,12 @@ function FusionPagosCard({ sources, lang }) {
     <div className="card card-pad-lg" style={{ marginTop: 16 }}>
       <div style={{ marginBottom: 12 }}>
         <h3 className="heading-md" style={{ margin: 0 }}>
-          {es ? "Pagos de costos logísticos" : "Logistics cost payments"}
+          {es ? "Pagos" : "Payments"}
         </h3>
         <div className="caption" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
           {es
-            ? `Pagos combinados de los ${sources.length} expedientes fusionados.`
-            : `Combined payments of the ${sources.length} merged expedientes.`}
+            ? `Todos los pagos combinados de los ${sources.length} expedientes fusionados.`
+            : `All combined payments of the ${sources.length} merged expedientes.`}
         </div>
       </div>
       {loading ? (
@@ -240,8 +240,8 @@ function FusionPagosCard({ sources, lang }) {
       ) : rows.length === 0 ? (
         <div className="caption" style={{ color: "var(--text-tertiary)", padding: "18px 0" }}>
           {es
-            ? "Sin pagos registrados contra costos de los expedientes fusionados."
-            : "No payments registered against costs of the merged expedientes."}
+            ? "Sin pagos registrados en los expedientes fusionados."
+            : "No payments registered on the merged expedientes."}
         </div>
       ) : (
         <table className="table">
