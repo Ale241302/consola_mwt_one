@@ -132,6 +132,24 @@ def test_mint_and_cache_ok_sondel(monkeypatch):
     set_tenant(Tenant())
 
 
+def test_cache_key_aislada_por_tenant():
+    """La caché de tokens se namespacea por cliente (2.7): un token global no
+    puede reutilizarse en un request scoped y saltarse verify_tenant."""
+    jwt_minter._cache.clear()
+    ident = _FakeIdentity("a@b.c")
+    set_tenant(Tenant())
+    k_global = jwt_minter._cache_key(ident)
+    set_tenant(Tenant(client_id=SONDEL_ID))
+    k_sondel = jwt_minter._cache_key(ident)
+    set_tenant(Tenant(client_id=COMTEK_ID))
+    k_comtek = jwt_minter._cache_key(ident)
+    set_tenant(Tenant())
+    assert k_global == "a@b.c"
+    assert k_sondel == f"{SONDEL_ID}:a@b.c"
+    assert k_comtek == f"{COMTEK_ID}:a@b.c"
+    assert len({k_global, k_sondel, k_comtek}) == 3
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 2.6 — el mint envía client_id al backend
 # ─────────────────────────────────────────────────────────────────────

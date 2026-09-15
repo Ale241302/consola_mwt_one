@@ -88,10 +88,18 @@ def _cache_key(identity) -> str | None:
             key += ":" + device_ip
         return key
     if identity.email:
-        return identity.email.lower()
-    if identity.user_id:
-        return identity.user_id.lower()
-    return None
+        base = identity.email.lower()
+    elif identity.user_id:
+        base = identity.user_id.lower()
+    else:
+        return None
+    # Ola 2 · cachear por (tenant, identidad): un token global no debe
+    # reutilizarse en un request acotado a cliente, porque saltaría
+    # `verify_tenant` (un token cacheado se devuelve sin re-verificar).
+    tenant = current_tenant()
+    if tenant.is_scoped:
+        return f"{tenant.client_id}:{base}"
+    return base
 
 
 def _cached_entry(key: str) -> dict[str, Any] | None:
