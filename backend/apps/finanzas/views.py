@@ -1510,4 +1510,132 @@ def comisiones_historicas(request):
     })
 
 
+# ---------------------------------------------------------------------
+# Sprint 2026-09 · CALENDARIO DE COMISIONES
+# Responde: ¿cuándo la recibí? ¿cuándo la debería recibir? ¿cuáles están
+# pendientes / vencidas / en tránsito? Cruza el devengo de cada expediente
+# con la fecha real de cobro (finance.payment IN confirmado) y con las
+# comisiones históricas (finance.comision_historica).
+# ---------------------------------------------------------------------
+@api_view(["GET"])
+@permission_classes([IsCeoOrAdmin])
+def comisiones_calendario(request):
+    today = date.today()
+
+    # Fechas reales de cobro por expediente (pagos IN confirmados).
+    with connection.cursor() as c:
+        c.execute(
+            """
+            SELECT expediente_id::text, MAX(fecha) AS fecha, SUM(monto_usd) AS monto
+              FROM finance.payment
+             WHERE is_active = TRUE
+               AND COALESCE(direction, 'IN') = 'IN'
+               AND estado IN ('CONFIRMADO_HUMANO', 'CONFIRMADO_AI')
+             GROUP BY expediente_id
+            """
+        )
+        recibido = {r[0]: {"fecha": r[1], "monto": r[2]} for r in c.fetchall()}
+
+    items = []
+    for it in [_build_item(r, today) for r in _fetch_expedientes()]:
+        amt = _dec(it.get("commission_amount") or 0)
+        if amt <= 0:
+            continue
+        est = it.get("devengo_estado")
+        r = recibido.get(it["expediente_id"])
+        f_esp = it.get("ventana_comision_inicio") or it.get("fecha_devengo_esperada")
+        f_fin = it.get("ventana_comision_fin") or it.get("fecha_devengo_esperada")
+        if est == "DEVENGADA" or r:
+            estado = "RECIBIDA"
+        elif est == "VENCIDA":
+            estado = "VENCIDA"
+        elif est == "DEVENGABLE":
+            estado = "EN_TRANSITO"
+        else:
+            estado = "POR_RECIBIR"
+        fecha_rec = None
+        if r and r.get("fecha"):
+            fecha_rec = r["fecha"].isoformat() if hasattr(r["fecha"], "isoformat") else str(r["fecha"])
+        dias = None
+        if estado != "RECIBIDA" and f_fin:
+            try:
+                dias = (date.fromisoformat(str(f_fin)[:10]) - today).days
+            except Exception:
+                dias = None
+        items.append({
+            "origen":          "OPERATIVA",
+            "expediente":      it.get("codigo"),
+            "pf":              it.get("proforma_codigo") or it.get("display_id"),
+            "cliente":         it.get("cliente_razon_social"),
+            "periodo":         it.get("mes_comision"),
+            "monto_usd":       str(amt.quantize(Decimal("0.01"))),
+            "estado":          estado,
+            "fecha_esperada":  str(f_esp)[:10] if f_esp else None,
+            "ventana_fin":     str(f_fin)[:10] if f_fin else None,
+            "fecha_recibida":  fecha_rec,
+            "dias":            dias,
+        })
+
+    # Comisiones históricas ya cobradas (FE).
+    for h in q_comision_historica():
+        items.append(h)
+
+    def _sum(pred):
+        t = Decimal("0")
+        for it in items:
+            if pred(it):
+                t += _dec(it["monto_usd"])
+        return str(t.quantize(Decimal("0.01")))
+
+    orden = {"VENCIDA": 0, "EN_TRANSITO": 1, "POR_RECIBIR": 2, "RECIBIDA": 3}
+    items.sort(key=lambda x: (orden.get(x["estado"], 9),
+                              str(x.get("ventana_fin") or x.get("fecha_esperada") or "")))
+
+    return Response({
+        "today": today.isoformat(),
+        "resumen": {
+            "recibidas":   {"n": sum(1 for i in items if i["estado"] == "RECIBIDA"),    "monto_usd": _sum(lambda i: i["estado"] == "RECIBIDA")},
+            "en_transito": {"n": sum(1 for i in items if i["estado"] == "EN_TRANSITO"), "monto_usd": _sum(lambda i: i["estado"] == "EN_TRANSITO")},
+            "por_recibir": {"n": sum(1 for i in items if i["estado"] == "POR_RECIBIR"), "monto_usd": _sum(lambda i: i["estado"] == "POR_RECIBIR")},
+            "vencidas":    {"n": sum(1 for i in items if i["estado"] == "VENCIDA"),     "monto_usd": _sum(lambda i: i["estado"] == "VENCIDA")},
+        },
+        "items": items,
+    })
+
+
+def q_comision_historica():
+    """Filas de comisiones históricas (FE) listas para el calendario."""
+    with connection.cursor() as c:
+        c.execute(
+            """
+            SELECT ch.periodo, ch.fe_codigo, ch.cliente_nombre, ch.pf_ref,
+                   ch.comision_usd, ch.tipo, ch.fecha_emision, e.codigo
+              FROM finance.comision_historica ch
+              LEFT JOIN expedientes.expediente e ON e.id = ch.expediente_id
+             WHERE ch.is_active = TRUE
+             ORDER BY ch.periodo DESC
+            """
+        )
+        rows = c.fetchall()
+    out = []
+    for periodo, fe, cliente, pf, monto, tipo, f_em, exp in rows:
+        out.append({
+            "origen":         "HISTORICA",
+            "expediente":     exp,
+            "pf":             pf,
+            "cliente":        cliente,
+            "periodo":        periodo,
+            "monto_usd":      str(_dec(monto).quantize(Decimal("0.01"))),
+            "estado":         "RECIBIDA" if (tipo or "COMISION").upper() == "COMISION" else "RECIBIDA",
+            "fecha_esperada": f_em.isoformat() if hasattr(f_em, "isoformat") else (str(f_em)[:10] if f_em else None),
+            "ventana_fin":    None,
+            "fecha_recibida": f_em.isoformat() if hasattr(f_em, "isoformat") else (str(f_em)[:10] if f_em else None),
+            "dias":           None,
+            "fe":             fe,
+            "tipo":           tipo,
+        })
+    return out
+
+
+
 

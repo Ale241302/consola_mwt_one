@@ -817,6 +817,8 @@ export const finanzasApi = {
     apiFetch(`/finanzas/comisiones-por-marca/`, { token: getToken() }),
   comisionesHistoricas: () =>
     apiFetch(`/finanzas/comisiones-historicas/`, { token: getToken() }),
+  comisionesCalendario: () =>
+    apiFetch(`/finanzas/comisiones-calendario/`, { token: getToken() }),
   flujo: (dias) =>
     apiFetch(`/finanzas/flujo/${qs(dias ? { dias } : null)}`, { token: getToken() }),
   saldoInicial: () =>

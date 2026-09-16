@@ -23,6 +23,7 @@ import { apiFetch, getToken } from "../lib/api.js";
 // Etapa 5 · comisiones por marca (ventana 10–20) + flujo 90 días (USD/CRC).
 import ComisionesFlujo from "../components/finanzas/ComisionesFlujo.jsx";
 import ComisionesHistoricas from "../components/finanzas/ComisionesHistoricas.jsx";
+import ComisionesCalendario from "../components/finanzas/ComisionesCalendario.jsx";
 // Etapa 6 · objetivos y evolución de clientes.
 import ObjetivosCliente from "../components/finanzas/ObjetivosCliente.jsx";
 import { usePagination, TablePagination } from "../components/ui/TablePagination.jsx";
@@ -253,8 +254,8 @@ export default function Finanzas({ lang = "es" }) {
         }}>{lang === "es" ? "Finanzas" : "Finance"}</h1>
         <p style={{ color: "var(--text-secondary, #475569)", fontSize: 14, margin: 0 }}>
           {lang === "es"
-            ? "Comisiones MWT, margen ponderado y calendario de devengo. Datos calculados en tiempo real desde expedientes operados por Muito Work Limitada."
-            : "MWT commissions, weighted margin and accrual calendar. Real-time data from expedientes operated by Muito Work Limitada."}
+            ? "Comisiones MWT: cuándo se recibieron, cuándo se deberían recibir y qué está pendiente o vencido."
+            : "MWT commissions: when received, when due, and what is pending or overdue."}
         </p>
       </div>
 
@@ -303,6 +304,9 @@ export default function Finanzas({ lang = "es" }) {
             : `${k.expedientes_sin_tasa_count} file(s) without commission rate configured. Check the client's comision_pct.`}
         </div>
       )}
+
+      {/* Calendario de comisiones: cuándo la recibí / cuándo la debería recibir */}
+      <ComisionesCalendario lang={lang} />
 
       {/* Comisiones por marca + flujo 90 días + arbitraje + objetivos */}
       <ComisionesFlujo lang={lang} />
