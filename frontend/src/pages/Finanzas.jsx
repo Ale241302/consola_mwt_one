@@ -281,7 +281,7 @@ export default function Finanzas({ lang = "es" }) {
           label={lang === "es" ? "Comisión pendiente" : "Pending commission"}
           value={formatMoney(k.comision_pendiente)}
           accent="var(--warning, #B45309)"
-          sub={lang === "es" ? "devengable + vencida" : "accruable + overdue"}
+          sub={lang === "es" ? "en tránsito + vencidas" : "in transit + overdue"}
         />
         <KpiCard
           label={lang === "es" ? "Margen total · Margen %" : "Total margin · Margin %"}

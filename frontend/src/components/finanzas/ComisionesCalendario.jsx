@@ -176,6 +176,30 @@ export default function ComisionesCalendario({ lang }) {
                   active={q.estado === "VENCIDA"} onClick={() => set("estado", q.estado === "VENCIDA" ? "" : "VENCIDA")} />
           </div>
 
+          {/* Puente de reconciliación con los KPIs */}
+          <div style={{
+            display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8,
+            fontSize: 11.5, color: "var(--text-secondary, #475569)",
+            background: "var(--bg-alt, #F8FAFC)", border: "1px solid var(--border-subtle, #EEF2F6)",
+            borderRadius: 8, padding: "8px 12px", marginBottom: 14,
+          }}>
+            <span>{es ? "Recibidas" : "Received"} <b className="tabular-nums">${fmt(resumen?.recibidas?.monto_usd)}</b></span>
+            <span>+</span>
+            <span>
+              {es ? "Pendiente (en tránsito + vencidas)" : "Pending (in transit + overdue)"}{" "}
+              <b className="tabular-nums">${fmt((Number(resumen?.en_transito?.monto_usd || 0) + Number(resumen?.vencidas?.monto_usd || 0)).toFixed(2))}</b>
+            </span>
+            <span>+</span>
+            <span>{es ? "Por recibir" : "To receive"} <b className="tabular-nums">${fmt(resumen?.por_recibir?.monto_usd)}</b></span>
+            <span>=</span>
+            <span style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
+              {es ? "Comisión total devengable" : "Total accruable"}{" "}
+              <b className="tabular-nums">
+                ${fmt((Number(resumen?.recibidas?.monto_usd || 0) + Number(resumen?.en_transito?.monto_usd || 0) + Number(resumen?.vencidas?.monto_usd || 0) + Number(resumen?.por_recibir?.monto_usd || 0)).toFixed(2))}
+              </b>
+            </span>
+          </div>
+
           {/* Filtros */}
           <div style={{
             display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end",
