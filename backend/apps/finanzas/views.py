@@ -1539,7 +1539,15 @@ def comisiones_calendario(request):
 
     items = []
     for it in [_build_item(r, today) for r in _fetch_expedientes()]:
-        amt = _dec(it.get("commission_amount") or 0)
+        # Los expedientes operados por MWT no generan comisión (regla CEO):
+        # su beneficio es el arbitraje Δ = precio cliente − precio MWT.
+        is_mwt_op = str(it.get("operating_company_id")) == str(MWT_OPERATING_CLIENT_ID)
+        if is_mwt_op:
+            amt = _dec(it.get("delta_total") or 0)
+            concepto = "ARBITRAJE"
+        else:
+            amt = _dec(it.get("commission_amount") or 0)
+            concepto = "COMISION"
         if amt <= 0:
             continue
         est = it.get("devengo_estado")
@@ -1568,6 +1576,7 @@ def comisiones_calendario(request):
                 dias = None
         items.append({
             "origen":          "OPERATIVA",
+            "concepto":        concepto,
             "expediente":      it.get("codigo"),
             "pf":              it.get("proforma_codigo") or it.get("display_id"),
             "cliente":         it.get("cliente_razon_social"),
@@ -1625,6 +1634,7 @@ def q_comision_historica():
     for periodo, fe, cliente, pf, monto, tipo, f_em, exp in rows:
         out.append({
             "origen":         "HISTORICA",
+            "concepto":       "COMISION",
             "expediente":     exp,
             "pf":             pf,
             "cliente":        cliente,

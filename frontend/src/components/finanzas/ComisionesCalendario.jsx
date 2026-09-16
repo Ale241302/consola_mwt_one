@@ -87,7 +87,7 @@ export default function ComisionesCalendario({ lang }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [q, setQ] = useState({ estado: "", cliente: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" });
+  const [q, setQ] = useState({ estado: "", concepto: "", cliente: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" });
   const set = (k, v) => setQ((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
@@ -113,6 +113,7 @@ export default function ComisionesCalendario({ lang }) {
   const filtered = useMemo(() => {
     return items.filter((r) => {
       if (q.estado && r.estado !== q.estado) return false;
+      if (q.concepto && (r.concepto || "COMISION") !== q.concepto) return false;
       if (q.cliente && r.cliente !== q.cliente) return false;
       if (q.periodo && r.periodo !== q.periodo) return false;
       const f = r.fecha_esperada ? String(r.fecha_esperada).slice(0, 10) : "";
@@ -187,6 +188,13 @@ export default function ComisionesCalendario({ lang }) {
                 {Object.entries(ESTADOS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
               </select>
             </label>
+            <label style={lblStyle}>{es ? "Concepto" : "Concept"}
+              <select style={selStyle} value={q.concepto} onChange={(e) => set("concepto", e.target.value)}>
+                <option value="">{es ? "Todos" : "All"}</option>
+                <option value="COMISION">{es ? "Comisión" : "Commission"}</option>
+                <option value="ARBITRAJE">{es ? "Arbitraje (MWT opera)" : "Arbitrage (MWT operates)"}</option>
+              </select>
+            </label>
             <label style={lblStyle}>{es ? "Cliente" : "Client"}
               <select style={selStyle} value={q.cliente} onChange={(e) => set("cliente", e.target.value)}>
                 <option value="">{es ? "Todos" : "All"}</option>
@@ -223,7 +231,7 @@ export default function ComisionesCalendario({ lang }) {
               </select>
             </label>
             {hayFiltro && (
-              <button type="button" onClick={() => setQ({ estado: "", cliente: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" })}
+              <button type="button" onClick={() => setQ({ estado: "", concepto: "", cliente: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" })}
                 style={{ ...selStyle, color: "var(--brand-primary, #013A57)" }}>
                 {es ? "Limpiar" : "Clear"}
               </button>
@@ -235,6 +243,7 @@ export default function ComisionesCalendario({ lang }) {
               <thead>
                 <tr>
                   <th>{es ? "Estado" : "Status"}</th>
+                  <th>{es ? "Concepto" : "Concept"}</th>
                   <th>{es ? "Cliente" : "Client"}</th>
                   <th>PF</th>
                   <th>{es ? "Expediente" : "File"}</th>
@@ -256,6 +265,15 @@ export default function ComisionesCalendario({ lang }) {
                   return (
                     <tr key={i}>
                       <td><Chip estado={r.estado} /></td>
+                      <td>
+                        <span style={{
+                          display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700,
+                          color: (r.concepto || "COMISION") === "ARBITRAJE" ? "#6D28D9" : "#334155",
+                          background: (r.concepto || "COMISION") === "ARBITRAJE" ? "rgba(109,40,217,0.10)" : "rgba(51,65,85,0.08)",
+                        }}>
+                          {(r.concepto || "COMISION") === "ARBITRAJE" ? (es ? "Arbitraje" : "Arbitrage") : (es ? "Comisión" : "Commission")}
+                        </span>
+                      </td>
                       <td>{r.cliente || "—"}</td>
                       <td className="mono-sm">{r.pf || "—"}</td>
                       <td className="mono-sm" style={{ color: "var(--brand-primary, #013A57)" }}>{r.expediente || "—"}</td>
@@ -268,7 +286,7 @@ export default function ComisionesCalendario({ lang }) {
                   );
                 })}
                 {pg.pageItems.length === 0 && (
-                  <tr><td colSpan={9} style={{ color: "var(--text-tertiary, #94A3B8)", padding: "16px 0" }}>
+                  <tr><td colSpan={10} style={{ color: "var(--text-tertiary, #94A3B8)", padding: "16px 0" }}>
                     {es ? "Sin comisiones para los filtros aplicados." : "No commissions match the filters."}
                   </td></tr>
                 )}
