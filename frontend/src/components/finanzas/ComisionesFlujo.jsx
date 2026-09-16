@@ -23,6 +23,30 @@ function Card({ title, right, children, lang }) {
   );
 }
 
+const _MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+function mesLabel(mes) {
+  if (!mes) return "—";
+  const [y, m] = String(mes).split("-");
+  const i = Number(m) - 1;
+  return i >= 0 && i < 12 ? `${_MES[i]} ${y}` : mes;
+}
+
+function MiniKpi({ label, value, color }) {
+  return (
+    <div style={{
+      background: "var(--bg-alt, #F8FAFC)", border: "1px solid var(--border-subtle, #EEF2F6)",
+      borderRadius: 8, padding: "8px 10px",
+    }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: "var(--text-tertiary, #94A3B8)" }}>
+        {label}
+      </div>
+      <div className="tabular-nums" style={{ fontSize: 15, fontWeight: 800, marginTop: 2, color }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 export default function ComisionesFlujo({ lang = "es" }) {
   const es = lang === "es";
   const [marcas, setMarcas] = useState([]);
@@ -72,32 +96,48 @@ export default function ComisionesFlujo({ lang = "es" }) {
         {marcas.length === 0 ? (
           <div style={{ padding: 12, color: "var(--text-tertiary)", fontSize: 12 }}>{es ? "Sin datos." : "No data."}</div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead>
-              <tr style={{ textAlign: "left", color: "var(--text-tertiary)" }}>
-                <th style={{ padding: "4px 6px" }}>{es ? "Marca" : "Brand"}</th>
-                <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Proyectada" : "Projected"}</th>
-                <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Pendiente" : "Pending"}</th>
-                <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Devengada" : "Accrued"}</th>
-                <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Total" : "Total"}</th>
-                <th style={{ padding: "4px 6px" }}>{es ? "Ventanas" : "Windows"}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {marcas.map((m) => (
-                <tr key={m.brand_name} style={{ borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
-                  <td style={{ padding: "6px", fontWeight: 600 }}>{m.brand_name}</td>
-                  <td className="tabular-nums" style={{ padding: "6px", textAlign: "right" }}>{money(m.comision_proyectada)}</td>
-                  <td className="tabular-nums" style={{ padding: "6px", textAlign: "right" }}>{money(m.comision_pendiente)}</td>
-                  <td className="tabular-nums" style={{ padding: "6px", textAlign: "right", color: "var(--success-fg, #166534)" }}>{money(m.comision_devengada)}</td>
-                  <td className="tabular-nums" style={{ padding: "6px", textAlign: "right", fontWeight: 700 }}>{money(m.comision_total)}</td>
-                  <td style={{ padding: "6px", color: "var(--text-tertiary)" }}>
-                    {(m.ventanas || []).map((v) => `${v.mes} (${v.inicio?.slice(8)}–${v.fin?.slice(8)})`).join(" · ") || "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {marcas.map((m) => (
+              <div key={m.brand_name}
+                   style={{ border: "1px solid var(--border-subtle, #EEF2F6)", borderRadius: 10, padding: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                  <div style={{ fontWeight: 700, color: "var(--brand-primary, #013A57)" }}>{m.brand_name}</div>
+                  <div className="tabular-nums" style={{ fontSize: 18, fontWeight: 800, color: "var(--brand-accent, #0E8A6D)" }}>
+                    {money(m.comision_total)}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 8, margin: "10px 0" }}>
+                  <MiniKpi label={es ? "Proyectada" : "Projected"} value={money(m.comision_proyectada)}
+                           color="var(--text-secondary, #475569)" />
+                  <MiniKpi label={es ? "Pendiente" : "Pending"} value={money(m.comision_pendiente)}
+                           color="var(--warning, #B45309)" />
+                  <MiniKpi label={es ? "Devengada" : "Accrued"} value={money(m.comision_devengada)}
+                           color="var(--success-fg, #166534)" />
+                </div>
+
+                <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: "var(--text-tertiary, #94A3B8)", marginBottom: 6 }}>
+                  {es ? "Ventanas de pago · 10–20 del mes" : "Payment windows · 10–20"}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {(m.ventanas || []).map((v) => (
+                    <span key={v.mes} style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "3px 10px", borderRadius: 999,
+                      background: "var(--bg-alt, #F1F5F9)", fontSize: 11, fontWeight: 600,
+                      color: "var(--text-secondary, #475569)",
+                    }}>
+                      {mesLabel(v.mes)}
+                      <span className="tabular-nums" style={{ color: "var(--brand-primary, #013A57)" }}>{money(v.monto)}</span>
+                    </span>
+                  ))}
+                  {(!m.ventanas || m.ventanas.length === 0) && (
+                    <span style={{ fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>—</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </Card>
 
