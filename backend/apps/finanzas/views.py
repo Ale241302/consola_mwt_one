@@ -1561,7 +1561,7 @@ def comisiones_calendario(request):
                 return None
         f_esp = _d(it.get("fecha_devengo_calculada")) or _d(it.get("fecha_devengo_esperada"))
 
-        if r or est == "DEVENGADA":
+        if est == "DEVENGADA":
             estado = "RECIBIDA"
         elif est == "VENCIDA":
             estado = "VENCIDA"
