@@ -272,7 +272,7 @@ export default function Finanzas({ lang = "es" }) {
             : `${k.expedientes_count || 0} files`}
         />
         <KpiCard
-          label={lang === "es" ? "Comisión devengada" : "Accrued commission"}
+          label={lang === "es" ? "Comisión recibida" : "Commission received"}
           value={formatMoney(k.comision_devengada)}
           accent="var(--success, #00B286)"
           sub={lang === "es" ? "ya cobrada por MWT" : "already collected by MWT"}

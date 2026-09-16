@@ -148,8 +148,8 @@ export default function ComisionesCalendario({ lang }) {
         </div>
         <div style={{ fontSize: 12, color: "var(--text-secondary, #475569)", marginTop: 2 }}>
           {es
-            ? "Solo comisiones de expedientes reales. Los montos son reales (Total Cliente × %); las fechas de los Proyectados son ESTIMADAS según plazos de crédito (cliente 90d + MWT 15d), no un compromiso de pago."
-            : "Real expedientes only. Amounts are real; projected dates are ESTIMATES from credit terms."}
+            ? "Solo comisiones de expedientes reales. Los montos son reales (Total Cliente × %). Fechas: cadencia real de las FE (el cliente paga a su plazo, MWT factura a comienzos del mes siguiente y cobra en la ventana 10–20)."
+            : "Real expedientes only. Amounts are real. Dates follow the real FE cadence (invoice early next month, collected in the 10–20 window)."}
         </div>
       </div>
 

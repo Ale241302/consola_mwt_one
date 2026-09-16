@@ -100,11 +100,16 @@ def _resolve_devengo_estado(
     if base is None:
         return ("PROYECTADA", None)
 
-    BUFFER_RECONCILIACION = 10  # dias
-
+    # Cadencia REAL de las FE: el cliente paga a fin de su plazo de crédito;
+    # MWT factura la comisión a comienzos del mes SIGUIENTE y la cobra en la
+    # ventana 10–20 de ese mes. Se usa el cierre (día 20) como fecha de cobro.
     fecha_pago_cliente_a_marluvas = base + timedelta(days=cd_cli)
-    fecha_pago_marluvas_a_mwt = fecha_pago_cliente_a_marluvas + timedelta(days=cd_mwt)
-    fecha_devengo = fecha_pago_marluvas_a_mwt + timedelta(days=BUFFER_RECONCILIACION)
+    if fecha_pago_cliente_a_marluvas.month == 12:
+        _ini_mes = date(fecha_pago_cliente_a_marluvas.year + 1, 1, 1)
+    else:
+        _ini_mes = date(fecha_pago_cliente_a_marluvas.year,
+                        fecha_pago_cliente_a_marluvas.month + 1, 1)
+    fecha_devengo = _ini_mes.replace(day=20)
 
     if fecha_devengo <= today:
         return ("VENCIDA", fecha_devengo)
@@ -438,6 +443,8 @@ def overview(request):
     tot_devengada = Decimal("0")
     tot_pendiente = Decimal("0")
     tot_proyectada = Decimal("0")
+    tot_en_transito = Decimal("0")
+    tot_vencida = Decimal("0")
     tot_margen = Decimal("0")
     sum_client_for_pct = Decimal("0")
     sum_delta_for_pct = Decimal("0")
@@ -457,6 +464,10 @@ def overview(request):
             tot_pendiente += amt
         elif estado == "PROYECTADA":
             tot_proyectada += amt
+        if estado == "DEVENGABLE":
+            tot_en_transito += amt
+        elif estado == "VENCIDA":
+            tot_vencida += amt
 
         tot_margen += _dec(it["delta_total"])
         sum_client_for_pct += _dec(it["total_client"])
@@ -472,6 +483,9 @@ def overview(request):
             "comision_devengada":        str(tot_devengada.quantize(Decimal("0.01"))),
             "comision_pendiente":        str(tot_pendiente.quantize(Decimal("0.01"))),
             "comision_proyectada":       str(tot_proyectada.quantize(Decimal("0.01"))),
+            "comision_en_transito":      str(tot_en_transito.quantize(Decimal("0.01"))),
+            "comision_vencida":          str(tot_vencida.quantize(Decimal("0.01"))),
+            "comision_real_total":       str((tot_devengada + tot_pendiente).quantize(Decimal("0.01"))),
             "margen_total_usd":          str(tot_margen.quantize(Decimal("0.01"))),
             "margen_pct_ponderado":      (str(margen_pct_pond) if margen_pct_pond is not None else None),
             "expedientes_count":         len(items),
