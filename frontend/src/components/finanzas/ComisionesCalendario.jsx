@@ -148,8 +148,8 @@ export default function ComisionesCalendario({ lang }) {
         </div>
         <div style={{ fontSize: 12, color: "var(--text-secondary, #475569)", marginTop: 2 }}>
           {es
-            ? "Solo comisiones (el arbitraje de los expedientes operados por MWT se ve en su propia sección). Totales cuadran con los KPIs de arriba."
-            : "Commissions only (MWT-operated arbitrage has its own section). Totals reconcile with the KPIs above."}
+            ? "Solo comisiones de expedientes reales. Los montos son reales (Total Cliente × %); las fechas de los Proyectados son ESTIMADAS según plazos de crédito (cliente 90d + MWT 15d), no un compromiso de pago."
+            : "Real expedientes only. Amounts are real; projected dates are ESTIMATES from credit terms."}
         </div>
       </div>
 
@@ -169,7 +169,7 @@ export default function ComisionesCalendario({ lang }) {
             <Tile title={es ? "En tránsito" : "In transit"} n={resumen?.en_transito?.n || 0}
                   monto={resumen?.en_transito?.monto_usd} color={ESTADOS.EN_TRANSITO.color}
                   active={q.estado === "EN_TRANSITO"} onClick={() => set("estado", q.estado === "EN_TRANSITO" ? "" : "EN_TRANSITO")} />
-            <Tile title={es ? "Proyectado" : "Projected"} n={resumen?.por_recibir?.n || 0}
+            <Tile title={es ? "Proyectado (est.)" : "Projected (est.)"} n={resumen?.por_recibir?.n || 0}
                   monto={resumen?.por_recibir?.monto_usd} color={ESTADOS.POR_RECIBIR.color}
                   active={q.estado === "POR_RECIBIR"} onClick={() => set("estado", q.estado === "POR_RECIBIR" ? "" : "POR_RECIBIR")} />
             <Tile title={es ? "Vencidas" : "Overdue"} n={resumen?.vencidas?.n || 0}
@@ -191,7 +191,7 @@ export default function ComisionesCalendario({ lang }) {
               <b className="tabular-nums">${fmt((Number(resumen?.en_transito?.monto_usd || 0) + Number(resumen?.vencidas?.monto_usd || 0)).toFixed(2))}</b>
             </span>
             <span>+</span>
-            <span>{es ? "Proyectado" : "Projected"} <b className="tabular-nums">${fmt(resumen?.por_recibir?.monto_usd)}</b></span>
+            <span>{es ? "Proyectado (est.)" : "Projected (est.)"} <b className="tabular-nums">${fmt(resumen?.por_recibir?.monto_usd)}</b></span>
             <span>=</span>
             <span style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
               {es ? "Comisión total devengable" : "Total accruable"}{" "}
@@ -278,7 +278,11 @@ export default function ComisionesCalendario({ lang }) {
                   let dTxt = "—", dColor = "var(--text-secondary, #475569)";
                   if (dias !== null && dias !== undefined) {
                     if (dias < 0) { dTxt = `${Math.abs(dias)}d ${es ? "atraso" : "late"}`; dColor = "#DC2626"; }
-                    else { dTxt = `${es ? "en" : "in"} ${dias}d`; dColor = dias <= 15 ? "#B45309" : "var(--text-secondary, #475569)"; }
+                    else {
+                      const est = r.estado === "POR_RECIBIR";
+                      dTxt = est ? `${es ? "est. en" : "est. in"} ${dias}d` : `${es ? "en" : "in"} ${dias}d`;
+                      dColor = est ? "var(--text-tertiary, #94A3B8)" : (dias <= 15 ? "#B45309" : "var(--text-secondary, #475569)");
+                    }
                   }
                   return (
                     <tr key={i}>
