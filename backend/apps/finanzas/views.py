@@ -1537,6 +1537,14 @@ def comisiones_calendario(request):
         )
         recibido = {r[0]: {"fecha": r[1], "monto": r[2]} for r in c.fetchall()}
 
+    # PFs ya cobrados vía FE histórica (para no duplicar en el calendario).
+    with connection.cursor() as c:
+        c.execute("SELECT pf_ref FROM finance.comision_historica WHERE is_active = TRUE")
+        hist_pf = set()
+        for (ref,) in c.fetchall():
+            for tok in str(ref or "").replace("/", " ").split():
+                hist_pf.add(tok.strip())
+
     items = []
     for it in [_build_item(r, today) for r in _fetch_expedientes()]:
         # Los expedientes operados por MWT no generan comisión (regla CEO):
@@ -1550,41 +1558,53 @@ def comisiones_calendario(request):
             concepto = "COMISION"
         if amt <= 0:
             continue
-        est = it.get("devengo_estado")
+
+        # Dedupe: si la PF ya está cobrada en una FE histórica, no repetir
+        # la COMISIÓN (el arbitraje Δ es otro flujo y sí se mantiene).
+        pf = str(it.get("proforma_codigo") or "").strip()
+        if pf and pf in hist_pf and concepto == "COMISION":
+            continue
+
         r = recibido.get(it["expediente_id"])
-        # La fecha que rige el estado es la de devengo; la ventana 10-20 se
-        # expone aparte para no mezclar criterios (evita "en tránsito" con
-        # días negativos).
-        f_esp = it.get("fecha_devengo_calculada") or it.get("fecha_devengo_esperada")
-        f_fin = f_esp
-        if est == "DEVENGADA" or r:
+
+        # UN solo criterio de fecha: la ventana 10–20 del mes de pago
+        # (mes_comision + ventana_comision_inicio/fin) — así cobra MWT sus
+        # comisiones. No se mezcla con la fecha de devengo (evita el
+        # "periodo ene-2027 con 7d de atraso").
+        def _d(x):
+            try:
+                return date.fromisoformat(str(x)[:10]) if x else None
+            except Exception:
+                return None
+        v_ini = _d(it.get("ventana_comision_inicio"))
+        v_fin = _d(it.get("ventana_comision_fin"))
+        f_esp = v_fin or v_ini
+
+        if r:
             estado = "RECIBIDA"
-        elif est == "VENCIDA":
+        elif v_fin and today > v_fin:
             estado = "VENCIDA"
-        elif est == "DEVENGABLE":
+        elif v_ini and today >= v_ini:
             estado = "EN_TRANSITO"
         else:
             estado = "POR_RECIBIR"
+
         fecha_rec = None
         if r and r.get("fecha"):
             fecha_rec = r["fecha"].isoformat() if hasattr(r["fecha"], "isoformat") else str(r["fecha"])
-        dias = None
-        if estado != "RECIBIDA" and f_fin:
-            try:
-                dias = (date.fromisoformat(str(f_fin)[:10]) - today).days
-            except Exception:
-                dias = None
+        dias = (f_esp - today).days if (estado != "RECIBIDA" and f_esp) else None
+
         items.append({
             "origen":          "OPERATIVA",
             "concepto":        concepto,
             "expediente":      it.get("codigo"),
-            "pf":              it.get("proforma_codigo") or it.get("display_id"),
+            "pf":              pf or it.get("display_id"),
             "cliente":         it.get("cliente_razon_social"),
             "periodo":         it.get("mes_comision"),
             "monto_usd":       str(amt.quantize(Decimal("0.01"))),
             "estado":          estado,
-            "fecha_esperada":  str(f_esp)[:10] if f_esp else None,
-            "ventana_fin":     str(it.get("ventana_comision_fin"))[:10] if it.get("ventana_comision_fin") else None,
+            "fecha_esperada":  f_esp.isoformat() if f_esp else None,
+            "ventana_fin":     v_fin.isoformat() if v_fin else None,
             "fecha_recibida":  fecha_rec,
             "dias":            dias,
         })
