@@ -1,12 +1,14 @@
 // frontend/src/components/finanzas/ComisionesCalendario.jsx
 // ─────────────────────────────────────────────────────────────────────
 // Sprint 2026-09 · "Calendario de comisiones".
-// Responde de un vistazo: ¿cuándo la recibí?, ¿cuándo la debería recibir?,
-// ¿qué está pendiente / vencido / en tránsito?
+// Responde: ¿cuándo la recibí?, ¿cuándo la debería recibir?, ¿qué está
+// pendiente / vencido / en tránsito?  Tabla con filtros (estado, cliente,
+// periodo, vence/esparada, recibida, días) + paginación (20 por defecto).
 // Consume GET /api/finanzas/comisiones-calendario/
 // ─────────────────────────────────────────────────────────────────────
 import React, { useEffect, useState, useMemo } from "react";
 import { finanzasApi } from "../../lib/api.js";
+import { usePagination, TablePagination } from "../ui/TablePagination.jsx";
 
 const fmt = (n) =>
   Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -47,12 +49,10 @@ function Chip({ estado }) {
 function Tile({ title, n, monto, color, active, onClick }) {
   return (
     <button
-      type="button"
-      onClick={onClick}
+      type="button" onClick={onClick}
       style={{
         textAlign: "left", cursor: "pointer",
-        background: active ? color : "#fff",
-        color: active ? "#fff" : "inherit",
+        background: active ? color : "#fff", color: active ? "#fff" : "inherit",
         border: `1.5px solid ${active ? color : "var(--border, #E2E8F0)"}`,
         borderRadius: 12, padding: "12px 14px", transition: "all .12s",
       }}
@@ -72,19 +72,28 @@ function Tile({ title, n, monto, color, active, onClick }) {
   );
 }
 
+const selStyle = {
+  padding: "5px 8px", border: "1px solid var(--border, #CBD5E1)", borderRadius: 6,
+  fontSize: 12, fontWeight: 600, background: "var(--surface, #fff)", cursor: "pointer",
+  color: "var(--text-primary, #0F172A)",
+};
+const lblStyle = {
+  fontSize: 11, display: "flex", flexDirection: "column", gap: 2,
+  color: "var(--text-tertiary, #94A3B8)", fontWeight: 600,
+};
+
 export default function ComisionesCalendario({ lang }) {
   const es = lang === "es";
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [filtro, setFiltro] = useState(null); // null = todas
+  const [q, setQ] = useState({ estado: "", cliente: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" });
+  const set = (k, v) => setQ((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
     let cancel = false;
-    setLoading(true);
-    setError(null);
-    finanzasApi
-      .comisionesCalendario()
+    setLoading(true); setError(null);
+    finanzasApi.comisionesCalendario()
       .then((d) => { if (!cancel) setData(d); })
       .catch((e) => { if (!cancel) setError(e?.message || "Error"); })
       .finally(() => { if (!cancel) setLoading(false); });
@@ -93,10 +102,39 @@ export default function ComisionesCalendario({ lang }) {
 
   const items = data?.items || [];
   const resumen = data?.resumen || {};
-  const visibles = useMemo(
-    () => (filtro ? items.filter((i) => i.estado === filtro) : items),
-    [items, filtro]
-  );
+
+  const clientes = useMemo(
+    () => [...new Set(items.map((i) => i.cliente).filter(Boolean))].sort(),
+    [items]);
+  const periodos = useMemo(
+    () => [...new Set(items.map((i) => i.periodo).filter((p) => p && p !== "—"))].sort().reverse(),
+    [items]);
+
+  const filtered = useMemo(() => {
+    return items.filter((r) => {
+      if (q.estado && r.estado !== q.estado) return false;
+      if (q.cliente && r.cliente !== q.cliente) return false;
+      if (q.periodo && r.periodo !== q.periodo) return false;
+      const f = r.fecha_esperada ? String(r.fecha_esperada).slice(0, 10) : "";
+      if (q.desde && (!f || f < q.desde)) return false;
+      if (q.hasta && (!f || f > q.hasta)) return false;
+      if (q.recibida === "SI" && !r.fecha_recibida) return false;
+      if (q.recibida === "NO" && r.fecha_recibida) return false;
+      if (q.dias) {
+        const d = r.dias;
+        if (d === null || d === undefined) return false;
+        if (q.dias === "atraso" && d >= 0) return false;
+        if (q.dias === "0-15" && !(d >= 0 && d <= 15)) return false;
+        if (q.dias === "16-30" && !(d > 15 && d <= 30)) return false;
+        if (q.dias === "31-60" && !(d > 30 && d <= 60)) return false;
+        if (q.dias === "60+" && !(d > 60)) return false;
+      }
+      return true;
+    });
+  }, [items, q]);
+
+  const pg = usePagination(filtered, { defaultPerPage: 20 });
+  const hayFiltro = Object.values(q).some(Boolean);
 
   return (
     <div style={{
@@ -122,22 +160,74 @@ export default function ComisionesCalendario({ lang }) {
         <div style={{ color: "var(--critical, #DC2626)", fontSize: 13 }}>{error}</div>
       ) : (
         <>
-          <div style={{
-            display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))",
-            gap: 10, marginBottom: 14,
-          }}>
+          {/* Tiles = filtro rápido por estado */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10, marginBottom: 14 }}>
             <Tile title={es ? "Recibidas" : "Received"} n={resumen?.recibidas?.n || 0}
                   monto={resumen?.recibidas?.monto_usd} color={ESTADOS.RECIBIDA.color}
-                  active={filtro === "RECIBIDA"} onClick={() => setFiltro(filtro === "RECIBIDA" ? null : "RECIBIDA")} />
+                  active={q.estado === "RECIBIDA"} onClick={() => set("estado", q.estado === "RECIBIDA" ? "" : "RECIBIDA")} />
             <Tile title={es ? "En tránsito" : "In transit"} n={resumen?.en_transito?.n || 0}
                   monto={resumen?.en_transito?.monto_usd} color={ESTADOS.EN_TRANSITO.color}
-                  active={filtro === "EN_TRANSITO"} onClick={() => setFiltro(filtro === "EN_TRANSITO" ? null : "EN_TRANSITO")} />
+                  active={q.estado === "EN_TRANSITO"} onClick={() => set("estado", q.estado === "EN_TRANSITO" ? "" : "EN_TRANSITO")} />
             <Tile title={es ? "Por recibir" : "To receive"} n={resumen?.por_recibir?.n || 0}
                   monto={resumen?.por_recibir?.monto_usd} color={ESTADOS.POR_RECIBIR.color}
-                  active={filtro === "POR_RECIBIR"} onClick={() => setFiltro(filtro === "POR_RECIBIR" ? null : "POR_RECIBIR")} />
+                  active={q.estado === "POR_RECIBIR"} onClick={() => set("estado", q.estado === "POR_RECIBIR" ? "" : "POR_RECIBIR")} />
             <Tile title={es ? "Vencidas" : "Overdue"} n={resumen?.vencidas?.n || 0}
                   monto={resumen?.vencidas?.monto_usd} color={ESTADOS.VENCIDA.color}
-                  active={filtro === "VENCIDA"} onClick={() => setFiltro(filtro === "VENCIDA" ? null : "VENCIDA")} />
+                  active={q.estado === "VENCIDA"} onClick={() => set("estado", q.estado === "VENCIDA" ? "" : "VENCIDA")} />
+          </div>
+
+          {/* Filtros */}
+          <div style={{
+            display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end",
+            padding: "10px 0 14px", borderBottom: "1px solid var(--border, #E2E8F0)", marginBottom: 12,
+          }}>
+            <label style={lblStyle}>{es ? "Estado" : "Status"}
+              <select style={selStyle} value={q.estado} onChange={(e) => set("estado", e.target.value)}>
+                <option value="">{es ? "Todos" : "All"}</option>
+                {Object.entries(ESTADOS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
+            </label>
+            <label style={lblStyle}>{es ? "Cliente" : "Client"}
+              <select style={selStyle} value={q.cliente} onChange={(e) => set("cliente", e.target.value)}>
+                <option value="">{es ? "Todos" : "All"}</option>
+                {clientes.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+            <label style={lblStyle}>{es ? "Periodo" : "Period"}
+              <select style={selStyle} value={q.periodo} onChange={(e) => set("periodo", e.target.value)}>
+                <option value="">{es ? "Todos" : "All"}</option>
+                {periodos.map((p) => <option key={p} value={p}>{periodoLabel(p)}</option>)}
+              </select>
+            </label>
+            <label style={lblStyle}>{es ? "Vence desde" : "Due from"}
+              <input type="date" style={selStyle} value={q.desde} onChange={(e) => set("desde", e.target.value)} />
+            </label>
+            <label style={lblStyle}>{es ? "Vence hasta" : "Due to"}
+              <input type="date" style={selStyle} value={q.hasta} onChange={(e) => set("hasta", e.target.value)} />
+            </label>
+            <label style={lblStyle}>{es ? "Recibida" : "Received"}
+              <select style={selStyle} value={q.recibida} onChange={(e) => set("recibida", e.target.value)}>
+                <option value="">{es ? "Todas" : "All"}</option>
+                <option value="SI">{es ? "Sí" : "Yes"}</option>
+                <option value="NO">{es ? "No" : "No"}</option>
+              </select>
+            </label>
+            <label style={lblStyle}>{es ? "Días" : "Days"}
+              <select style={selStyle} value={q.dias} onChange={(e) => set("dias", e.target.value)}>
+                <option value="">{es ? "Todos" : "All"}</option>
+                <option value="atraso">{es ? "Atrasadas" : "Late"}</option>
+                <option value="0-15">0–15</option>
+                <option value="16-30">16–30</option>
+                <option value="31-60">31–60</option>
+                <option value="60+">60+</option>
+              </select>
+            </label>
+            {hayFiltro && (
+              <button type="button" onClick={() => setQ({ estado: "", cliente: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" })}
+                style={{ ...selStyle, color: "var(--brand-primary, #013A57)" }}>
+                {es ? "Limpiar" : "Clear"}
+              </button>
+            )}
           </div>
 
           <div style={{ overflowX: "auto" }}>
@@ -149,14 +239,14 @@ export default function ComisionesCalendario({ lang }) {
                   <th>PF</th>
                   <th>{es ? "Expediente" : "File"}</th>
                   <th>{es ? "Periodo" : "Period"}</th>
-                  <th style={{ textAlign: "right" }}>{es ? "Monto USD" : "Amount USD"}</th>
+                  <th style={{ textAlign: "right" }}>{es ? "Monto USD" : "Amount"}</th>
                   <th>{es ? "Vence / esperada" : "Due / expected"}</th>
                   <th>{es ? "Recibida" : "Received"}</th>
                   <th style={{ textAlign: "right" }}>{es ? "Días" : "Days"}</th>
                 </tr>
               </thead>
               <tbody>
-                {visibles.map((r, i) => {
+                {pg.pageItems.map((r, i) => {
                   const dias = r.dias;
                   let dTxt = "—", dColor = "var(--text-secondary, #475569)";
                   if (dias !== null && dias !== undefined) {
@@ -170,29 +260,26 @@ export default function ComisionesCalendario({ lang }) {
                       <td className="mono-sm">{r.pf || "—"}</td>
                       <td className="mono-sm" style={{ color: "var(--brand-primary, #013A57)" }}>{r.expediente || "—"}</td>
                       <td className="mono-sm">{periodoLabel(r.periodo)}</td>
-                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>
-                        ${fmt(r.monto_usd)}
-                      </td>
-                      <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
-                        {fdate(r.fecha_esperada)}
-                      </td>
-                      <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
-                        {r.fecha_recibida ? fdate(r.fecha_recibida) : "—"}
-                      </td>
-                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600, color: dColor }}>
-                        {dTxt}
-                      </td>
+                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>${fmt(r.monto_usd)}</td>
+                      <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{fdate(r.fecha_esperada)}</td>
+                      <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{r.fecha_recibida ? fdate(r.fecha_recibida) : "—"}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600, color: dColor }}>{dTxt}</td>
                     </tr>
                   );
                 })}
-                {visibles.length === 0 && (
+                {pg.pageItems.length === 0 && (
                   <tr><td colSpan={9} style={{ color: "var(--text-tertiary, #94A3B8)", padding: "16px 0" }}>
-                    {es ? "Sin comisiones en este estado." : "No commissions in this status."}
+                    {es ? "Sin comisiones para los filtros aplicados." : "No commissions match the filters."}
                   </td></tr>
                 )}
               </tbody>
             </table>
           </div>
+
+          <TablePagination
+            page={pg.page} totalPages={pg.totalPages} perPage={pg.perPage}
+            setPerPage={pg.setPerPage} setPage={pg.setPage} total={pg.total} lang={lang}
+          />
         </>
       )}
     </div>
