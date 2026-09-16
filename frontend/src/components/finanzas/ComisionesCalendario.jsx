@@ -265,7 +265,6 @@ export default function ComisionesCalendario({ lang }) {
                   <th>{es ? "Expediente" : "File"}</th>
                   <th>{es ? "Periodo" : "Period"}</th>
                   <th style={{ textAlign: "right" }}>{es ? "Total Cliente" : "Client total"}</th>
-                  <th style={{ textAlign: "right" }}>{es ? "Total MWT" : "MWT total"}</th>
                   <th style={{ textAlign: "right" }}>{es ? "Monto USD" : "Amount"}</th>
                   <th>{es ? "Vence / esperada" : "Due / expected"}</th>
                   <th>{es ? "Recibida" : "Received"}</th>
@@ -294,9 +293,6 @@ export default function ComisionesCalendario({ lang }) {
                       <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-secondary, #475569)" }}>
                         {r.total_cliente != null ? `$${fmt(r.total_cliente)}` : "—"}
                       </td>
-                      <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-secondary, #475569)" }}>
-                        {r.total_mwt != null ? `$${fmt(r.total_mwt)}` : "—"}
-                      </td>
                       <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>${fmt(r.monto_usd)}</td>
                       <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{fdate(r.fecha_esperada)}</td>
                       <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{r.fecha_recibida ? fdate(r.fecha_recibida) : "—"}</td>
@@ -305,7 +301,7 @@ export default function ComisionesCalendario({ lang }) {
                   );
                 })}
                 {pg.pageItems.length === 0 && (
-                  <tr><td colSpan={11} style={{ color: "var(--text-tertiary, #94A3B8)", padding: "16px 0" }}>
+                  <tr><td colSpan={10} style={{ color: "var(--text-tertiary, #94A3B8)", padding: "16px 0" }}>
                     {es ? "Sin comisiones para los filtros aplicados." : "No commissions match the filters."}
                   </td></tr>
                 )}
