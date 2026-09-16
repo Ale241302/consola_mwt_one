@@ -177,6 +177,32 @@ export default function ComisionesCalendario({ lang }) {
                   active={q.estado === "VENCIDA"} onClick={() => set("estado", q.estado === "VENCIDA" ? "" : "VENCIDA")} />
           </div>
 
+          {/* Totales por concepto (comisión vs arbitraje) */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+            {[
+              { k: "comision",  label: es ? "Comisión" : "Commission", color: "#334155", bg: "rgba(51,65,85,0.08)" },
+              { k: "arbitraje", label: es ? "Arbitraje · MWT opera" : "Arbitrage · MWT operates", color: "#6D28D9", bg: "rgba(109,40,217,0.10)" },
+            ].map((c) => {
+              const d = data?.por_concepto?.[c.k] || {};
+              return (
+                <div key={c.k} style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  border: "1px solid var(--border-subtle, #EEF2F6)", borderRadius: 10, padding: "8px 12px",
+                }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: c.color, background: c.bg, padding: "2px 9px", borderRadius: 999 }}>
+                    {c.label}
+                  </span>
+                  <span className="tabular-nums" style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
+                    ${fmt(d.monto_usd)}
+                  </span>
+                  <span style={{ fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>
+                    {d.n || 0}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
           {/* Filtros */}
           <div style={{
             display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end",

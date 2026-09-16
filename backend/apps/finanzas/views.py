@@ -1632,6 +1632,12 @@ def comisiones_calendario(request):
             "por_recibir": {"n": sum(1 for i in items if i["estado"] == "POR_RECIBIR"), "monto_usd": _sum(lambda i: i["estado"] == "POR_RECIBIR")},
             "vencidas":    {"n": sum(1 for i in items if i["estado"] == "VENCIDA"),     "monto_usd": _sum(lambda i: i["estado"] == "VENCIDA")},
         },
+        "por_concepto": {
+            "comision":  {"n": sum(1 for i in items if (i.get("concepto") or "COMISION") == "COMISION"),
+                          "monto_usd": _sum(lambda i: (i.get("concepto") or "COMISION") == "COMISION")},
+            "arbitraje": {"n": sum(1 for i in items if i.get("concepto") == "ARBITRAJE"),
+                          "monto_usd": _sum(lambda i: i.get("concepto") == "ARBITRAJE")},
+        },
         "items": items,
     })
 
