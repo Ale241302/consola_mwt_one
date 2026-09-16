@@ -7,18 +7,20 @@ import React, { useCallback, useEffect, useState } from "react";
 import { finanzasApi, clientesApi } from "../../lib/api.js";
 
 const DIMS = [
-  ["COMPRAS",    "Compras"],
-  ["PEDIDOS",    "Pedidos"],
-  ["MARGEN",     "Margen"],
-  ["COMISIONES", "Comisiones"],
-  ["PAGOS",      "Pagos"],
-  ["ENTREGAS",   "Entregas"],
+  ["COMPRAS",    "Compras",    "USD"],
+  ["PEDIDOS",    "Pedidos",    null],
+  ["MARGEN",     "Margen",     "USD"],
+  ["COMISIONES", "Comisiones", "USD"],
+  ["PAGOS",      "Pagos",      "USD"],
+  ["ENTREGAS",   "Entregas",   null],
 ];
+const META = Object.fromEntries(DIMS.map((d) => [d[0], d]));
+
 const ESTADO = {
-  CUMPLIDO:  { bg: "var(--success-bg, #DCFCE7)", fg: "var(--success-fg, #166534)", es: "cumplido", en: "met" },
-  EN_RIESGO: { bg: "var(--warning-bg, #FEF3C7)", fg: "var(--warning-fg, #92400E)", es: "en riesgo", en: "at risk" },
-  ATRASADO:  { bg: "var(--danger-bg, #FEE2E2)",  fg: "var(--danger-fg, #991B1B)",  es: "atrasado", en: "behind" },
-  SIN_META:  { bg: "var(--surface-hover, #F1F5F9)", fg: "var(--text-tertiary, #64748B)", es: "sin meta", en: "no goal" },
+  CUMPLIDO:  { bg: "rgba(14,138,109,0.10)", fg: "#0E8A6D", es: "cumplido",  en: "met",      bar: "#0E8A6D" },
+  EN_RIESGO: { bg: "rgba(180,83,9,0.10)",   fg: "#B45309", es: "en riesgo", en: "at risk",  bar: "#B45309" },
+  ATRASADO:  { bg: "rgba(220,38,38,0.10)",  fg: "#DC2626", es: "atrasado",  en: "behind",   bar: "#DC2626" },
+  SIN_META:  { bg: "rgba(100,116,139,0.10)",fg: "#64748B", es: "sin meta",  en: "no goal",  bar: "#CBD5E1" },
 };
 
 const num = (v, ccy) => {
@@ -28,6 +30,58 @@ const num = (v, ccy) => {
     ? new Intl.NumberFormat("es-CR", { style: "currency", currency: ccy, maximumFractionDigits: 2 }).format(n)
     : new Intl.NumberFormat("es-CR").format(n);
 };
+
+const selStyle = {
+  padding: "5px 8px", border: "1px solid var(--border, #CBD5E1)", borderRadius: 6,
+  fontSize: 12, fontWeight: 600, background: "var(--surface, #fff)", cursor: "pointer",
+  color: "var(--text-primary, #0F172A)",
+};
+
+function DimCard({ dim, d, draft, onDraft, onCommit, es }) {
+  const st = ESTADO[d.estado] || ESTADO.SIN_META;
+  const [, label, ccy] = META[dim] || [dim, dim, null];
+  const pct = d.pct != null ? Math.max(0, Math.min(150, d.pct)) : null;
+  return (
+    <div style={{
+      border: "1px solid var(--border-subtle, #EEF2F6)", borderRadius: 10, padding: 12,
+      background: "#fff", display: "flex", flexDirection: "column", gap: 8,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <div style={{ fontWeight: 700, color: "var(--brand-primary, #013A57)", fontSize: 12.5 }}>{label}</div>
+        <span style={{ padding: "2px 9px", borderRadius: 999, fontSize: 10.5, fontWeight: 700, background: st.bg, color: st.fg }}>
+          {es ? st.es : st.en}
+        </span>
+      </div>
+
+      <div className="tabular-nums" style={{ fontSize: 20, fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
+        {num(d.real, ccy)}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ fontSize: 11, color: "var(--text-tertiary, #94A3B8)", fontWeight: 600 }}>
+          {es ? "Meta" : "Goal"}
+        </span>
+        <input type="number" value={draft ?? ""}
+               onChange={(e) => onDraft(e.target.value)}
+               onBlur={onCommit}
+               placeholder="—"
+               style={{
+                 width: 110, textAlign: "right", padding: "4px 8px",
+                 border: "1px solid var(--border, #CBD5E1)", borderRadius: 6, fontSize: 12,
+               }} />
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ flex: 1, height: 6, borderRadius: 999, background: "var(--bg-alt, #F1F5F9)", overflow: "hidden" }}>
+          <div style={{ width: `${pct != null ? Math.min(100, pct) : 0}%`, height: "100%", background: st.bar, transition: "width .3s" }} />
+        </div>
+        <span className="tabular-nums" style={{ fontSize: 11.5, fontWeight: 700, color: st.fg, minWidth: 42, textAlign: "right" }}>
+          {d.pct != null ? `${d.pct}%` : "—"}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export default function ObjetivosCliente({ lang = "es" }) {
   const es = lang !== "en";
@@ -78,16 +132,21 @@ export default function ObjetivosCliente({ lang = "es" }) {
   return (
     <div className="card card-pad-lg" style={{ marginBottom: 24 }}>
       <div className="flex ai-center jc-between" style={{ gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-        <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 700 }}>
-          {es ? "OBJETIVOS Y EVOLUCIÓN DE CLIENTES" : "CLIENT GOALS & EVOLUTION"}
+        <div>
+          <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 700 }}>
+            {es ? "OBJETIVOS Y EVOLUCIÓN DE CLIENTES" : "CLIENT GOALS & EVOLUTION"}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary, #475569)", marginTop: 2 }}>
+            {es ? "Avance real vs meta por dimensión. El semáforo aparece solo si hay meta." : "Actual vs goal per dimension."}
+          </div>
         </div>
-        <div className="flex ai-center gap-2" style={{ flexWrap: "wrap" }}>
-          <select value={cid} onChange={(e) => setCid(e.target.value)} style={{ fontSize: 12, maxWidth: 260 }}>
+        <div className="flex ai-center" style={{ flexWrap: "wrap", gap: 8 }}>
+          <select value={cid} onChange={(e) => setCid(e.target.value)} style={{ ...selStyle, maxWidth: 260 }}>
             {clientes.map((c) => (
               <option key={c.id} value={c.id}>{c.razon_social || c.nombre_comercial || c.id}</option>
             ))}
           </select>
-          <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={{ fontSize: 12 }}>
+          <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={selStyle}>
             <option value="MES">{es ? "Mensual" : "Monthly"}</option>
             <option value="TRIMESTRE">{es ? "Trimestral" : "Quarterly"}</option>
             <option value="ANIO">{es ? "Anual" : "Annual"}</option>
@@ -105,84 +164,56 @@ export default function ObjetivosCliente({ lang = "es" }) {
         <div style={{ padding: 12, color: "var(--text-tertiary)", fontSize: 12 }}>…</div>
       ) : (
         <>
-          <div className="micro" style={{ color: "var(--text-tertiary)", marginBottom: 4 }}>
-            {es ? "Periodo evaluado" : "Evaluated period"}: <b>{data.periodo || "—"}</b>
-            {" · "}{es ? "recurrencia" : "recurrence"}: <b>{rec.pct != null ? `${rec.pct}%` : "—"}</b>
-            {rec.meses_con_pedidos != null ? ` (${rec.meses_con_pedidos}/${rec.meses_con_actividad} ${es ? "meses" : "mo"})` : ""}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+            <span style={{ padding: "3px 10px", borderRadius: 999, background: "var(--bg-alt, #F1F5F9)", fontSize: 11.5, fontWeight: 600, color: "var(--text-secondary, #475569)" }}>
+              {es ? "Periodo" : "Period"}: <b>{data.periodo || "—"}</b>
+            </span>
+            <span style={{ padding: "3px 10px", borderRadius: 999, background: "var(--bg-alt, #F1F5F9)", fontSize: 11.5, fontWeight: 600, color: "var(--text-secondary, #475569)" }}>
+              {es ? "Recurrencia" : "Recurrence"}: <b>{rec.pct != null ? `${rec.pct}%` : "—"}</b>
+              {rec.meses_con_pedidos != null ? ` (${rec.meses_con_pedidos}/${rec.meses_con_actividad} ${es ? "meses" : "mo"})` : ""}
+            </span>
           </div>
 
-          {/* Metas por dimensión */}
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 14 }}>
-            <thead>
-              <tr style={{ textAlign: "left", color: "var(--text-tertiary)" }}>
-                <th style={{ padding: "4px 6px" }}>{es ? "Dimensión" : "Dimension"}</th>
-                <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Real" : "Actual"}</th>
-                <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Meta" : "Goal"}</th>
-                <th style={{ padding: "4px 6px", textAlign: "right" }}>%</th>
-                <th style={{ padding: "4px 6px" }}>{es ? "Estado" : "Status"}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(data.dimensiones || []).map((d) => {
-                const st = ESTADO[d.estado] || ESTADO.SIN_META;
-                const ccy = ["COMPRAS", "MARGEN", "COMISIONES", "PAGOS"].includes(d.dimension) ? "USD" : null;
-                return (
-                  <tr key={d.dimension} style={{ borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
-                    <td style={{ padding: "6px", fontWeight: 600 }}>
-                      {(DIMS.find((x) => x[0] === d.dimension) || [d.dimension, d.dimension])[1]}
-                    </td>
-                    <td className="tabular-nums" style={{ padding: "6px", textAlign: "right" }}>{num(d.real, ccy)}</td>
-                    <td style={{ padding: "6px", textAlign: "right" }}>
-                      <input type="number" value={drafts[d.dimension] ?? ""}
-                             onChange={(e) => setDrafts((s) => ({ ...s, [d.dimension]: e.target.value }))}
-                             onBlur={() => guardar(d.dimension)}
-                             placeholder="—" style={{ width: 110, textAlign: "right" }} />
-                    </td>
-                    <td className="tabular-nums" style={{ padding: "6px", textAlign: "right" }}>
-                      {d.pct != null ? `${d.pct}%` : "—"}
-                    </td>
-                    <td style={{ padding: "6px" }}>
-                      <span style={{
-                        display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: 10,
-                        fontWeight: 700, background: st.bg, color: st.fg,
-                      }}>{es ? st.es : st.en}</span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          {/* Metas por dimensión (tarjetas) */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, marginBottom: 18 }}>
+            {(data.dimensiones || []).map((d) => (
+              <DimCard key={d.dimension} dim={d.dimension} d={d} es={es}
+                       draft={drafts[d.dimension]}
+                       onDraft={(v) => setDrafts((s) => ({ ...s, [d.dimension]: v }))}
+                       onCommit={() => guardar(d.dimension)} />
+            ))}
+          </div>
 
           {/* Evolución */}
-          <div className="micro" style={{ color: "var(--text-tertiary)", marginBottom: 4 }}>
+          <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 700, marginBottom: 8 }}>
             {es ? "EVOLUCIÓN" : "EVOLUTION"}
           </div>
           {series.length === 0 ? (
             <div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "Sin actividad." : "No activity."}</div>
           ) : (
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <table className="table" style={{ width: "100%" }}>
                 <thead>
-                  <tr style={{ textAlign: "left", color: "var(--text-tertiary)" }}>
-                    <th style={{ padding: "4px 6px" }}>{es ? "Periodo" : "Period"}</th>
-                    <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Pedidos" : "Orders"}</th>
-                    <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Compras" : "Purchases"}</th>
-                    <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Margen" : "Margin"}</th>
-                    <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Comisiones" : "Commissions"}</th>
-                    <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Pagos" : "Payments"}</th>
-                    <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Entregas" : "Deliveries"}</th>
+                  <tr>
+                    <th>{es ? "Periodo" : "Period"}</th>
+                    <th style={{ textAlign: "right" }}>{es ? "Pedidos" : "Orders"}</th>
+                    <th style={{ textAlign: "right" }}>{es ? "Compras" : "Purchases"}</th>
+                    <th style={{ textAlign: "right" }}>{es ? "Margen" : "Margin"}</th>
+                    <th style={{ textAlign: "right" }}>{es ? "Comisiones" : "Commissions"}</th>
+                    <th style={{ textAlign: "right" }}>{es ? "Pagos" : "Payments"}</th>
+                    <th style={{ textAlign: "right" }}>{es ? "Entregas" : "Deliveries"}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {series.map((s) => (
-                    <tr key={s.periodo} style={{ borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
-                      <td style={{ padding: "5px", fontWeight: 600 }}>{s.periodo}</td>
-                      <td className="tabular-nums" style={{ padding: "5px", textAlign: "right" }}>{s.pedidos}</td>
-                      <td className="tabular-nums" style={{ padding: "5px", textAlign: "right" }}>{num(s.compras, "USD")}</td>
-                      <td className="tabular-nums" style={{ padding: "5px", textAlign: "right" }}>{num(s.margen, "USD")}</td>
-                      <td className="tabular-nums" style={{ padding: "5px", textAlign: "right" }}>{num(s.comisiones, "USD")}</td>
-                      <td className="tabular-nums" style={{ padding: "5px", textAlign: "right" }}>{num(s.pagos, "USD")}</td>
-                      <td className="tabular-nums" style={{ padding: "5px", textAlign: "right" }}>{s.entregas}</td>
+                    <tr key={s.periodo}>
+                      <td className="mono-sm" style={{ fontWeight: 700, color: "var(--brand-primary, #013A57)" }}>{s.periodo}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right" }}>{s.pedidos}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right" }}>{num(s.compras, "USD")}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right" }}>{num(s.margen, "USD")}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>{num(s.comisiones, "USD")}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right" }}>{num(s.pagos, "USD")}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right" }}>{s.entregas}</td>
                     </tr>
                   ))}
                 </tbody>
