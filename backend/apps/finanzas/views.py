@@ -389,6 +389,7 @@ def _build_item(row: dict, today: date) -> dict:
         "shipment_date_source":  ("artifact_ART05" if row.get("shipment_date_artifact")
                                   else ("expediente" if row["shipment_date"] else None)),
         "fecha_devengo_esperada": fecha_devengo.isoformat() if fecha_devengo else None,
+        "fecha_devengo_calculada": _fecha_devengo_credito.isoformat() if _fecha_devengo_credito else None,
         "fecha_pago_aprox":       fecha_pago_aprox.isoformat() if fecha_pago_aprox else None,
         "devengo_estado":        estado,
         "lines_count":           row["lines_count"],
@@ -1546,8 +1547,8 @@ def comisiones_calendario(request):
         # La fecha que rige el estado es la de devengo; la ventana 10-20 se
         # expone aparte para no mezclar criterios (evita "en tránsito" con
         # días negativos).
-        f_esp = it.get("fecha_devengo_esperada")
-        f_fin = it.get("fecha_devengo_esperada")
+        f_esp = it.get("fecha_devengo_calculada") or it.get("fecha_devengo_esperada")
+        f_fin = f_esp
         if est == "DEVENGADA" or r:
             estado = "RECIBIDA"
         elif est == "VENCIDA":
