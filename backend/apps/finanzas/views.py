@@ -1543,8 +1543,11 @@ def comisiones_calendario(request):
             continue
         est = it.get("devengo_estado")
         r = recibido.get(it["expediente_id"])
-        f_esp = it.get("ventana_comision_inicio") or it.get("fecha_devengo_esperada")
-        f_fin = it.get("ventana_comision_fin") or it.get("fecha_devengo_esperada")
+        # La fecha que rige el estado es la de devengo; la ventana 10-20 se
+        # expone aparte para no mezclar criterios (evita "en tránsito" con
+        # días negativos).
+        f_esp = it.get("fecha_devengo_esperada")
+        f_fin = it.get("fecha_devengo_esperada")
         if est == "DEVENGADA" or r:
             estado = "RECIBIDA"
         elif est == "VENCIDA":
@@ -1571,7 +1574,7 @@ def comisiones_calendario(request):
             "monto_usd":       str(amt.quantize(Decimal("0.01"))),
             "estado":          estado,
             "fecha_esperada":  str(f_esp)[:10] if f_esp else None,
-            "ventana_fin":     str(f_fin)[:10] if f_fin else None,
+            "ventana_fin":     str(it.get("ventana_comision_fin"))[:10] if it.get("ventana_comision_fin") else None,
             "fecha_recibida":  fecha_rec,
             "dias":            dias,
         })
