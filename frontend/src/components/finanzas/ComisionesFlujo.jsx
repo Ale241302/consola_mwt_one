@@ -231,8 +231,8 @@ export default function ComisionesFlujo({ lang = "es" }) {
                 <th>{es ? "Expediente" : "File"}</th>
                 <th>{es ? "Cliente" : "Client"}</th>
                 <th style={{ textAlign: "right" }}>{es ? "Δ Bruto" : "Gross Δ"}</th>
-                <th>{es ? "Pago compra (est.)" : "Pay purchase (est.)"}</th>
-                <th>{es ? "Cobro venta (est.)" : "Collect sale (est.)"}</th>
+                <th>{es ? "Pago compra (real)" : "Pay purchase (actual)"}</th>
+                <th>{es ? "Cobro venta (real)" : "Collect sale (actual)"}</th>
                 <th style={{ textAlign: "right" }}>{es ? "Desfase" : "Gap"}</th>
               </tr>
             </thead>
@@ -247,45 +247,31 @@ export default function ComisionesFlujo({ lang = "es" }) {
                     {money(r.arbitraje_bruto)}
                   </td>
                   <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
-                    {r.compra_vence ? (
-                      <>
-                        {r.compra_vence}
-                        {r.credit_days_mwt != null && (
-                          <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>({r.credit_days_mwt}d)</span>
-                        )}
-                      </>
-                    ) : (
-                      <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "sin fecha" : "no date"}</span>
-                    )}
+                    {r.compra_real
+                      ? r.compra_real
+                      : <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "sin dato" : "no data"}</span>}
                   </td>
                   <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
-                    {r.venta_vence ? (
-                      <>
-                        {r.venta_vence}
-                        {r.credit_days_cliente != null && (
-                          <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>({r.credit_days_cliente}d)</span>
-                        )}
-                      </>
-                    ) : (
-                      <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "sin fecha" : "no date"}</span>
-                    )}
+                    {r.venta_real
+                      ? r.venta_real
+                      : <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "sin dato" : "no data"}</span>}
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    {r.desfase_dias == null ? (
-                      <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>—</span>
-                    ) : r.requiere_financiacion ? (
+                    {r.desfase_real_dias == null ? (
+                      <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "sin dato" : "no data"}</span>
+                    ) : r.desfase_real_dias > 0 ? (
                       <span style={{
                         display: "inline-block", padding: "2px 9px", borderRadius: 999,
                         fontSize: 11, fontWeight: 700, color: "#B45309", background: "rgba(180,83,9,0.10)",
                       }}>
-                        {r.desfase_dias}d {es ? "financia MWT" : "MWT finances"}
+                        {r.desfase_real_dias}d {es ? "financia MWT" : "MWT finances"}
                       </span>
                     ) : (
                       <span style={{
                         display: "inline-block", padding: "2px 9px", borderRadius: 999,
                         fontSize: 11, fontWeight: 700, color: "#0E8A6D", background: "rgba(14,138,109,0.10)",
                       }}>
-                        {r.desfase_dias}d
+                        {r.desfase_real_dias}d
                       </span>
                     )}
                   </td>
@@ -296,8 +282,8 @@ export default function ComisionesFlujo({ lang = "es" }) {
 
           <div style={{ fontSize: 11, color: "var(--text-tertiary, #94A3B8)", marginTop: 10 }}>
             {es
-              ? "Δ Bruto = precio cliente − precio MWT (dato real). OJO: 'Pago compra' y 'Cobro venta' son ESTIMADOS = fecha de la factura (o de la salida, si falta) + plazo MWT (15d) / cliente (90d); no son fechas de pago observadas. Por eso el 'Desfase' es siempre 15d→90d = 75d (diferencia de plazos): significa que MWT paga al proveedor antes de cobrar al cliente (financiación temporal)."
-              : "Gross Δ = client price − MWT price (real). 'Pay purchase'/'Collect sale' are ESTIMATES from invoice/dispatch date + terms."}
+              ? "Δ Bruto = precio cliente − precio MWT (dato real). 'Pago compra' y 'Cobro venta' son FECHAS REALES de comprobantes confirmados (OUT = MWT pagó al proveedor · IN = el cliente pagó a MWT). Si no hay comprobante registrado, dice 'sin dato' (no se inventa fecha). 'Desfase' = cobro − pago real: > 0 significa que MWT pagó al proveedor antes de cobrar al cliente (financiación temporal)."
+              : "Gross Δ is real. Purchase/sale dates are ACTUAL dates from confirmed payment receipts; 'no data' when none."}
           </div>
         </>
       )}

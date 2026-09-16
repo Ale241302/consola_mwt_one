@@ -1190,6 +1190,20 @@ def arbitraje(request):
     for eid, aud, f in fac:
         inv[eid][aud or ""] = f
 
+    # Fechas REALES de pago desde finance.payment (comprobantes confirmados):
+    #   OUT = MWT pagó al proveedor  ·  IN = el cliente pagó a MWT.
+    with connection.cursor() as c:
+        c.execute("""
+            SELECT expediente_id::text,
+                   MAX(fecha) FILTER (WHERE COALESCE(direction,'IN') = 'OUT') AS pago,
+                   MAX(fecha) FILTER (WHERE COALESCE(direction,'IN') = 'IN')  AS cobro
+              FROM finance.payment
+             WHERE is_active AND estado IN ('CONFIRMADO_HUMANO','CONFIRMADO_AI')
+               AND expediente_id::text = ANY(%s::text[])
+             GROUP BY 1
+        """, [ids])
+        pagos = {r[0]: {"pago": r[1], "cobro": r[2]} for r in c.fetchall()}
+
     results = []
     for it in items:
         # El arbitraje es el beneficio de MWT solo cuando MWT opera el expediente.
@@ -1211,6 +1225,12 @@ def arbitraje(request):
         venta_vence = (venta_base + timedelta(days=cd_cli)) if venta_base else None
         compra_vence = (compra_base + timedelta(days=cd_mwt)) if (compra_base and cd_mwt is not None) else None
         desfase = (venta_vence - compra_vence).days if (venta_vence and compra_vence) else None
+
+        # Reales (si existen comprobantes confirmados)
+        pr = pagos.get(eid, {})
+        compra_real = pr.get("pago")
+        venta_real = pr.get("cobro")
+        desfase_real = (venta_real - compra_real).days if (venta_real and compra_real) else None
         results.append({
             "expediente_id": eid,
             "display_id": it["display_id"],
@@ -1227,6 +1247,9 @@ def arbitraje(request):
             "venta_vence":  venta_vence.isoformat() if venta_vence else None,
             "desfase_dias": desfase,
             "requiere_financiacion": bool(desfase and desfase > 0),
+            "compra_real": compra_real.isoformat() if compra_real else None,
+            "venta_real":  venta_real.isoformat() if venta_real else None,
+            "desfase_real_dias": desfase_real,
         })
 
     results.sort(key=lambda x: (x["desfase_dias"] is None, -(x["desfase_dias"] or 0)))
