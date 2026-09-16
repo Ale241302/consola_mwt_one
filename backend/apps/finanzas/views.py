@@ -1550,6 +1550,10 @@ def comisiones_calendario(request):
 
         r = recibido.get(it["expediente_id"])
         est = it.get("devengo_estado")
+        if est == "SIN_TASA":
+            # Sin tasa de comisión no hay comisión proyectable (el KPI lo
+            # cuenta aparte como "sin_tasa").
+            continue
 
         # Fechas y estado con el MISMO criterio que los KPIs (devengo), para
         # que el calendario cuadre: DEVENGADA↔Recibida · DEVENGABLE↔En tránsito
