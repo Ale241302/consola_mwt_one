@@ -1600,6 +1600,7 @@ def comisiones_calendario(request):
             "expediente":      it.get("codigo"),
             "pf":              pf or it.get("display_id"),
             "cliente":         it.get("cliente_razon_social"),
+            "importador":      it.get("operador_razon_social") or it.get("cliente_razon_social"),
             "periodo":         it.get("mes_comision"),
             "monto_usd":       str(amt.quantize(Decimal("0.01"))),
             "estado":          estado,
@@ -1648,22 +1649,25 @@ def q_comision_historica():
         c.execute(
             """
             SELECT ch.periodo, ch.fe_codigo, ch.cliente_nombre, ch.pf_ref,
-                   ch.comision_usd, ch.tipo, ch.fecha_emision, e.codigo
+                   ch.comision_usd, ch.tipo, ch.fecha_emision, e.codigo,
+                   oc.razon_social AS importador
               FROM finance.comision_historica ch
               LEFT JOIN expedientes.expediente e ON e.id = ch.expediente_id
+              LEFT JOIN clientes.cliente oc ON oc.id = e.operating_company_id
              WHERE ch.is_active = TRUE
              ORDER BY ch.periodo DESC
             """
         )
         rows = c.fetchall()
     out = []
-    for periodo, fe, cliente, pf, monto, tipo, f_em, exp in rows:
+    for periodo, fe, cliente, pf, monto, tipo, f_em, exp, importador in rows:
         out.append({
             "origen":         "HISTORICA",
             "concepto":       "COMISION",
             "expediente":     exp,
             "pf":             pf,
             "cliente":        cliente,
+            "importador":     importador or cliente,
             "periodo":        periodo,
             "monto_usd":      str(_dec(monto).quantize(Decimal("0.01"))),
             "estado":         "RECIBIDA" if (tipo or "COMISION").upper() == "COMISION" else "RECIBIDA",

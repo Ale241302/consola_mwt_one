@@ -87,7 +87,7 @@ export default function ComisionesCalendario({ lang }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [q, setQ] = useState({ estado: "", concepto: "", cliente: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" });
+  const [q, setQ] = useState({ estado: "", concepto: "", importador: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" });
   const set = (k, v) => setQ((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
@@ -103,8 +103,8 @@ export default function ComisionesCalendario({ lang }) {
   const items = data?.items || [];
   const resumen = data?.resumen || {};
 
-  const clientes = useMemo(
-    () => [...new Set(items.map((i) => i.cliente).filter(Boolean))].sort(),
+  const importadores = useMemo(
+    () => [...new Set(items.map((i) => i.importador).filter(Boolean))].sort(),
     [items]);
   const periodos = useMemo(
     () => [...new Set(items.map((i) => i.periodo).filter((p) => p && p !== "—"))].sort().reverse(),
@@ -114,7 +114,7 @@ export default function ComisionesCalendario({ lang }) {
     return items.filter((r) => {
       if (q.estado && r.estado !== q.estado) return false;
       if (q.concepto && (r.concepto || "COMISION") !== q.concepto) return false;
-      if (q.cliente && r.cliente !== q.cliente) return false;
+      if (q.importador && (r.importador || r.cliente) !== q.importador) return false;
       if (q.periodo && r.periodo !== q.periodo) return false;
       const f = r.fecha_esperada ? String(r.fecha_esperada).slice(0, 10) : "";
       if (q.desde && (!f || f < q.desde)) return false;
@@ -221,10 +221,10 @@ export default function ComisionesCalendario({ lang }) {
                 <option value="ARBITRAJE">{es ? "Arbitraje (MWT opera)" : "Arbitrage (MWT operates)"}</option>
               </select>
             </label>
-            <label style={lblStyle}>{es ? "Cliente" : "Client"}
-              <select style={selStyle} value={q.cliente} onChange={(e) => set("cliente", e.target.value)}>
+            <label style={lblStyle}>{es ? "Importador" : "Importer"}
+              <select style={selStyle} value={q.importador} onChange={(e) => set("importador", e.target.value)}>
                 <option value="">{es ? "Todos" : "All"}</option>
-                {clientes.map((c) => <option key={c} value={c}>{c}</option>)}
+                {importadores.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </label>
             <label style={lblStyle}>{es ? "Periodo" : "Period"}
@@ -257,7 +257,7 @@ export default function ComisionesCalendario({ lang }) {
               </select>
             </label>
             {hayFiltro && (
-              <button type="button" onClick={() => setQ({ estado: "", concepto: "", cliente: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" })}
+              <button type="button" onClick={() => setQ({ estado: "", concepto: "", importador: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" })}
                 style={{ ...selStyle, color: "var(--brand-primary, #013A57)" }}>
                 {es ? "Limpiar" : "Clear"}
               </button>
@@ -270,7 +270,7 @@ export default function ComisionesCalendario({ lang }) {
                 <tr>
                   <th>{es ? "Estado" : "Status"}</th>
                   <th>{es ? "Concepto" : "Concept"}</th>
-                  <th>{es ? "Cliente" : "Client"}</th>
+                  <th>{es ? "Importador" : "Importer"}</th>
                   <th>PF</th>
                   <th>{es ? "Expediente" : "File"}</th>
                   <th>{es ? "Periodo" : "Period"}</th>
@@ -300,7 +300,7 @@ export default function ComisionesCalendario({ lang }) {
                           {(r.concepto || "COMISION") === "ARBITRAJE" ? (es ? "Arbitraje" : "Arbitrage") : (es ? "Comisión" : "Commission")}
                         </span>
                       </td>
-                      <td>{r.cliente || "—"}</td>
+                      <td>{r.importador || r.cliente || "—"}</td>
                       <td className="mono-sm">{r.pf || "—"}</td>
                       <td className="mono-sm" style={{ color: "var(--brand-primary, #013A57)" }}>{r.expediente || "—"}</td>
                       <td className="mono-sm">{periodoLabel(r.periodo)}</td>
