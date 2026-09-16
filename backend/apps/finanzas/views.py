@@ -93,10 +93,10 @@ def _resolve_devengo_estado(
     cd_cli = int(credit_days_cliente or 90)
     cd_mwt = int(credit_days_mwt or 90)
 
-    # Jerarquía de fecha base (real > eta > estimada con días crédito cliente)
+    # Jerarquía de fecha base (real > eta > estimada con la creación)
     base = shipment_date or eta
     if base is None and created_at_date is not None:
-        base = created_at_date + timedelta(days=cd_cli)
+        base = created_at_date
     if base is None:
         return ("PROYECTADA", None)
 
