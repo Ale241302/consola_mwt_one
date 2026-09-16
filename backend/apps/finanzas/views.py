@@ -1537,54 +1537,35 @@ def comisiones_calendario(request):
         )
         recibido = {r[0]: {"fecha": r[1], "monto": r[2]} for r in c.fetchall()}
 
-    # PFs ya cobrados vía FE histórica (para no duplicar en el calendario).
-    with connection.cursor() as c:
-        c.execute("SELECT pf_ref FROM finance.comision_historica WHERE is_active = TRUE")
-        hist_pf = set()
-        for (ref,) in c.fetchall():
-            for tok in str(ref or "").replace("/", " ").split():
-                hist_pf.add(tok.strip())
-
     items = []
     for it in [_build_item(r, today) for r in _fetch_expedientes()]:
-        # Los expedientes operados por MWT no generan comisión (regla CEO):
-        # su beneficio es el arbitraje Δ = precio cliente − precio MWT.
-        is_mwt_op = str(it.get("operating_company_id")) == str(MWT_OPERATING_CLIENT_ID)
-        if is_mwt_op:
-            amt = _dec(it.get("delta_total") or 0)
-            concepto = "ARBITRAJE"
-        else:
-            amt = _dec(it.get("commission_amount") or 0)
-            concepto = "COMISION"
+        # SOLO comisiones. El arbitraje (expedientes operados por MWT) se ve
+        # en su propia sección — aquí no se cuenta. Para los operados por MWT
+        # la comisión es 0 (se quedan con el arbitraje).
+        if str(it.get("operating_company_id")) == str(MWT_OPERATING_CLIENT_ID):
+            continue
+        amt = _dec(it.get("commission_amount") or 0)
         if amt <= 0:
             continue
 
-        # Dedupe: si la PF ya está cobrada en una FE histórica, no repetir
-        # la COMISIÓN (el arbitraje Δ es otro flujo y sí se mantiene).
-        pf = str(it.get("proforma_codigo") or "").strip()
-        if pf and pf in hist_pf and concepto == "COMISION":
-            continue
-
         r = recibido.get(it["expediente_id"])
+        est = it.get("devengo_estado")
 
-        # UN solo criterio de fecha: la ventana 10–20 del mes de pago
-        # (mes_comision + ventana_comision_inicio/fin) — así cobra MWT sus
-        # comisiones. No se mezcla con la fecha de devengo (evita el
-        # "periodo ene-2027 con 7d de atraso").
+        # Fechas y estado con el MISMO criterio que los KPIs (devengo), para
+        # que el calendario cuadre: DEVENGADA↔Recibida · DEVENGABLE↔En tránsito
+        # · VENCIDA↔Vencida · PROYECTADA↔Por recibir.
         def _d(x):
             try:
                 return date.fromisoformat(str(x)[:10]) if x else None
             except Exception:
                 return None
-        v_ini = _d(it.get("ventana_comision_inicio"))
-        v_fin = _d(it.get("ventana_comision_fin"))
-        f_esp = v_fin or v_ini
+        f_esp = _d(it.get("fecha_devengo_calculada")) or _d(it.get("fecha_devengo_esperada"))
 
-        if r:
+        if r or est == "DEVENGADA":
             estado = "RECIBIDA"
-        elif v_fin and today > v_fin:
+        elif est == "VENCIDA":
             estado = "VENCIDA"
-        elif v_ini and today >= v_ini:
+        elif est == "DEVENGABLE":
             estado = "EN_TRANSITO"
         else:
             estado = "POR_RECIBIR"
@@ -1596,25 +1577,21 @@ def comisiones_calendario(request):
 
         items.append({
             "origen":          "OPERATIVA",
-            "concepto":        concepto,
+            "concepto":        "COMISION",
             "expediente":      it.get("codigo"),
-            "pf":              pf or it.get("display_id"),
+            "pf":              str(it.get("proforma_codigo") or "").strip() or it.get("display_id"),
             "cliente":         it.get("cliente_razon_social"),
             "importador":      it.get("operador_razon_social") or it.get("cliente_razon_social"),
             "total_cliente":   it.get("total_client"),
             "total_mwt":       it.get("total_mwt"),
-            "periodo":         it.get("mes_comision"),
+            "periodo":         f_esp.strftime("%Y-%m") if f_esp else it.get("mes_comision"),
             "monto_usd":       str(amt.quantize(Decimal("0.01"))),
             "estado":          estado,
             "fecha_esperada":  f_esp.isoformat() if f_esp else None,
-            "ventana_fin":     v_fin.isoformat() if v_fin else None,
+            "ventana_fin":     None,
             "fecha_recibida":  fecha_rec,
             "dias":            dias,
         })
-
-    # Comisiones históricas ya cobradas (FE).
-    for h in q_comision_historica():
-        items.append(h)
 
     def _sum(pred):
         t = Decimal("0")

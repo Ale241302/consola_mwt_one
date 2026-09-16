@@ -87,7 +87,7 @@ export default function ComisionesCalendario({ lang }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [q, setQ] = useState({ estado: "", concepto: "", importador: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" });
+  const [q, setQ] = useState({ estado: "", importador: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" });
   const set = (k, v) => setQ((p) => ({ ...p, [k]: v }));
 
   useEffect(() => {
@@ -113,7 +113,6 @@ export default function ComisionesCalendario({ lang }) {
   const filtered = useMemo(() => {
     return items.filter((r) => {
       if (q.estado && r.estado !== q.estado) return false;
-      if (q.concepto && (r.concepto || "COMISION") !== q.concepto) return false;
       if (q.importador && (r.importador || r.cliente) !== q.importador) return false;
       if (q.periodo && r.periodo !== q.periodo) return false;
       const f = r.fecha_esperada ? String(r.fecha_esperada).slice(0, 10) : "";
@@ -148,8 +147,8 @@ export default function ComisionesCalendario({ lang }) {
         </div>
         <div style={{ fontSize: 12, color: "var(--text-secondary, #475569)", marginTop: 2 }}>
           {es
-            ? "¿Cuándo la recibí, cuándo la debería recibir y qué está pendiente o vencido? Ordenado por urgencia."
-            : "When it was received, when it should arrive, and what is pending or overdue."}
+            ? "Solo comisiones (el arbitraje de los expedientes operados por MWT se ve en su propia sección). Totales cuadran con los KPIs de arriba."
+            : "Commissions only (MWT-operated arbitrage has its own section). Totals reconcile with the KPIs above."}
         </div>
       </div>
 
@@ -177,32 +176,6 @@ export default function ComisionesCalendario({ lang }) {
                   active={q.estado === "VENCIDA"} onClick={() => set("estado", q.estado === "VENCIDA" ? "" : "VENCIDA")} />
           </div>
 
-          {/* Totales por concepto (comisión vs arbitraje) */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
-            {[
-              { k: "comision",  label: es ? "Comisión" : "Commission", color: "#334155", bg: "rgba(51,65,85,0.08)" },
-              { k: "arbitraje", label: es ? "Arbitraje · MWT opera" : "Arbitrage · MWT operates", color: "#6D28D9", bg: "rgba(109,40,217,0.10)" },
-            ].map((c) => {
-              const d = data?.por_concepto?.[c.k] || {};
-              return (
-                <div key={c.k} style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  border: "1px solid var(--border-subtle, #EEF2F6)", borderRadius: 10, padding: "8px 12px",
-                }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: c.color, background: c.bg, padding: "2px 9px", borderRadius: 999 }}>
-                    {c.label}
-                  </span>
-                  <span className="tabular-nums" style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
-                    ${fmt(d.monto_usd)}
-                  </span>
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>
-                    {d.n || 0}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
           {/* Filtros */}
           <div style={{
             display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end",
@@ -212,13 +185,6 @@ export default function ComisionesCalendario({ lang }) {
               <select style={selStyle} value={q.estado} onChange={(e) => set("estado", e.target.value)}>
                 <option value="">{es ? "Todos" : "All"}</option>
                 {Object.entries(ESTADOS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-              </select>
-            </label>
-            <label style={lblStyle}>{es ? "Concepto" : "Concept"}
-              <select style={selStyle} value={q.concepto} onChange={(e) => set("concepto", e.target.value)}>
-                <option value="">{es ? "Todos" : "All"}</option>
-                <option value="COMISION">{es ? "Comisión" : "Commission"}</option>
-                <option value="ARBITRAJE">{es ? "Arbitraje (MWT opera)" : "Arbitrage (MWT operates)"}</option>
               </select>
             </label>
             <label style={lblStyle}>{es ? "Importador" : "Importer"}
@@ -257,7 +223,7 @@ export default function ComisionesCalendario({ lang }) {
               </select>
             </label>
             {hayFiltro && (
-              <button type="button" onClick={() => setQ({ estado: "", concepto: "", importador: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" })}
+              <button type="button" onClick={() => setQ({ estado: "", importador: "", periodo: "", desde: "", hasta: "", recibida: "", dias: "" })}
                 style={{ ...selStyle, color: "var(--brand-primary, #013A57)" }}>
                 {es ? "Limpiar" : "Clear"}
               </button>
@@ -269,7 +235,6 @@ export default function ComisionesCalendario({ lang }) {
               <thead>
                 <tr>
                   <th>{es ? "Estado" : "Status"}</th>
-                  <th>{es ? "Concepto" : "Concept"}</th>
                   <th>{es ? "Importador" : "Importer"}</th>
                   <th>PF</th>
                   <th>{es ? "Expediente" : "File"}</th>
@@ -293,15 +258,6 @@ export default function ComisionesCalendario({ lang }) {
                   return (
                     <tr key={i}>
                       <td><Chip estado={r.estado} /></td>
-                      <td>
-                        <span style={{
-                          display: "inline-block", padding: "2px 9px", borderRadius: 999, fontSize: 11, fontWeight: 700,
-                          color: (r.concepto || "COMISION") === "ARBITRAJE" ? "#6D28D9" : "#334155",
-                          background: (r.concepto || "COMISION") === "ARBITRAJE" ? "rgba(109,40,217,0.10)" : "rgba(51,65,85,0.08)",
-                        }}>
-                          {(r.concepto || "COMISION") === "ARBITRAJE" ? (es ? "Arbitraje" : "Arbitrage") : (es ? "Comisión" : "Commission")}
-                        </span>
-                      </td>
                       <td>{r.importador || r.cliente || "—"}</td>
                       <td className="mono-sm">{r.pf || "—"}</td>
                       <td className="mono-sm" style={{ color: "var(--brand-primary, #013A57)" }}>{r.expediente || "—"}</td>
@@ -320,7 +276,7 @@ export default function ComisionesCalendario({ lang }) {
                   );
                 })}
                 {pg.pageItems.length === 0 && (
-                  <tr><td colSpan={12} style={{ color: "var(--text-tertiary, #94A3B8)", padding: "16px 0" }}>
+                  <tr><td colSpan={11} style={{ color: "var(--text-tertiary, #94A3B8)", padding: "16px 0" }}>
                     {es ? "Sin comisiones para los filtros aplicados." : "No commissions match the filters."}
                   </td></tr>
                 )}
