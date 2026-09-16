@@ -1,11 +1,12 @@
 ﻿// frontend/src/components/finanzas/ComisionesCalendario.jsx
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Sprint 2026-09 Â· "Calendario de comisiones".
-// Responde: Â¿cuÃ¡ndo la recibÃ­?, Â¿cuÃ¡ndo la deberÃ­a recibir?, Â¿quÃ© estÃ¡
-// pendiente / vencido / en trÃ¡nsito?  Tabla con filtros (estado, cliente,
-// periodo, vence/esparada, recibida, dÃ­as) + paginaciÃ³n (20 por defecto).
+// ---------------------------------------------------------------------
+// Sprint 2026-09 · "Calendario de comisiones".
+// Responde: ¿cuándo la recibí?, ¿cuándo la debería recibir?, ¿qué está
+// pendiente / vencido / en tránsito?  Tabla con filtros (estado, importador,
+// periodo, vence/esperada, recibida, días) + paginación (20 por defecto).
+// Solo comisiones (el arbitraje de expedientes operados por MWT va aparte).
 // Consume GET /api/finanzas/comisiones-calendario/
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ---------------------------------------------------------------------
 import React, { useEffect, useState, useMemo } from "react";
 import { finanzasApi } from "../../lib/api.js";
 import { usePagination, TablePagination } from "../ui/TablePagination.jsx";
@@ -16,14 +17,14 @@ const fmt = (n) =>
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
 function periodoLabel(p) {
-  if (!p || p === "â€”") return "â€”";
+  if (!p || p === "—") return "—";
   const [y, m] = String(p).split("-");
   const i = Number(m) - 1;
   return i >= 0 && i < 12 ? `${MESES[i]} ${y}` : p;
 }
 
 function fdate(s) {
-  if (!s) return "â€”";
+  if (!s) return "—";
   const d = new Date(String(s).slice(0, 10) + "T00:00:00");
   if (isNaN(d)) return String(s).slice(0, 10);
   return d.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
@@ -31,8 +32,8 @@ function fdate(s) {
 
 const ESTADOS = {
   RECIBIDA:    { label: "Recibida",    color: "#0E8A6D", bg: "rgba(14,138,109,0.10)" },
-  EN_TRANSITO: { label: "En trÃ¡nsito", color: "#1D6FB8", bg: "rgba(29,111,184,0.10)" },
-  POR_RECIBIR: { label: "Proyectado", color: "#6B7280", bg: "rgba(107,114,128,0.10)" },
+  EN_TRANSITO: { label: "En tránsito", color: "#1D6FB8", bg: "rgba(29,111,184,0.10)" },
+  POR_RECIBIR: { label: "Proyectado",  color: "#6B7280", bg: "rgba(107,114,128,0.10)" },
   VENCIDA:     { label: "Vencida",     color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
 };
 
@@ -66,7 +67,7 @@ function Tile({ title, n, monto, color, active, onClick }) {
         ${fmt(monto)}
       </div>
       <div style={{ fontSize: 11, marginTop: 2, color: active ? "rgba(255,255,255,0.85)" : "var(--text-secondary, #475569)" }}>
-        {n} comisiÃ³n{n === 1 ? "" : "es"}
+        {n} comisión{n === 1 ? "" : "es"}
       </div>
     </button>
   );
@@ -107,7 +108,7 @@ export default function ComisionesCalendario({ lang }) {
     () => [...new Set(items.map((i) => i.importador).filter(Boolean))].sort(),
     [items]);
   const periodos = useMemo(
-    () => [...new Set(items.map((i) => i.periodo).filter((p) => p && p !== "â€”"))].sort().reverse(),
+    () => [...new Set(items.map((i) => i.periodo).filter((p) => p && p !== "—"))].sort().reverse(),
     [items]);
 
   const filtered = useMemo(() => {
@@ -147,25 +148,25 @@ export default function ComisionesCalendario({ lang }) {
         </div>
         <div style={{ fontSize: 12, color: "var(--text-secondary, #475569)", marginTop: 2 }}>
           {es
-            ? "Solo comisiones (el arbitraje de los expedientes operados por MWT se ve en su propia secciÃ³n). Totales cuadran con los KPIs de arriba."
+            ? "Solo comisiones (el arbitraje de los expedientes operados por MWT se ve en su propia sección). Totales cuadran con los KPIs de arriba."
             : "Commissions only (MWT-operated arbitrage has its own section). Totals reconcile with the KPIs above."}
         </div>
       </div>
 
       {loading ? (
         <div style={{ color: "var(--text-tertiary, #94A3B8)", fontSize: 13, padding: "18px 0" }}>
-          {es ? "Cargando calendarioâ€¦" : "Loadingâ€¦"}
+          {es ? "Cargando calendario…" : "Loading…"}
         </div>
       ) : error ? (
         <div style={{ color: "var(--critical, #DC2626)", fontSize: 13 }}>{error}</div>
       ) : (
         <>
-          {/* Tiles = filtro rÃ¡pido por estado */}
+          {/* Tiles = filtro rápido por estado */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10, marginBottom: 14 }}>
             <Tile title={es ? "Recibidas" : "Received"} n={resumen?.recibidas?.n || 0}
                   monto={resumen?.recibidas?.monto_usd} color={ESTADOS.RECIBIDA.color}
                   active={q.estado === "RECIBIDA"} onClick={() => set("estado", q.estado === "RECIBIDA" ? "" : "RECIBIDA")} />
-            <Tile title={es ? "En trÃ¡nsito" : "In transit"} n={resumen?.en_transito?.n || 0}
+            <Tile title={es ? "En tránsito" : "In transit"} n={resumen?.en_transito?.n || 0}
                   monto={resumen?.en_transito?.monto_usd} color={ESTADOS.EN_TRANSITO.color}
                   active={q.estado === "EN_TRANSITO"} onClick={() => set("estado", q.estado === "EN_TRANSITO" ? "" : "EN_TRANSITO")} />
             <Tile title={es ? "Proyectado" : "Projected"} n={resumen?.por_recibir?.n || 0}
@@ -176,7 +177,7 @@ export default function ComisionesCalendario({ lang }) {
                   active={q.estado === "VENCIDA"} onClick={() => set("estado", q.estado === "VENCIDA" ? "" : "VENCIDA")} />
           </div>
 
-          {/* Puente de reconciliaciÃ³n con los KPIs */}
+          {/* Puente de reconciliación con los KPIs */}
           <div style={{
             display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8,
             fontSize: 11.5, color: "var(--text-secondary, #475569)",
@@ -186,14 +187,14 @@ export default function ComisionesCalendario({ lang }) {
             <span>{es ? "Recibidas" : "Received"} <b className="tabular-nums">${fmt(resumen?.recibidas?.monto_usd)}</b></span>
             <span>+</span>
             <span>
-              {es ? "Pendiente (en trÃ¡nsito + vencidas)" : "Pending (in transit + overdue)"}{" "}
+              {es ? "Pendiente (en tránsito + vencidas)" : "Pending (in transit + overdue)"}{" "}
               <b className="tabular-nums">${fmt((Number(resumen?.en_transito?.monto_usd || 0) + Number(resumen?.vencidas?.monto_usd || 0)).toFixed(2))}</b>
             </span>
             <span>+</span>
             <span>{es ? "Proyectado" : "Projected"} <b className="tabular-nums">${fmt(resumen?.por_recibir?.monto_usd)}</b></span>
             <span>=</span>
             <span style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
-              {es ? "ComisiÃ³n total devengable" : "Total accruable"}{" "}
+              {es ? "Comisión total devengable" : "Total accruable"}{" "}
               <b className="tabular-nums">
                 ${fmt((Number(resumen?.recibidas?.monto_usd || 0) + Number(resumen?.en_transito?.monto_usd || 0) + Number(resumen?.vencidas?.monto_usd || 0) + Number(resumen?.por_recibir?.monto_usd || 0)).toFixed(2))}
               </b>
@@ -232,17 +233,17 @@ export default function ComisionesCalendario({ lang }) {
             <label style={lblStyle}>{es ? "Recibida" : "Received"}
               <select style={selStyle} value={q.recibida} onChange={(e) => set("recibida", e.target.value)}>
                 <option value="">{es ? "Todas" : "All"}</option>
-                <option value="SI">{es ? "SÃ­" : "Yes"}</option>
+                <option value="SI">{es ? "Sí" : "Yes"}</option>
                 <option value="NO">{es ? "No" : "No"}</option>
               </select>
             </label>
-            <label style={lblStyle}>{es ? "DÃ­as" : "Days"}
+            <label style={lblStyle}>{es ? "Días" : "Days"}
               <select style={selStyle} value={q.dias} onChange={(e) => set("dias", e.target.value)}>
                 <option value="">{es ? "Todos" : "All"}</option>
                 <option value="atraso">{es ? "Atrasadas" : "Late"}</option>
-                <option value="0-15">0â€“15</option>
-                <option value="16-30">16â€“30</option>
-                <option value="31-60">31â€“60</option>
+                <option value="0-15">0–15</option>
+                <option value="16-30">16–30</option>
+                <option value="31-60">31–60</option>
                 <option value="60+">60+</option>
               </select>
             </label>
@@ -268,13 +269,13 @@ export default function ComisionesCalendario({ lang }) {
                   <th style={{ textAlign: "right" }}>{es ? "Monto USD" : "Amount"}</th>
                   <th>{es ? "Vence / esperada" : "Due / expected"}</th>
                   <th>{es ? "Recibida" : "Received"}</th>
-                  <th style={{ textAlign: "right" }}>{es ? "DÃ­as" : "Days"}</th>
+                  <th style={{ textAlign: "right" }}>{es ? "Días" : "Days"}</th>
                 </tr>
               </thead>
               <tbody>
                 {pg.pageItems.map((r, i) => {
                   const dias = r.dias;
-                  let dTxt = "â€”", dColor = "var(--text-secondary, #475569)";
+                  let dTxt = "—", dColor = "var(--text-secondary, #475569)";
                   if (dias !== null && dias !== undefined) {
                     if (dias < 0) { dTxt = `${Math.abs(dias)}d ${es ? "atraso" : "late"}`; dColor = "#DC2626"; }
                     else { dTxt = `${es ? "en" : "in"} ${dias}d`; dColor = dias <= 15 ? "#B45309" : "var(--text-secondary, #475569)"; }
@@ -282,19 +283,19 @@ export default function ComisionesCalendario({ lang }) {
                   return (
                     <tr key={i}>
                       <td><Chip estado={r.estado} /></td>
-                      <td>{r.importador || r.cliente || "â€”"}</td>
-                      <td className="mono-sm">{r.pf || "â€”"}</td>
-                      <td className="mono-sm" style={{ color: "var(--brand-primary, #013A57)" }}>{r.expediente || "â€”"}</td>
+                      <td>{r.importador || r.cliente || "—"}</td>
+                      <td className="mono-sm">{r.pf || "—"}</td>
+                      <td className="mono-sm" style={{ color: "var(--brand-primary, #013A57)" }}>{r.expediente || "—"}</td>
                       <td className="mono-sm">{periodoLabel(r.periodo)}</td>
                       <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-secondary, #475569)" }}>
-                        {r.total_cliente != null ? `$${fmt(r.total_cliente)}` : "â€”"}
+                        {r.total_cliente != null ? `$${fmt(r.total_cliente)}` : "—"}
                       </td>
                       <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-secondary, #475569)" }}>
-                        {r.total_mwt != null ? `$${fmt(r.total_mwt)}` : "â€”"}
+                        {r.total_mwt != null ? `$${fmt(r.total_mwt)}` : "—"}
                       </td>
                       <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>${fmt(r.monto_usd)}</td>
                       <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{fdate(r.fecha_esperada)}</td>
-                      <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{r.fecha_recibida ? fdate(r.fecha_recibida) : "â€”"}</td>
+                      <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{r.fecha_recibida ? fdate(r.fecha_recibida) : "—"}</td>
                       <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600, color: dColor }}>{dTxt}</td>
                     </tr>
                   );
