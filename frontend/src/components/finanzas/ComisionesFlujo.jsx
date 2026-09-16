@@ -231,8 +231,8 @@ export default function ComisionesFlujo({ lang = "es" }) {
                 <th>{es ? "Expediente" : "File"}</th>
                 <th>{es ? "Cliente" : "Client"}</th>
                 <th style={{ textAlign: "right" }}>{es ? "Δ Bruto" : "Gross Δ"}</th>
-                <th>{es ? "Pago compra" : "Pay purchase"}</th>
-                <th>{es ? "Cobro venta" : "Collect sale"}</th>
+                <th>{es ? "Pago compra (est.)" : "Pay purchase (est.)"}</th>
+                <th>{es ? "Cobro venta (est.)" : "Collect sale (est.)"}</th>
                 <th style={{ textAlign: "right" }}>{es ? "Desfase" : "Gap"}</th>
               </tr>
             </thead>
@@ -247,15 +247,27 @@ export default function ComisionesFlujo({ lang = "es" }) {
                     {money(r.arbitraje_bruto)}
                   </td>
                   <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
-                    {r.compra_vence || "—"}
-                    {r.credit_days_mwt != null && (
-                      <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>({r.credit_days_mwt}d)</span>
+                    {r.compra_vence ? (
+                      <>
+                        {r.compra_vence}
+                        {r.credit_days_mwt != null && (
+                          <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>({r.credit_days_mwt}d)</span>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "sin fecha" : "no date"}</span>
                     )}
                   </td>
                   <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
-                    {r.venta_vence || "—"}
-                    {r.credit_days_cliente != null && (
-                      <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>({r.credit_days_cliente}d)</span>
+                    {r.venta_vence ? (
+                      <>
+                        {r.venta_vence}
+                        {r.credit_days_cliente != null && (
+                          <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>({r.credit_days_cliente}d)</span>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>{es ? "sin fecha" : "no date"}</span>
                     )}
                   </td>
                   <td style={{ textAlign: "right" }}>
@@ -283,9 +295,9 @@ export default function ComisionesFlujo({ lang = "es" }) {
           </table>
 
           <div style={{ fontSize: 11, color: "var(--text-tertiary, #94A3B8)", marginTop: 10 }}>
-            {arb?.nota || (es
-              ? "Arbitraje bruto = Precio Cliente − Precio MWT (Δ). Vencimientos = fecha de la factura (o la salida) + plazo compra (MWT) / venta (cliente). Desfase > 0 = MWT paga antes de cobrar (financiación temporal)."
-              : "Gross arbitrage = Client price − MWT price (Δ).")}
+            {es
+              ? "Δ Bruto = precio cliente − precio MWT (dato real). OJO: 'Pago compra' y 'Cobro venta' son ESTIMADOS = fecha de la factura (o de la salida, si falta) + plazo MWT (15d) / cliente (90d); no son fechas de pago observadas. Por eso el 'Desfase' es siempre 15d→90d = 75d (diferencia de plazos): significa que MWT paga al proveedor antes de cobrar al cliente (financiación temporal)."
+              : "Gross Δ = client price − MWT price (real). 'Pay purchase'/'Collect sale' are ESTIMATES from invoice/dispatch date + terms."}
           </div>
         </>
       )}
