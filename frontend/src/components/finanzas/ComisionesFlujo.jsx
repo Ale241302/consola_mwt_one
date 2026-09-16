@@ -195,49 +195,107 @@ export default function ComisionesFlujo({ lang = "es" }) {
       </Card>
     </div>
 
-    {/* Arbitraje por fechas de factura */}
-    <Card title={es ? "ARBITRAJE POR FECHAS DE FACTURA · MWT opera" : "ARBITRAGE BY INVOICE DATES · MWT-operated"} lang={lang}
-          right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>
-            {es ? "Δ bruto" : "Gross Δ"}: <b>{money(arb?.resumen?.arbitraje_bruto_total)}</b>
-            {" · "}{es ? "a financiar" : "to finance"}: <b>{money(arb?.resumen?.monto_requiere_financiacion)}</b>
-          </span>}>
+    {/* Arbitraje por fechas de factura — operado por Muito Work Limitada */}
+    <Card title={es ? "ARBITRAJE POR FECHAS DE FACTURA · Muito Work Limitada opera"
+                    : "ARBITRAGE BY INVOICE DATES · operated by Muito Work Limitada"} lang={lang}>
       {(arb?.results || []).length === 0 ? (
         <div style={{ padding: 12, color: "var(--text-tertiary)", fontSize: 12 }}>
-          {es ? "Sin expedientes operados por MWT." : "No MWT-operated files."}
+          {es ? "Sin expedientes operados por Muito Work Limitada." : "No files operated by Muito Work Limitada."}
         </div>
       ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead>
-            <tr style={{ textAlign: "left", color: "var(--text-tertiary)" }}>
-              <th style={{ padding: "4px 6px" }}>{es ? "Expediente" : "File"}</th>
-              <th style={{ padding: "4px 6px" }}>{es ? "Cliente" : "Client"}</th>
-              <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Δ bruto" : "Gross Δ"}</th>
-              <th style={{ padding: "4px 6px" }}>{es ? "Pago compra" : "Pay purchase"}</th>
-              <th style={{ padding: "4px 6px" }}>{es ? "Cobro venta" : "Collect sale"}</th>
-              <th style={{ padding: "4px 6px", textAlign: "right" }}>{es ? "Desfase" : "Gap"}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(arb.results || []).map((r) => (
-              <tr key={r.expediente_id} style={{ borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
-                <td style={{ padding: "6px", fontWeight: 600 }}>{r.display_id}</td>
-                <td style={{ padding: "6px" }}>{r.cliente}{r.brand_name ? ` · ${r.brand_name}` : ""}</td>
-                <td className="tabular-nums" style={{ padding: "6px", textAlign: "right", fontWeight: 700 }}>{money(r.arbitraje_bruto)}</td>
-                <td className="tabular-nums" style={{ padding: "6px", color: "var(--text-secondary)" }}>
-                  {r.compra_vence || "—"}{r.credit_days_mwt != null ? ` (${r.credit_days_mwt}d)` : ""}
-                </td>
-                <td className="tabular-nums" style={{ padding: "6px", color: "var(--text-secondary)" }}>
-                  {r.venta_vence || "—"} ({r.credit_days_cliente}d)
-                </td>
-                <td className="tabular-nums" style={{ padding: "6px", textAlign: "right", color: r.requiere_financiacion ? "var(--warning-fg, #92400E)" : "var(--success-fg, #166534)" }}>
-                  {r.desfase_dias == null ? "—" : `${r.desfase_dias}d${r.requiere_financiacion ? " ⚠" : ""}`}
-                </td>
+        <>
+          {/* Chips resumen */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid var(--border-subtle, #EEF2F6)", borderRadius: 10, padding: "8px 12px" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#0E8A6D", background: "rgba(14,138,109,0.10)", padding: "2px 9px", borderRadius: 999 }}>
+                {es ? "Δ Bruto" : "Gross Δ"}
+              </span>
+              <span className="tabular-nums" style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
+                {money(arb?.resumen?.arbitraje_bruto_total)}
+              </span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid var(--border-subtle, #EEF2F6)", borderRadius: 10, padding: "8px 12px" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309", background: "rgba(180,83,9,0.10)", padding: "2px 9px", borderRadius: 999 }}>
+                {es ? "A financiar" : "To finance"}
+              </span>
+              <span className="tabular-nums" style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
+                {money(arb?.resumen?.monto_requiere_financiacion)}
+              </span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid var(--border-subtle, #EEF2F6)", borderRadius: 10, padding: "8px 12px" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#334155", background: "rgba(51,65,85,0.08)", padding: "2px 9px", borderRadius: 999 }}>
+                {es ? "Expedientes" : "Files"}
+              </span>
+              <span className="tabular-nums" style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
+                {(arb.results || []).length}
+              </span>
+            </div>
+          </div>
+
+          <table className="table" style={{ width: "100%" }}>
+            <thead>
+              <tr>
+                <th>{es ? "Expediente" : "File"}</th>
+                <th>{es ? "Cliente" : "Client"}</th>
+                <th style={{ textAlign: "right" }}>{es ? "Δ Bruto" : "Gross Δ"}</th>
+                <th>{es ? "Pago compra" : "Pay purchase"}</th>
+                <th>{es ? "Cobro venta" : "Collect sale"}</th>
+                <th style={{ textAlign: "right" }}>{es ? "Desfase" : "Gap"}</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(arb.results || []).map((r) => (
+                <tr key={r.expediente_id}>
+                  <td className="mono-sm" style={{ fontWeight: 700, color: "var(--brand-primary, #013A57)" }}>
+                    {r.display_id || "—"}
+                  </td>
+                  <td>{r.cliente}{r.brand_name ? ` · ${r.brand_name}` : ""}</td>
+                  <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>
+                    {money(r.arbitraje_bruto)}
+                  </td>
+                  <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
+                    {r.compra_vence || "—"}
+                    {r.credit_days_mwt != null && (
+                      <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>({r.credit_days_mwt}d)</span>
+                    )}
+                  </td>
+                  <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>
+                    {r.venta_vence || "—"}
+                    {r.credit_days_cliente != null && (
+                      <span style={{ marginLeft: 6, fontSize: 11, color: "var(--text-tertiary, #94A3B8)" }}>({r.credit_days_cliente}d)</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {r.desfase_dias == null ? (
+                      <span style={{ color: "var(--text-tertiary, #94A3B8)" }}>—</span>
+                    ) : r.requiere_financiacion ? (
+                      <span style={{
+                        display: "inline-block", padding: "2px 9px", borderRadius: 999,
+                        fontSize: 11, fontWeight: 700, color: "#B45309", background: "rgba(180,83,9,0.10)",
+                      }}>
+                        {r.desfase_dias}d {es ? "financia MWT" : "MWT finances"}
+                      </span>
+                    ) : (
+                      <span style={{
+                        display: "inline-block", padding: "2px 9px", borderRadius: 999,
+                        fontSize: 11, fontWeight: 700, color: "#0E8A6D", background: "rgba(14,138,109,0.10)",
+                      }}>
+                        {r.desfase_dias}d
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div style={{ fontSize: 11, color: "var(--text-tertiary, #94A3B8)", marginTop: 10 }}>
+            {arb?.nota || (es
+              ? "Arbitraje bruto = Precio Cliente − Precio MWT (Δ). Vencimientos = fecha de la factura (o la salida) + plazo compra (MWT) / venta (cliente). Desfase > 0 = MWT paga antes de cobrar (financiación temporal)."
+              : "Gross arbitrage = Client price − MWT price (Δ).")}
+          </div>
+        </>
       )}
-      <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>{arb?.nota || ""}</div>
     </Card>
     </>
   );
