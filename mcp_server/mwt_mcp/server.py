@@ -2038,8 +2038,20 @@ def proforma_html(expediente_id: str, codigo: str | None = None) -> Any:
     expediente_id = resolved
 
     # 1) HTML renderizado (con el codigo del documento existente si hay).
+    # `proforma-html` es un endpoint que devuelve HTML inline y acepta el JWT
+    # tanto por header como por `?token=` (para abrir la proforma en el
+    # navegador). Además del header que ya inyecta el cliente, pasamos el
+    # token como query param para que funcione igual desde el MCP (evita el
+    # 401 "credenciales de autenticación no se proveyeron").
+    _tok = None
+    try:
+        from .jwt_minter import get_identity_token as _get_identity_token
+        _tok = _get_identity_token()
+    except Exception:  # noqa: BLE001 - best-effort, el header sigue cubriendo
+        _tok = None
     html = _safe_role(lambda: api.get(
-        f"expedientes/{expediente_id}/proforma-html/", _params(codigo=codigo)))
+        f"expedientes/{expediente_id}/proforma-html/",
+        _params(codigo=codigo, token=_tok)))
 
     # 2) adjuntar la URL del archivo PROFORMA existente (si hay).
     try:
