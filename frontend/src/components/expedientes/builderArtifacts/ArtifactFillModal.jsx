@@ -175,11 +175,12 @@ export default function ArtifactFillModal({
       }}
     >
       {/* Sprint 2026-05-11 fase 4 fix · El panel data-wide tiene
-          max-width 720px definido en app.css, que aprieta secciones
-          con 2+ columnas. Sobreescribimos a 980px aquí para que las
-          cards de secciones del Builder respiren. */}
+          max-width definido en app.css, que aprieta secciones con
+          2+ columnas. Abril 2026 · se ensancha a min(1280px, 96vw)
+          para que las secciones multi-columna (p. ej. Documentación
+          Aduanal con 7 columnas) respiren y sean legibles. */}
       <div className="mdl-panel" data-wide
-           style={{ maxWidth: "min(980px, 96vw)" }}>
+           style={{ maxWidth: "min(1280px, 96vw)" }}>
         <div className="mdl-head">
           <div>
             <div className="mdl-title">
