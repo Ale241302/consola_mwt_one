@@ -7,6 +7,7 @@ urlpatterns = [
     path("api/onboarding/", include("apps.core.onboarding_urls")),
     path("api/skills-mcp/", include("apps.core.skills_urls")),   # Skills-MCP públicas (manifest + descarga por rol)
     path("api/entra/",      include("apps.core.entra_urls")),     # Validación Entra ID (M365 Copilot MCP)
+    path("api/harness/",    include("apps.core.harness_urls")),   # /api/harness/shares/ (agentes/skills compartidos del harness)
     path("api/",           include("apps.nodos.urls")),       # /api/nodos/
     path("api/",           include("apps.brands.urls")),      # /api/marcas/
     path("api/",           include("apps.clientes.urls")),    # /api/clientes/
