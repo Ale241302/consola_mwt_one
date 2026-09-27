@@ -20,11 +20,12 @@ OTRO = "otro@sonepar.com"
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _ensure_table():
+def _ensure_table(django_db_blocker):
     """Aplica el DDL del compartir una vez para el módulo."""
     sql = SQL_FILE.read_text(encoding="utf-8")
-    with connection.cursor() as cursor:
-        cursor.execute(sql)
+    with django_db_blocker.unblock():
+        with connection.cursor() as cursor:
+            cursor.execute(sql)
     yield
 
 
