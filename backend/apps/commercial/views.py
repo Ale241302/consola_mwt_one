@@ -202,6 +202,37 @@ class PriceListVersionViewSet(viewsets.ModelViewSet):
         instance.is_active = False
         instance.save(update_fields=["is_active", "updated_at"])
 
+    # ── GET /api/commercial/pricelist-versions/por-vencer/ ─────────────
+    @action(detail=False, methods=["get"], url_path="por-vencer")
+    def por_vencer(self, request):
+        """Versiones de lista de precios vencidas o que vencen dentro de `days`
+        (default 30, máximo 365), ordenadas por urgencia. `brand_id` opcional.
+        Devuelve `{total, items}` con `dias_para_vencer` por versión."""
+        from datetime import date, timedelta
+        try:
+            days = max(0, min(int(request.query_params.get("days", 30)), 365))
+        except (TypeError, ValueError):
+            days = 30
+        horizon = date.today() + timedelta(days=days)
+        qs = self.get_queryset().filter(valid_to__isnull=False, valid_to__lte=horizon)
+        brand_id = request.query_params.get("brand_id")
+        if brand_id:
+            qs = qs.filter(brand_id=brand_id)
+        today = date.today()
+        items = [
+            {
+                "id": str(v.id),
+                "brand_id": str(v.brand_id),
+                "codigo": v.codigo,
+                "nombre": v.nombre,
+                "valid_from": v.valid_from.isoformat() if v.valid_from else None,
+                "valid_to": v.valid_to.isoformat() if v.valid_to else None,
+                "dias_para_vencer": (v.valid_to - today).days,
+            }
+            for v in qs.order_by("valid_to")
+        ]
+        return Response({"total": len(items), "items": items})
+
     # ── POST /api/commercial/pricelist-versions/<id>/bulk-upsert-items/ ─
     @action(detail=True, methods=["post"], url_path="bulk-upsert-items")
     def bulk_upsert_items(self, request, pk=None):

@@ -66,6 +66,8 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "producto_obtener": ("productos", "view"),
     "producto_buscar": ("productos", "view"),
     "producto_precio_cliente": ("productos", "view"),
+    "pricelist_listar": ("productos", "view"),
+    "pricelist_por_vencer": ("productos", "view"),
     "producto_ficha_tecnica": ("productos", "view"),
     "producto_crear": ("productos", "create"),
     "producto_editar": ("productos", "update"),

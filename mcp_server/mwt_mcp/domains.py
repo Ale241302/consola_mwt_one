@@ -44,10 +44,11 @@ COMERCIAL = {
     # productos / NCM / tallas / alias
     "producto_listar", "producto_obtener", "producto_crear", "producto_editar",
     "ncm_listar", "tallas_listar", "producto_alias_crear",
-    # OCs / proformas / marcas / tipo de cambio
+    # OCs / proformas / marcas / tipo de cambio / listas de precios
     "oc_listar", "oc_obtener", "oc_editar",
     "marca_listar", "tipo_cambio",
     "proforma_generar", "proforma_html",
+    "pricelist_listar", "pricelist_por_vencer",
 }
 
 LOGISTICA = {

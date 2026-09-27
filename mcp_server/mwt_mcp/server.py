@@ -1246,6 +1246,71 @@ def producto_alias_crear(producto_id: str, cliente_id: str, alias: str, cliente_
 
 
 # =========================================================================== #
+# B2) LISTAS DE PRECIOS (pricelist_version)
+# =========================================================================== #
+@mcp.tool()
+def pricelist_listar(brand_id: str | None = None, q: str | None = None, campos: str | None = None) -> Any:
+    """Lista las versiones de LISTA DE PRECIOS activas de una marca con su vigencia:
+    `valid_from`, `valid_to` (null = vigente indefinidamente) y `dias_para_vencer`
+    (negativo = ya venció). `brand_id`: UUID de `marca_listar`; `q`: nombre/código.
+    Úsala para saber qué lista de precios está vigente y cuándo vence.
+    `campos`: lista separada por comas para proyectar solo esos atributos."""
+    return _project(campos, _with_pricelist_expiry(
+        _safe_role(lambda: api.get("commercial/pricelist-versions/", _params(brand_id=brand_id, q=q)))
+    ))
+
+
+@mcp.tool()
+def pricelist_por_vencer(dias: int = 30, brand_id: str | None = None) -> Any:
+    """Listas de precios VENCIDAS o que vencen dentro de `dias` (default 30), ordenadas por urgencia.
+    `brand_id` opcional (UUID de `marca_listar`). Devuelve `{total, items}` con `dias_para_vencer`
+    por versión. Úsala para avisar "la lista de precios está por vencer"."""
+    server = _safe_role(lambda: api.get(
+        "commercial/pricelist-versions/por-vencer/", _params(days=dias, brand_id=brand_id)))
+    if isinstance(server, dict) and not server.get("error"):
+        return server
+    return _pricelist_expiring(
+        _safe_role(lambda: api.get("commercial/pricelist-versions/", _params(brand_id=brand_id))),
+        dias,
+    )
+
+
+def _pricelist_days_to_expire(valid_to: Any) -> int | None:
+    """Días hasta `valid_to` (negativo si ya venció), o None cuando no hay fecha."""
+    if not valid_to:
+        return None
+    try:
+        from datetime import date as _date
+        target = _date.fromisoformat(str(valid_to)[:10])
+    except ValueError:
+        return None
+    from datetime import date as _today
+    return (target - _today.today()).days
+
+
+def _with_pricelist_expiry(data: Any) -> Any:
+    """Añade `dias_para_vencer` a cada versión de la respuesta (mutando las filas)."""
+    for row in _as_rows(data):
+        if isinstance(row, dict):
+            row["dias_para_vencer"] = _pricelist_days_to_expire(row.get("valid_to"))
+    return data
+
+
+def _pricelist_expiring(data: Any, dias: int) -> Any:
+    """Filtra las versiones vencidas o que vencen dentro de `dias`, ordenadas por urgencia."""
+    rows = [dict(row) for row in _as_rows(data) if isinstance(row, dict)]
+    out = []
+    for row in rows:
+        remaining = _pricelist_days_to_expire(row.get("valid_to"))
+        if remaining is None or remaining > dias:
+            continue
+        row["dias_para_vencer"] = remaining
+        out.append(row)
+    out.sort(key=lambda row: row["dias_para_vencer"])
+    return {"total": len(out), "items": out}
+
+
+# =========================================================================== #
 # C) EXPEDIENTES / OC
 # =========================================================================== #
 @mcp.tool()
