@@ -160,3 +160,68 @@ def test_documentos_completos_filtra_q(monkeypatch):
         out = server.expediente_documentos_completos("exp-1", q="BL")
     assert out["total_artefactos"] >= 1
     assert any("BL" in (a.get("template_title") or "") for a in out["artefactos"])
+
+
+# ─────────────────────────────────────────────────────────────────────── #
+# UUIDs de expediente: NUNCA se exponen, tampoco a admin/CEO (regla CEO)
+# ─────────────────────────────────────────────────────────────────────── #
+EXP_UUID = "2858812f-82b0-4976-a9ba-ad35314cd6e7"
+
+
+def _docs_con_expediente(*, proforma=None, oc=None, sap=None, fusion=None):
+    exp = {"id": EXP_UUID}
+    if proforma:
+        exp["proforma_codigos"] = [proforma]
+    if oc:
+        exp["oc_codigos"] = [oc]
+    if sap:
+        exp["sap_codigos"] = [sap]
+    if fusion:
+        exp["fusion_label"] = fusion
+    docs = [
+        {"id": "d1", "kind": "OC", "codigo": "PO 505288",
+         "file_size_bytes": 0, "expediente_id": EXP_UUID},
+    ]
+    return docs, exp
+
+
+def _fake_get_with_expediente(docs, exp):
+    def _get(path, *a, **k):
+        if path == "documentos/":
+            return docs
+        if path == "expedientes/":
+            return {"results": [exp]}
+        return {}
+    return _get
+
+
+def test_documento_listar_admin_no_expone_uuid_expediente(monkeypatch):
+    docs, exp = _docs_con_expediente(proforma="2478-2026")
+    monkeypatch.setattr(server.api, "get", _fake_get_with_expediente(docs, exp))
+    server._REF_EXP_CACHE.clear()
+    with mock.patch.object(server, "get_identity_user",
+                           return_value={"role": "admin", "role_slug": "admin"}):
+        out = server.documento_listar(kind="OC")
+    row = out[0]
+    assert "expediente_id" not in row
+    assert row["expediente_referencia"] == "2478-2026"
+    assert EXP_UUID not in str(row)
+
+
+def test_ref_legible_expediente_prioriza_pf_oc_sap_fusion():
+    assert server._ref_legible_expediente({"oc_codigos": ["PO 505288"]}) == "PO 505288"
+    assert server._ref_legible_expediente({"sap_codigos": ["279689"]}) == "279689"
+    assert server._ref_legible_expediente({"fusion_label": "FUSION A+B"}) == "FUSION A+B"
+    assert server._ref_legible_expediente(
+        {"proforma_codigos": ["2478-2026"], "oc_codigos": ["PO 1"]}) == "2478-2026"
+
+
+def test_documentos_completos_admin_expone_referencia_no_uuid(monkeypatch):
+    docs, exp = _docs_con_expediente(proforma="2472-2026")
+    monkeypatch.setattr(server.api, "get", _fake_get_with_expediente(docs, exp))
+    server._REF_EXP_CACHE.clear()
+    with mock.patch.object(server, "get_identity_user",
+                           return_value={"role": "admin", "role_slug": "admin"}):
+        out = server.expediente_documentos_completos("2472-2026")
+    assert out["expediente_referencia"] == "2472-2026"
+    assert EXP_UUID not in str(out["documentos"])

@@ -460,34 +460,86 @@ def _attach_artefacto_files(data: Any, role: str) -> Any:
     return data
 
 
-def _saneo_documentos_cliente(data: Any, role: str) -> Any:
-    """Fix 2026-08-19 · oculta UUIDs internos de los documentos para client_b2b.
+def _ref_legible_expediente(row: dict) -> str | None:
+    """Referencia legible de un expediente: la PF, si no la OC/PO, si no el SAP,
+    si no el `fusion_label`. Los UUIDs nunca son una referencia."""
+    label = row.get("fusion_label")
+    pfs = [x for x in (row.get("proforma_codigos") or []) if x]
+    if not pfs and row.get("proforma_codigo"):
+        pfs = [row["proforma_codigo"]]
+    ocs = [x for x in (row.get("oc_codigos") or []) if x]
+    saps = [x for x in (row.get("sap_codigos") or []) if x]
+    if not saps and row.get("sap"):
+        saps = [str(row["sap"])]
+    for candidate in (pfs, ocs, saps, [label] if label else []):
+        if candidate:
+            return str(candidate[0])
+    return None
 
-    En la capa de documentos el `id` del documento es el `documento_id` que el
-    agente necesita para `documento_descargar` (se conserva). Los UUIDs internos
-    `expediente_id` y `oc_id` NUNCA se exponen al cliente (regla CEO): se
-    reemplazan por el identificador legible cuando existe (`codigo`).
-    Admin/CEO conservan todo. Fail-safe: devuelve el payload tal cual.
+
+# Cache en memoria UUID expediente -> referencia legible (limita los GET).
+_REF_EXP_CACHE: dict[str, tuple] = {}
+
+
+def _referencia_expediente(identificador: str | None) -> str | None:
+    """Referencia legible de un expediente a partir de su UUID o de una
+    referencia ya legible (PF/OC/SAP/fusion_label). Cache 120 s.
+    Fail-safe: None cuando no resuelve."""
+    v = (identificador or "").strip()
+    if not v:
+        return None
+    if not _looks_like_uuid(v.lower()):
+        return v
+    now = time.time()
+    hit = _REF_EXP_CACHE.get(v.lower())
+    if hit and hit[0] > now:
+        return hit[1]
+    ref = None
+    try:
+        data = api.get("expedientes/", {"limit": 200})
+    except Exception:  # noqa: BLE001 - fail-safe
+        return None
+    for e in _as_rows(data):
+        if str(e.get("id")) == v:
+            ref = _ref_legible_expediente(e)
+            break
+    if len(_REF_EXP_CACHE) > 64:
+        _REF_EXP_CACHE.clear()
+    _REF_EXP_CACHE[v.lower()] = (now + 120, ref)
+    return ref
+
+
+def _saneo_documentos(data: Any, role: str, expediente_ref: str | None = None) -> Any:
+    """Fix 2026-09-28 · quita los UUIDs internos del documento a TODOS los roles.
+
+    Los UUIDs internos `expediente_id` y `oc_id` NUNCA se exponen (regla CEO): se
+    reemplazan por `expediente_referencia` (PF, si no OC/PO, si no SAP, si no
+    `fusion_label`). El `id` del documento se conserva: `documento_descargar` y
+    `documento_eliminar` lo necesitan. Para client_b2b también se oculta el email
+    del autor (staff MWT). Fail-safe: devuelve el payload tal cual.
     """
     from .redact import is_client
 
-    if not is_client(role):
-        return data
-
     def _one(row: dict) -> dict:
         out = dict(row)
-        out.pop("expediente_id", None)
+        exp_id = out.pop("expediente_id", None)
         out.pop("oc_id", None)
-        # Email interno del autor (staff MWT) no se expone al cliente.
-        out.pop("author", None)
+        ref = expediente_ref or (_referencia_expediente(exp_id) if exp_id else None)
+        if ref:
+            out.setdefault("expediente_referencia", ref)
+        if is_client(role):
+            # Email interno del autor (staff MWT) no se expone al cliente.
+            out.pop("author", None)
         return out
 
     if isinstance(data, dict) and isinstance(data.get("results"), list):
         out = dict(data)
-        out["results"] = [_one(r) for r in out["results"]]
+        out["results"] = [_one(r) for r in data["results"]]
         return out
     if isinstance(data, list):
         return [_one(r) for r in data]
+    if isinstance(data, dict):
+        return _one(data)
     return data
 
 
@@ -1846,7 +1898,7 @@ def documento_listar(
     # Ola 3.8 · un client_b2b SOLO ve audience=CLIENT y kind OC/PROFORMA/FACTURA.
     data = filter_documentos_for_role(data, _current_role())
     # Fix 2026-08-19 · oculta UUIDs internos (expediente_id/oc_id) al client.
-    data = _saneo_documentos_cliente(data, _current_role())
+    data = _saneo_documentos(data, _current_role(), _referencia_expediente(expediente))
     return _project(campos, data)
 
 
@@ -2615,7 +2667,7 @@ def expediente_documentos_completos(
     docs = docs_rows if isinstance(docs_rows, list) else []
     docs = filter_documentos_for_role(docs, _current_role())
     # Fix 2026-08-19 · oculta UUIDs internos (expediente_id/oc_id) al client.
-    docs = _saneo_documentos_cliente(docs, _current_role())
+    docs = _saneo_documentos(docs, _current_role(), _referencia_expediente(ocs_ref))
 
     # Capa 2 · artefactos del Builder (/api/inventario/expedientes/{id}/artifacts/).
     arts = []
@@ -2664,7 +2716,7 @@ def expediente_documentos_completos(
         }
 
     return {
-        "expediente_id": expediente_id,
+        "expediente_referencia": _referencia_expediente(ocs_ref) or expediente_id,
         "documentos": _project(campos, docs) if campos else docs,
         "artefactos": _project(campos, arts) if campos else arts,
         "total_documentos": len(docs),
