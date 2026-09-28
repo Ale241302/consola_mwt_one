@@ -5,6 +5,17 @@ soporta). Versionado con `__version__` en `mcp_server/mwt_mcp/__init__.py`.
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/).
 
+## [Unreleased]
+
+### Corregido — nunca exponer UUIDs de expediente
+- `documento_listar` y `expediente_documentos_completos`: el saneo de UUIDs
+  internos (`expediente_id`/`oc_id`) ahora aplica a TODOS los roles, no solo a
+  `client_b2b`, y el UUID se sustituye por `expediente_referencia` (PF, si no
+  OC/PO, si no SAP, si no `fusion_label`). Antes admin/CEO recibían el UUID y el
+  agente lo copiaba a la evidencia del banco de trabajo.
+- `expediente_buscar_por_producto` y `expediente_tiempos` (phase durations)
+  devuelven la referencia legible en lugar del UUID interno.
+
 ## [1.0.0] — 2026-08-10
 
 ### Ola 3.10 ampliada — Motor de presentación (13 tools · 5 categorías)
