@@ -1609,8 +1609,8 @@ def expediente_buscar_por_producto(
             if not exp_id:
                 continue
             entry = out_map.setdefault(str(exp_id), {
-                "expediente_id": exp_id,
-                "referencia": ln.get("expediente_codigo"),
+                "expediente_id": _referencia_expediente(exp_id),
+                "referencia": _referencia_expediente(exp_id),
                 "estado": ln.get("expediente_estado"),
                 "productos": [],
             })
@@ -2376,7 +2376,7 @@ def expediente_tiempos(expediente_id: str | None = None, freight_mode: str | Non
                 if row and isinstance(row, dict) and str(row.get("id")) == str(expediente_id):
                     payload = it.get("payload") or {}
                     return {
-                        "expediente_id": expediente_id,
+                        "expediente_id": _referencia_expediente(expediente_id) or expediente_id,
                         "phase_durations": it.get("phase_durations"),
                         "eventos": it.get("events"),
                         "lineas": payload.get("lineas"),
@@ -2386,7 +2386,7 @@ def expediente_tiempos(expediente_id: str | None = None, freight_mode: str | Non
             pass
         # Fallback: phase-durations + eventos + lineas por separado.
         return {
-            "expediente_id": expediente_id,
+            "expediente_id": _referencia_expediente(expediente_id) or expediente_id,
             "phase_durations": _safe_role(lambda: api.get(f"expedientes/{expediente_id}/phase-durations/")),
             "eventos": _safe_role(lambda: api.get(f"expedientes/{expediente_id}/events/", _params(limit=200))),
             "lineas": _safe_role(lambda: api.get(f"expedientes/{expediente_id}/lineas/")),
