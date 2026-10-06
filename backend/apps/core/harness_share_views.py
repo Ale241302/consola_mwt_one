@@ -250,6 +250,43 @@ class HarnessShareViewSet(viewsets.ViewSet):
             row = _dicts(cursor)[0]
         return Response(row, status=201)
 
+    @action(detail=False, methods=["post"], url_path="republish")
+    def republish(self, request):
+        """Reemplaza el snapshot de los grants de un recurso, sin tocar estado.
+
+        El dueño refresca el contenido que viaja a sus invitados; la identidad
+        del grant, sus permisos y su estado de aceptación quedan intactos.
+        """
+        email = _viewer_email(request)
+        if not email:
+            return Response({"detail": "La identidad no tiene correo."}, status=400)
+        data = request.data or {}
+        kind = str(data.get("kind", "")).strip().lower()
+        if kind not in GRANT_KINDS:
+            return Response({"detail": "kind debe ser 'space' o 'workflow'."}, status=400)
+        resource_id = str(data.get("resource_id", "")).strip()
+        if not resource_id:
+            return Response({"detail": "resource_id es obligatorio."}, status=400)
+        payload = data.get("payload", {})
+        if not isinstance(payload, dict):
+            return Response({"detail": "payload debe ser un objeto JSON."}, status=400)
+        name = str(data.get("name", "")).strip()
+        if len(name) > 200:
+            name = name[:200]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE core.harness_share
+                   SET payload = %s::jsonb,
+                       name = CASE WHEN %s = '' THEN name ELSE %s END,
+                       updated_at = now()
+                 WHERE owner_email = %s AND kind = %s AND resource_id = %s
+                """,
+                [json.dumps(payload), name, name, email, kind, resource_id],
+            )
+            updated = cursor.rowcount
+        return Response({"updated": updated})
+
     def destroy(self, request, pk=None):
         email = _viewer_email(request)
         with connection.cursor() as cursor:

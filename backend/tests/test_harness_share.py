@@ -184,3 +184,40 @@ def test_el_enlace_de_aceptar_rechaza_un_id_desconocido(api_client):
         HTTP_ACCEPT="text/html",
     )
     assert response.status_code == 404
+
+
+def test_republish_refresca_el_payload_sin_tocar_estado(api_client):
+    _as(api_client, ANA, ["co-sondel"])
+    created = _publish(
+        api_client, kind="space", name="SICOP", resource_id=SPACE_ID,
+        payload={"contextEntries": []}, shared_emails=[BEA], permissions=["view"], status="pending",
+    )
+    assert created.status_code == 201
+    assert created.json()["status"] == "pending"
+    grant_id = created.json()["id"]
+
+    # El enlace de aceptación lo activa; el snapshot refrescado no lo desactiva.
+    api_client.get(f"/api/harness/shares/accept/?grant={grant_id}", HTTP_ACCEPT="text/html")
+    _as(api_client, ANA, ["co-sondel"])
+    refreshed = api_client.post(
+        "/api/harness/shares/republish/",
+        {"kind": "space", "resource_id": SPACE_ID, "name": "SICOP",
+         "payload": {"contextEntries": [{"title": "A", "body": "B"}]}},
+        format="json",
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["updated"] >= 1
+    row = next(s for s in api_client.get("/api/harness/shares/").json()["outgoing"] if s["id"] == grant_id)
+    assert row["status"] == "active"
+    assert row["payload"] == {"contextEntries": [{"title": "A", "body": "B"}]}
+
+    # Un recurso inexistente no actualiza ninguna fila.
+    missing = api_client.post(
+        "/api/harness/shares/republish/",
+        {"kind": "space", "resource_id": "00000000-0000-0000-0000-000000000000", "payload": {}},
+        format="json",
+    )
+    assert missing.status_code == 200
+    assert missing.json()["updated"] == 0
+
+    assert api_client.delete(f"/api/harness/shares/{grant_id}/").status_code == 204
