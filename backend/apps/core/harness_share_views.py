@@ -50,9 +50,21 @@ ROW_COLUMNS = (
 
 
 def _dicts(cursor):
-    """Filas del cursor como diccionarios, con las columnas del SELECT."""
+    """Filas del cursor como diccionarios, con las columnas del SELECT.
+
+    El cursor crudo devuelve las columnas `jsonb` como texto; `payload` se
+    normaliza a objeto para que el harness (y el cliente) lean su contenido.
+    """
     columns = [column[0] for column in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    for row in rows:
+        payload = row.get("payload")
+        if isinstance(payload, str):
+            try:
+                row["payload"] = json.loads(payload)
+            except (TypeError, ValueError):
+                pass
+    return rows
 
 
 def _viewer_email(request):
