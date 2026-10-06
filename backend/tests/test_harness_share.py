@@ -158,3 +158,29 @@ def test_el_mismo_space_con_dos_invitados_no_se_pisa(api_client):
 def test_un_space_exige_resource_id(api_client):
     _as(api_client, ANA, ["co-sondel"])
     assert _publish(api_client, kind="space", shared_emails=[BEA]).status_code == 400
+
+
+def test_el_enlace_de_aceptar_marca_el_grant_activo(api_client):
+    _as(api_client, ANA, ["co-sondel"])
+    created = _publish(
+        api_client, kind="space", name="SICOP", resource_id=SPACE_ID,
+        shared_emails=[BEA], permissions=["view"], status="pending",
+    )
+    grant_id = created.json()["id"]
+
+    # El enlace del correo se abre sin credenciales y confirma en HTML.
+    accepted = api_client.get(f"/api/harness/shares/accept/?grant={grant_id}", HTTP_ACCEPT="text/html")
+    assert accepted.status_code == 200
+    assert "Acceso aceptado" in accepted.content.decode("utf-8")
+
+    _as(api_client, ANA, ["co-sondel"])
+    row = next(s for s in api_client.get("/api/harness/shares/").json()["outgoing"] if s["id"] == grant_id)
+    assert row["status"] == "active"
+
+
+def test_el_enlace_de_aceptar_rechaza_un_id_desconocido(api_client):
+    response = api_client.get(
+        "/api/harness/shares/accept/?grant=00000000-0000-0000-0000-000000000000",
+        HTTP_ACCEPT="text/html",
+    )
+    assert response.status_code == 404

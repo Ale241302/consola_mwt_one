@@ -23,7 +23,12 @@ import re
 import uuid as uuidlib
 
 from django.db import connection
+from django.http import HttpResponse
+from django.utils.html import escape
 from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny
+from rest_framework.renderers import StaticHTMLRenderer
 from rest_framework.response import Response
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -80,6 +85,20 @@ def _normalize_permissions(raw):
         if permission and permission not in result:
             result.append(permission)
     return result
+
+
+def _accept_page(title, message):
+    """Página mínima de confirmación para el enlace de aceptación del correo."""
+    return (
+        '<!doctype html><html lang="es"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{escape(title)}</title></head>"
+        '<body style="font-family:system-ui,-apple-system,sans-serif;background:#151517;'
+        'color:#f9fafb;display:flex;align-items:center;justify-content:center;'
+        'min-height:100vh;margin:0"><main style="max-width:32rem;padding:2rem;text-align:center">'
+        f'<h1 style="font-size:1.25rem">{escape(title)}</h1>'
+        f'<p style="color:#adb2b8">{escape(message)}</p></main></body></html>'
+    )
 
 
 class HarnessShareViewSet(viewsets.ViewSet):
@@ -230,3 +249,43 @@ class HarnessShareViewSet(viewsets.ViewSet):
         if not removed:
             return Response({"detail": "No existe o no es tuyo."}, status=404)
         return Response(status=204)
+
+    @action(detail=False, methods=["get"], url_path="accept",
+            authentication_classes=[], permission_classes=[AllowAny],
+            renderer_classes=[StaticHTMLRenderer])
+    def accept(self, request):
+        """Acepta un grant de Space/Work Flow desde el enlace del correo.
+
+        El id de la fila viaja sólo en el correo del invitado, así que actúa
+        como secreto del enlace; no requiere sesión para no obligar a iniciar
+        sesión en la consola desde el navegador antes de aceptar.
+        """
+        grant_id = str(request.query_params.get("grant", "")).strip()
+        if not grant_id:
+            return HttpResponse(
+                _accept_page("Enlace inválido", "Falta el identificador del grant."),
+                status=400, content_type="text/html; charset=utf-8",
+            )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE core.harness_share
+                   SET status = 'active', accepted_at = now(), updated_at = now()
+                 WHERE id::text = %s AND kind IN ('space', 'workflow')
+                RETURNING name
+                """,
+                [grant_id],
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return HttpResponse(
+                _accept_page(
+                    "Grant no encontrado",
+                    "El enlace no es válido, ya fue aceptado o el recurso no es un Space/Work Flow.",
+                ),
+                status=404, content_type="text/html; charset=utf-8",
+            )
+        return HttpResponse(
+            _accept_page("Acceso aceptado", f"Ya puedes usar «{row[0]}»."),
+            status=200, content_type="text/html; charset=utf-8",
+        )
