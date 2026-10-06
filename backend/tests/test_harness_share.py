@@ -1,4 +1,4 @@
-"""Tests de /api/harness/shares/ — compartición de agentes/skills del harness.
+"""Tests de /api/harness/shares/ — compartición de agentes/skills y Spaces/Work Flows.
 
 La vista se auto-scopea al usuario: sólo ve lo suyo y lo que le compartieron por
 correo o con toda su empresa. El test aplica el DDL una vez (fixture de módulo)
@@ -12,20 +12,24 @@ from django.db import connection
 
 from apps.core.jwt_auth import MwtUser
 
-SQL_FILE = Path(__file__).resolve().parents[1] / "sql" / "M0_harness_share.sql"
+SQL_FILES = [
+    Path(__file__).resolve().parents[1] / "sql" / "M0_harness_share.sql",
+    Path(__file__).resolve().parents[1] / "sql" / "M1_harness_share_scope.sql",
+]
 
 ANA = "ana@sondelsa.com"
 BEA = "bea@sondelsa.com"
 OTRO = "otro@sonepar.com"
+SPACE_ID = "8888559a-27d1-42ba-ab4b-25c47d862e8e"
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _ensure_table(django_db_blocker):
     """Aplica el DDL del compartir una vez para el módulo."""
-    sql = SQL_FILE.read_text(encoding="utf-8")
     with django_db_blocker.unblock():
         with connection.cursor() as cursor:
-            cursor.execute(sql)
+            for sql_file in SQL_FILES:
+                cursor.execute(sql_file.read_text(encoding="utf-8"))
     yield
 
 
@@ -110,3 +114,47 @@ def test_rechaza_sin_destino_y_payload_no_objeto(api_client):
     _as(api_client, ANA, ["co-sondel"])
     assert _publish(api_client, shared_emails=[], share_all=False).status_code == 400
     assert _publish(api_client, payload="no-es-objeto").status_code == 400
+
+
+def test_publica_un_space_con_id_permisos_y_estado(api_client):
+    _as(api_client, ANA, ["co-sondel"])
+    created = _publish(
+        api_client,
+        kind="space",
+        name="SICOP",
+        resource_id=SPACE_ID,
+        payload={},
+        shared_emails=[BEA],
+        permissions=["view", "run", "share"],
+        status="pending",
+    )
+    assert created.status_code == 201
+    row = created.json()
+    assert row["kind"] == "space"
+    assert row["resource_id"] == SPACE_ID
+    assert row["permissions"] == ["view", "run", "share"]
+    assert row["status"] == "pending"
+
+    # El invitado importa el grant contra el id remoto del recurso.
+    _as(api_client, BEA, ["co-sondel"])
+    incoming = api_client.get("/api/harness/shares/").json()["incoming"]
+    assert [s["resource_id"] for s in incoming] == [SPACE_ID]
+    assert incoming[0]["permissions"] == ["view", "run", "share"]
+
+
+def test_el_mismo_space_con_dos_invitados_no_se_pisa(api_client):
+    _as(api_client, ANA, ["co-sondel"])
+    first = _publish(api_client, kind="space", name="SICOP", resource_id=SPACE_ID, shared_emails=[BEA], permissions=["view"])
+    second = _publish(api_client, kind="space", name="SICOP", resource_id=SPACE_ID, shared_emails=["carla@sondelsa.com"], permissions=["run"])
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["id"] != second.json()["id"]
+
+    _as(api_client, ANA, ["co-sondel"])
+    outgoing = api_client.get("/api/harness/shares/").json()["outgoing"]
+    assert sorted(s["resource_id"] for s in outgoing) == [SPACE_ID, SPACE_ID]
+
+
+def test_un_space_exige_resource_id(api_client):
+    _as(api_client, ANA, ["co-sondel"])
+    assert _publish(api_client, kind="space", shared_emails=[BEA]).status_code == 400
