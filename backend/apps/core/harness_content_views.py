@@ -69,6 +69,14 @@ class HarnessContentViewSet(viewsets.ViewSet):
     #: La vista sólo toca lo del propio usuario; no requiere módulo en el RBAC.
     rbac_bypass = True
 
+    #: Token de permiso que autoriza a cada tipo de ítem ajeno su retiro.
+    _DELETE_PERMISSIONS = {
+        "memory": "delete-memory",
+        "context": "delete-context",
+        "workflow": "delete-workflows",
+        "routine": "delete-routines",
+    }
+
     def list(self, request):
         email = _viewer_email(request)
         with connection.cursor() as cursor:
@@ -77,6 +85,7 @@ class HarnessContentViewSet(viewsets.ViewSet):
                 SELECT {ROW_COLUMNS}
                   FROM core.harness_shared_content c
                  WHERE c.author_email <> %s
+                   AND c.deleted_at IS NULL
                    AND EXISTS (
                          SELECT 1
                            FROM core.harness_share g
@@ -168,18 +177,50 @@ class HarnessContentViewSet(viewsets.ViewSet):
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                DELETE FROM core.harness_shared_content c
-                 WHERE c.id::text = %s
-                   AND ( c.author_email = %s
-                         OR EXISTS (
-                              SELECT 1 FROM core.harness_share g
-                               WHERE g.kind = 'space'
-                                 AND g.resource_id = c.space_id
-                                 AND g.owner_email = %s ) )
+                SELECT space_id, kind, author_email
+                  FROM core.harness_shared_content
+                 WHERE id::text = %s
                 """,
-                [str(pk), email, email],
+                [str(pk)],
             )
-            removed = cursor.rowcount
-        if not removed:
-            return Response({"detail": "No existe o no es tuyo."}, status=404)
+            found = cursor.fetchone()
+            if found is None:
+                return Response({"detail": "No existe."}, status=404)
+            space_id, kind, author_email = found
+            # El autor elimina su fila: su próxima publicación ya no la incluye.
+            if author_email == email:
+                cursor.execute(
+                    "DELETE FROM core.harness_shared_content WHERE id::text = %s",
+                    [str(pk)],
+                )
+                return Response(status=204)
+            # El dueño del Space o el invitado con `delete-<módulo>` activo puede
+            # retirar el ítem ajeno. Se marca `deleted_at` en lugar de borrarlo,
+            # para que la siguiente publicación del autor (que reemplaza su
+            # conjunto completo) no lo resucite.
+            permission = self._DELETE_PERMISSIONS.get(kind, "")
+            cursor.execute(
+                """
+                SELECT 1
+                  FROM core.harness_share g
+                 WHERE g.kind = 'space'
+                   AND g.resource_id = %s
+                   AND ( g.owner_email = %s
+                         OR ( g.grantee_email = %s
+                              AND g.status = 'active'
+                              AND %s = ANY(g.permissions) ) )
+                 LIMIT 1
+                """,
+                [space_id, email, email, permission],
+            )
+            if cursor.fetchone() is None:
+                return Response({"detail": "No existe o no es tuyo."}, status=404)
+            cursor.execute(
+                """
+                UPDATE core.harness_shared_content
+                   SET deleted_at = now(), updated_at = now()
+                 WHERE id::text = %s
+                """,
+                [str(pk)],
+            )
         return Response(status=204)
