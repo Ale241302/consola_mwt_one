@@ -19,6 +19,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     MwtUserViewSet, ProfileMeView, ProfileResetPasswordView,
+    ForgotPasswordView,
     ActivityFeedViewSet, UserAddressAdminViewSet,
 )
 
@@ -34,5 +35,7 @@ urlpatterns = [
     # detail path /api/users/<uuid>/.
     path("users/me/profile/", ProfileMeView.as_view(), name="users-me-profile"),
     path("users/me/reset-password/", ProfileResetPasswordView.as_view(), name="users-me-reset-password"),
+    # Self-service SIN sesión: envía el enlace de restablecimiento por correo.
+    path("users/forgot-password/", ForgotPasswordView.as_view(), name="users-forgot-password"),
     path("", include(router.urls)),
 ]

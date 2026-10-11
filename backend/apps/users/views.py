@@ -48,8 +48,9 @@ from django.db import connection, transaction
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from .models import (
@@ -920,6 +921,34 @@ class ProfileResetPasswordView(APIView):
                             status=status.HTTP_401_UNAUTHORIZED)
         return Response(_issue_password_reset(u, request, 24), status=200)
 
+
+class ForgotPasswordView(APIView):
+    """POST /api/users/forgot-password/ — self-service SIN sesión: envía a un
+    correo el enlace de restablecimiento cuando la cuenta existe y está activa.
+
+    Reusa `_issue_password_reset` (misma plantilla HTML y token one-shot que el
+    reset del admin). Responde 200 siempre para no revelar qué correos existen;
+    el campo `email_sent` indica si el envío se realizó."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
+
+    def post(self, request):
+        email = str(
+            request.data.get("email") or request.data.get("usuario") or ""
+        ).strip()
+        if not email:
+            return Response(
+                {"detail": "El correo es obligatorio"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        u = MwtUser.objects.filter(email_plain__iexact=email).first()
+        # Cuenta inexistente o inactiva: misma respuesta, sin filtrar y sin enviar.
+        if u is None or not u.is_active:
+            return Response({"ok": True, "email_sent": False}, status=200)
+        issued = _issue_password_reset(u, request, 24)
+        return Response({"ok": True, "email_sent": bool(issued.get("email_sent"))}, status=200)
 
 
 # Los ViewSets de roles/RBAC viven en apps.roles.views (CRUD de RoleCat,
