@@ -937,15 +937,34 @@ class ForgotPasswordView(APIView):
     def post(self, request):
         email = str(
             request.data.get("email") or request.data.get("usuario") or ""
-        ).strip()
+        ).strip().lower()
         if not email:
             return Response(
                 {"detail": "El correo es obligatorio"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        u = MwtUser.objects.filter(email_plain__iexact=email).first()
+        # La cuenta "activa" para el login vive en core.users (no en users.mwtuser):
+        # misma fuente que LoginView, incluido `deleted_at IS NULL`.
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT u.id
+                  FROM core.users u
+                 WHERE u.deleted_at IS NULL
+                   AND u.is_active = TRUE
+                   AND LOWER(u.email_plain) = %s
+                 LIMIT 1
+                """,
+                [email],
+            )
+            row = cur.fetchone()
         # Cuenta inexistente o inactiva: misma respuesta, sin filtrar y sin enviar.
-        if u is None or not u.is_active:
+        if not row:
+            return Response({"ok": True, "email_sent": False}, status=200)
+        u = MwtUser.objects.filter(pk=row[0]).first() or MwtUser.objects.filter(
+            email_plain__iexact=email
+        ).first()
+        if u is None:
             return Response({"ok": True, "email_sent": False}, status=200)
         issued = _issue_password_reset(u, request, 24)
         return Response({"ok": True, "email_sent": bool(issued.get("email_sent"))}, status=200)
