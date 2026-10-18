@@ -61,7 +61,8 @@ def _company_key(slug: str | None) -> str:
     return (key or "mcp")[:24]
 
 
-def _serialize_client(c: dict) -> dict:    """Cliente MCP con URLs de conexión (oauth del core.mcp_app + device)."""
+def _serialize_client(c: dict) -> dict:
+    """Cliente MCP con URLs de conexión (oauth del core.mcp_app + device)."""
     return {
         "cliente_id": c.get("cliente_id"),
         "razon_social": c.get("razon_social") or c.get("nombre"),
