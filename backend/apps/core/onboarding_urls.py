@@ -2,6 +2,7 @@
 from django.urls import path
 
 from .onboarding_views import (
+    DeviceTokenView,
     EnviarCredencialesMCPView,
     OnboardingEmitGrantView,
     OnboardingValidateView,
@@ -21,6 +22,8 @@ urlpatterns = [
     # Servicio (ServiceToken · mcp:token_exchange) — uso externo del pipeline.
     path("validate", OnboardingValidateView.as_view(), name="onboarding-validate"),
     path("emit-grant", OnboardingEmitGrantView.as_view(), name="onboarding-emit-grant"),
+    # Sesión del usuario: el escritorio pide su credencial para este equipo.
+    path("device-token", DeviceTokenView.as_view(), name="onboarding-device-token"),
     path("solicitudes", SolicitudesView.as_view(), name="onboarding-solicitudes"),
     path("solicitudes/<uuid:pk>/aprobar",
          SolicitudResolverView.as_view(action="aprobar"), name="onboarding-aprobar"),

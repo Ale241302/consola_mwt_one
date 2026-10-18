@@ -47,8 +47,21 @@ def _device_base() -> str:
     return (os.environ.get("MWT_MCP_DEVICE_URL") or "").strip() or "https://mcp.mwt.one/device"
 
 
-def _serialize_client(c: dict) -> dict:
-    """Cliente MCP con URLs de conexión (oauth del core.mcp_app + device)."""
+def _company_key(slug: str | None) -> str:
+    """Clave corta y estable de una empresa para nombrar su fila MCP.
+
+    `mcp-muito-work-limitada` → `muito-work-limitada`, que el escritorio usa
+    como nombre de servidor y como sufijo de la variable del token.
+    """
+    raw = (slug or "mcp").strip().lower()
+    if raw.startswith("mcp-"):
+        raw = raw[4:]
+    key = "".join(ch if ch.isalnum() else "-" for ch in raw)
+    key = "-".join(part for part in key.split("-") if part)
+    return (key or "mcp")[:24]
+
+
+def _serialize_client(c: dict) -> dict:    """Cliente MCP con URLs de conexión (oauth del core.mcp_app + device)."""
     return {
         "cliente_id": c.get("cliente_id"),
         "razon_social": c.get("razon_social") or c.get("nombre"),
@@ -195,6 +208,63 @@ class OnboardingEmitGrantView(_ServiceScopedView):
                 "mime_md": package["mime_md"],
             },
         })
+
+
+class DeviceTokenView(APIView):
+    """POST /api/onboarding/device-token — credencial del escritorio, por usuario.
+
+    Autenticada con la sesión del usuario (JWT de la consola), no con un
+    ServiceToken: el escritorio la llama al iniciar sesión y recibe una
+    credencial por cada empresa MCP del usuario, ligada al `device_id` de ese
+    equipo. Emitir de nuevo para el mismo equipo rota solo esa credencial; las
+    de otros equipos del mismo usuario siguen válidas.
+    """
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mcp-token"
+
+    def post(self, request):
+        email = (getattr(request.user, "email", "") or "").strip().lower()
+        if not email:
+            return Response({"detail": "Sesión sin correo", "code": "NO_EMAIL"},
+                            status=status.HTTP_403_FORBIDDEN)
+        device_id = str((request.data or {}).get("device_id") or "").strip()
+        if not device_id:
+            return Response({"detail": "Falta device_id", "code": "DEVICE_ID_REQUIRED"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        decision = ob.decide_scenario(email)
+        target = decision.get("target")
+        if not target:
+            return Response({"detail": "Usuario no registrado", "code": "EMAIL_NOT_FOUND"},
+                            status=status.HTTP_404_NOT_FOUND)
+        if not target.get("is_active"):
+            return Response({"detail": "Usuario inactivo", "code": "USER_INACTIVO"},
+                            status=status.HTTP_403_FORBIDDEN)
+        clients = decision.get("clients") or []
+        if not clients:
+            return Response({"detail": "El usuario no tiene empresa con MCP provisionado.",
+                             "code": "SIN_MCP"}, status=status.HTTP_400_BAD_REQUEST)
+
+        credentials = []
+        for client in clients:
+            grant = ob.emit_grant(
+                target, client["cliente_id"],
+                creado_via="registro",
+                ip=_client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT"),
+                device_id=device_id,
+            )
+            credentials.append({
+                "cliente_id": str(client["cliente_id"]),
+                "slug": client.get("slug"),
+                "key": _company_key(client.get("slug")),
+                "name": client.get("razon_social") or client.get("nombre") or client.get("slug"),
+                "token": grant["secret"],
+                "mcp_url": _device_base(),
+                "expira_iso": grant.get("expira_iso"),
+            })
+        return Response({"device_id": device_id, "credentials": credentials})
 
 
 class RegistrableClientsView(APIView):
