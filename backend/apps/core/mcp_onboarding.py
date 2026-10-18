@@ -180,8 +180,12 @@ def _user_legal_ids(email_plain: str) -> list[str]:
 def mcp_clients_for_target(target: dict) -> list[dict]:
     """Clientes (legal entities) del usuario que tienen MCP provisionado.
 
-    Solo apps core.mcp_app estado='PROVISIONED', con mcp_url presente y
-    cuyo cliente esté ACTIVO (is_active AND estado='ACTIVO').
+    Una app `core.mcp_app` PROVISIONED basta: el cliente ya puede conectar por
+    DeviceToken, cuya URL es global y no necesita el virtual server de
+    ContextForge. `mcp_url` se devuelve cuando existe (conexión OAuth por
+    cliente) y queda nulo mientras esa Ola no esté registrada.
+
+    Solo cuentan los clientes ACTIVO (is_active AND estado='ACTIVO').
     """
     leis = target.get("legal_entity_ids") or []
     if not leis:
@@ -201,7 +205,6 @@ def mcp_clients_for_target(target: dict) -> list[dict]:
                   JOIN clientes.cliente c ON c.id = a.cliente_id
                  WHERE a.cliente_id::text = ANY(%s)
                    AND a.estado = 'PROVISIONED'
-                   AND a.mcp_url IS NOT NULL AND a.mcp_url <> ''
                    AND c.is_active = TRUE
                    AND c.estado = 'ACTIVO'
                  ORDER BY c.razon_social ASC
