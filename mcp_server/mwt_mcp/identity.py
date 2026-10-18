@@ -103,6 +103,9 @@ class Identity:
         self.sub: str | None = (h.get("x-forwarded-user-sub") or "").strip() or None
         self.device_secret: str | None = (h.get("x-mwt-device-secret") or "").strip() or None
         self.device_ip: str | None = (h.get("x-mwt-client-ip") or "").strip() or None
+        # Equipo estable que identifica al cliente MCP (escritorio). Sustituye
+        # a la IP como vínculo del grant: cambiar de red no invalida el token.
+        self.device_id: str | None = (h.get("x-mwt-device-id") or "").strip() or None
         # Microsoft Entra ID (M365 Copilot MCP): Authorization: Bearer <entra>.
         self.entra_token: str | None = (h.get("x-mwt-entra-token") or "").strip() or None
 

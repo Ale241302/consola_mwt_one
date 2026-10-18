@@ -82,9 +82,14 @@ def _cache_key(identity) -> str | None:
     """
     device_secret = getattr(identity, "device_secret", None)
     device_ip = getattr(identity, "device_ip", None)
+    device_id = getattr(identity, "device_id", None)
     if device_secret:
         key = "dev:" + hashlib.sha256(device_secret.encode("utf-8")).hexdigest()
-        if device_ip:
+        # El vínculo del grant es el dispositivo cuando el cliente lo declara:
+        # un cambio de red no debe forzar un mint nuevo.
+        if device_id:
+            key += ":dev:" + device_id
+        elif device_ip:
             key += ":" + device_ip
         return key
     if identity.email:
@@ -168,6 +173,7 @@ def _mint_from_backend(identity) -> dict | None:
     tenant = current_tenant()
     device_secret = getattr(identity, "device_secret", None)
     device_ip = getattr(identity, "device_ip", None)
+    device_id = getattr(identity, "device_id", None)
     entra_token = getattr(identity, "entra_token", None)
     if entra_token:
         # Microsoft Entra ID (M365 Copilot MCP): el backend valida el token y
@@ -180,6 +186,8 @@ def _mint_from_backend(identity) -> dict | None:
         body["grant_secret"] = device_secret
         if device_ip:
             body["ip"] = device_ip
+        if device_id:
+            body["device_id"] = device_id
     else:
         if identity.email:
             body["email"] = identity.email

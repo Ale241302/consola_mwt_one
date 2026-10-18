@@ -837,11 +837,15 @@ class McpTokenView(APIView):
         # y vincula el equipo (IP) en el primer uso.
         grant_secret = str((request.data or {}).get("grant_secret") or "").strip()
         grant_ip = str((request.data or {}).get("ip") or "").strip() or None
+        # Equipo que se identifica a sí mismo (escritorio): con este dato el
+        # vínculo del grant es el dispositivo y un cambio de red no invalida
+        # la credencial.
+        grant_device = str((request.data or {}).get("device_id") or "").strip() or None
         grant_restrict: str | None = None
         if grant_secret:
             from .mcp_device_grant_auth import authenticate_grant  # noqa: PLC0415
 
-            ga = authenticate_grant(grant_secret, grant_ip)
+            ga = authenticate_grant(grant_secret, grant_ip, grant_device)
             if not ga.get("ok"):
                 code = ga.get("code", "GRANT_INVALID")
                 return Response(

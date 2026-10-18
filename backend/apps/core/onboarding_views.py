@@ -173,6 +173,7 @@ class OnboardingEmitGrantView(_ServiceScopedView):
             ip=str(payload.get("ip") or "") or _client_ip(request),
             mac=str(payload.get("mac") or "") or None,
             user_agent=request.META.get("HTTP_USER_AGENT"),
+            device_id=str(payload.get("device_id") or "").strip() or None,
         )
         package = ob.build_package(client, target, grant)
         return Response({

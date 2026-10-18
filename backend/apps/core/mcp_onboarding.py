@@ -280,14 +280,19 @@ def emit_grant(
     ip: str | None = None,
     mac: str | None = None,
     user_agent: str | None = None,
+    device_id: str | None = None,
 ) -> dict:
     """Crea la credencial device-bound para (usuario, empresa).
 
-    - Revoca en la misma transacción cualquier grant ISSUED/ACTIVE previo
-      del mismo par → "un solo paquete activo"; generar uno nuevo mata al
-      anterior.
-    - `ip`/`mac` se guardan como dato de la emisión (el vínculo real de la
-      1ª conexión se registra al validar — Fase 3).
+    - Con `device_id`: cada equipo tiene su propia credencial activa. Emitir
+      una nueva para ese dispositivo revoca la anterior de ese dispositivo y
+      deja intactas las de los demás equipos del usuario.
+    - Sin `device_id` (paquete emitido por correo, antes de su primer uso):
+      se mantiene la regla anterior, un solo paquete activo por par; emitir
+      uno nuevo revoca el paquete previo sin equipo asignado, sin tocar las
+      credenciales de los equipos ya conectados.
+    - `ip`/`mac` se guardan como dato de la emisión (el vínculo real se
+      registra al validar — Fase 3).
     - El secret se devuelve UNA sola vez aquí; en DB solo su hash.
 
     Devuelve dict con grant_id, secret, secret_prefix, expira_at, estado.
@@ -295,26 +300,40 @@ def emit_grant(
     secret = new_secret()
     secret_prefix = secret[:8]
     expires = _now() + timedelta(days=GRANT_TTL_DAYS)
+    device = (device_id or "").strip()[:128] or None
 
     with transaction.atomic():
         with connection.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE core.mcp_device_grant
-                   SET estado = 'REVOKED', revocado_at = now(),
-                       revoke_reason = 'replaced', updated_at = now()
-                 WHERE user_uuid = %s AND cliente_id = %s
-                   AND estado IN ('ISSUED', 'ACTIVE')
-                """,
-                [target["user_uuid"], cliente_id],
-            )
+            if device is None:
+                cur.execute(
+                    """
+                    UPDATE core.mcp_device_grant
+                       SET estado = 'REVOKED', revocado_at = now(),
+                           revoke_reason = 'replaced', updated_at = now()
+                     WHERE user_uuid = %s AND cliente_id = %s
+                       AND device_id IS NULL
+                       AND estado IN ('ISSUED', 'ACTIVE')
+                    """,
+                    [target["user_uuid"], cliente_id],
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE core.mcp_device_grant
+                       SET estado = 'REVOKED', revocado_at = now(),
+                           revoke_reason = 'replaced', updated_at = now()
+                     WHERE user_uuid = %s AND cliente_id = %s AND device_id = %s
+                       AND estado IN ('ISSUED', 'ACTIVE')
+                    """,
+                    [target["user_uuid"], cliente_id, device],
+                )
             cur.execute(
                 """
                 INSERT INTO core.mcp_device_grant
                     (user_uuid, email, cliente_id, secret_hash, secret_prefix,
                      estado, creado_via, ip_vinculada, mac_reportado,
-                     user_agent, expira_at)
-                VALUES (%s, %s, %s, %s, %s, 'ISSUED', %s, %s, %s, %s, %s)
+                     user_agent, device_id, expira_at)
+                VALUES (%s, %s, %s, %s, %s, 'ISSUED', %s, %s, %s, %s, %s, %s)
                 RETURNING id, expira_at
                 """,
                 [
@@ -327,6 +346,7 @@ def emit_grant(
                     (ip or None),
                     (mac or None),
                     (user_agent or None),
+                    device,
                     expires,
                 ],
             )
