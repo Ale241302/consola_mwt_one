@@ -58,7 +58,7 @@ def _company_key(slug: str | None) -> str:
         raw = raw[4:]
     key = "".join(ch if ch.isalnum() else "-" for ch in raw)
     key = "-".join(part for part in key.split("-") if part)
-    return (key or "mcp")[:24]
+    return key[:24].strip("-") or "mcp"
 
 
 def _serialize_client(c: dict) -> dict:
