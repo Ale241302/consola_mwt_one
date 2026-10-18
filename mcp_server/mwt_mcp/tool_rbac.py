@@ -35,6 +35,10 @@ _WILDCARD_ROLES = {"superadmin", "admin", "ceo"}
 # utilidades puras no requieren módulo (siempre disponibles).
 _ALWAYS = None  # marcador: tool siempre visible
 
+# Acciones que modifican datos: se verifican también en `call_tool` (las de
+# lectura las limita el backend por rol y empresa).
+_MUTATING_ACTIONS = frozenset({"create", "update", "delete", "upload_doc"})
+
 # Ola 2 · 2.5 — tools de introspección GLOBAL (operador MWT) que se ocultan en
 # una app de cliente (tenant resuelto). Un usuario de mcp-sondel no debe ver
 # diagnóstico de usuarios/permisos ni el registry global de escrituras.
@@ -434,3 +438,44 @@ class RbacFastMCP(FastMCP):
             (user.get("role") or user.get("role_slug") or "?"),
         )
         return filtered
+
+    def _allowed_tools_for_call(self) -> set[str] | None:
+        """Tools que este request puede invocar, o None si no hay restricción.
+
+        Levanta `IdentityMintingError` cuando hay identidad pero el backend la
+        rechaza, para que la llamada falle cerrada igual que el listado.
+        """
+        if not settings.rbac_filter:
+            return None
+        user = get_identity_user()
+        if user is None:
+            return None
+        return allowed_tool_names(user)
+
+    async def call_tool(self, name: str, arguments: dict | None = None, **kwargs):
+        """Ejecuta una tool de escritura solo si el rol la permite.
+
+        `list_tools` filtraba el catálogo, pero una llamada directa a una tool
+        oculta llegaba al backend y dependía de su 403. Las acciones que
+        modifican datos (create/update/delete/upload_doc) se rechazan aquí
+        antes de tocar la API. Las de lectura se dejan pasar: el backend ya
+        las limita por rol y por empresa, y así un cliente conserva las
+        consultas que su matriz sí le concede aunque el mapa no las enumere.
+        """
+        try:
+            allowed = self._allowed_tools_for_call()
+        except IdentityMintingError as exc:
+            raise PermissionError(f"IDENTITY_REJECTED: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - falla cerrada ante identidad rota
+            log.warning("call_tool: no se pudo resolver identidad: %s", exc)
+            raise PermissionError(
+                "IDENTITY_UNAVAILABLE: no se pudo resolver tu identidad para esta llamada."
+            ) from exc
+        if allowed is not None and name not in allowed:
+            requirement = TOOL_MODULES.get(name)
+            if requirement is not None and requirement[1] in _MUTATING_ACTIONS:
+                log.warning("call_tool RBAC: escritura %s denegada por rol", name)
+                raise PermissionError(
+                    f"TOOL_NOT_ALLOWED: tu rol no permite la herramienta '{name}'."
+                )
+        return await super().call_tool(name, arguments, **kwargs)
