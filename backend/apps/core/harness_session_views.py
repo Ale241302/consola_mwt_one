@@ -59,15 +59,15 @@ class HarnessSessionViewSet(viewsets.ViewSet):
                 f"""
                 SELECT {ROW_COLUMNS}
                   FROM core.harness_shared_session s
-                 WHERE s.owner_email <> %s
-                   AND EXISTS (
-                         SELECT 1
-                           FROM core.harness_share g
-                          WHERE g.kind = 'space'
-                            AND g.resource_id = s.space_id
-                            AND ( g.owner_email = %s
-                                  OR (g.grantee_email = %s AND g.status = 'active') )
-                   )
+                 WHERE ( s.owner_email = %s
+                         OR EXISTS (
+                              SELECT 1
+                                FROM core.harness_share g
+                               WHERE g.kind = 'space'
+                                 AND g.resource_id = s.space_id
+                                 AND ( g.owner_email = %s
+                                       OR (g.grantee_email = %s AND g.status = 'active') )
+                            ) )
                  ORDER BY s.updated_at DESC
                 """,
                 [email, email, email],
