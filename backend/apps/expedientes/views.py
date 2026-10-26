@@ -2704,7 +2704,17 @@ class ExpedienteViewSet(viewsets.ViewSet):
             with transaction.atomic():
                 with connection.cursor() as c:
 
-                    # 1. Insertar ART-04 en artifact_instances
+                    # 1. UPSERT ART-04 en artifact_instances
+                    #
+                    # Fix 2026-10-26 · `ai_unique_active_artifact` garantiza
+                    # UN solo ART-04 activo por expediente
+                    # (expediente_id, artifact_code) WHERE is_active. El
+                    # INSERT ciego reventaba con 500
+                    # «duplicate key value violates unique constraint» cuando
+                    # el ART-04 ya existía y el expediente seguía en REGISTRO
+                    # (p. ej. lo creó `upsert-sap` desde el MCP sin
+                    # transicionar el estado). Ahora buscamos primero: si
+                    # existe lo actualizamos, si no lo insertamos.
                     ocr_payload = {
                         "sap_id":            sap_id,
                         "fecha_fabricacion": fecha_fabricacion,
@@ -2712,35 +2722,95 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         "paperless_task_id": paperless_task_id,
                         "lineas_confirmadas_count": len(lineas_confirmadas),
                     }
-                    # Sprint 2026-05-06 · audience=ADMIN_ONLY:
-                    # ART-04 (Confirmación SAP) NO se muestra a CLIENT_*
-                    # ni a usuarios MWT staff. Solo Admin/CEO/superuser.
+                    author_label = (
+                        getattr(request.user, "email", None)
+                        or getattr(request.user, "username", None)
+                        or "system"
+                    )
                     c.execute("""
-                        INSERT INTO expedientes.artifact_instances (
-                            id, expediente_id, oc_id,
-                            artifact_code, kind, codigo,
-                            file_ext, file_size_bytes, storage_url, paperless_doc_id,
-                            ocr_status, ocr_engine, ocr_confidence, ocr_payload,
-                            action_source, correlation_id,
-                            author, fecha, visibility_tier, audience, is_active
-                        ) VALUES (
-                            %s, %s, %s,
-                            'ART-04', 'Confirmación SAP', %s,
-                            %s, %s, %s, %s,
-                            'DONE', 'manual-upload', 1.0, %s::jsonb,
-                            'C5', %s,
-                            %s, %s, 'INTERNAL', 'ADMIN_ONLY', TRUE
+                        SELECT id FROM expedientes.artifact_instances
+                         WHERE expediente_id = %s::uuid
+                           AND artifact_code = 'ART-04'
+                           AND is_active     = TRUE
+                         ORDER BY created_at DESC LIMIT 1
+                    """, [str(exp.id)])
+                    _row_art = c.fetchone()
+
+                    if _row_art:
+                        artifact_id = _row_art[0]
+                        _upd_fields = [
+                            "codigo = %s",
+                            "fecha = %s",
+                            "ocr_status = 'DONE'",
+                            "ocr_engine = 'manual-upload'",
+                            "ocr_confidence = 1.0",
+                            "ocr_payload = %s::jsonb",
+                            "action_source = 'C5'",
+                            "correlation_id = %s",
+                            "author = %s",
+                            "audience = 'ADMIN_ONLY'",
+                            "is_active = TRUE",
+                        ]
+                        _upd_args = [
+                            sap_id,
+                            fabricacion_dt,
+                            json.dumps(ocr_payload),
+                            str(correlation_id),
+                            author_label,
+                        ]
+                        if storage_url:
+                            _upd_fields += [
+                                "storage_url = %s",
+                                "paperless_doc_id = %s",
+                                "file_size_bytes = %s",
+                                "file_ext = %s",
+                            ]
+                            _upd_args += [
+                                storage_url, paperless_task_id,
+                                file_size_bytes, file_ext,
+                            ]
+                        _upd_args.append(str(artifact_id))
+                        c.execute(
+                            "UPDATE expedientes.artifact_instances SET "
+                            + ", ".join(_upd_fields)
+                            + " WHERE id = %s::uuid",
+                            _upd_args,
                         )
-                    """, [
-                        str(artifact_id), str(exp.id),
-                        str(exp.oc_id) if exp.oc_id else None,
-                        sap_id,
-                        file_ext, file_size_bytes, storage_url, paperless_task_id,
-                        json.dumps(ocr_payload),
-                        str(correlation_id),
-                        (getattr(request.user, "email", None) or getattr(request.user, "username", None) or "system"),
-                        fabricacion_dt,
-                    ])
+                        log.info(
+                            "[confirm_sap] ART-04 ya existía para exp=%s "
+                            "(artifact=%s) · actualizado en vez de duplicar",
+                            exp.id, artifact_id,
+                        )
+                    else:
+                        # Sprint 2026-05-06 · audience=ADMIN_ONLY:
+                        # ART-04 (Confirmación SAP) NO se muestra a CLIENT_*
+                        # ni a usuarios MWT staff. Solo Admin/CEO/superuser.
+                        c.execute("""
+                            INSERT INTO expedientes.artifact_instances (
+                                id, expediente_id, oc_id,
+                                artifact_code, kind, codigo,
+                                file_ext, file_size_bytes, storage_url, paperless_doc_id,
+                                ocr_status, ocr_engine, ocr_confidence, ocr_payload,
+                                action_source, correlation_id,
+                                author, fecha, visibility_tier, audience, is_active
+                            ) VALUES (
+                                %s, %s, %s,
+                                'ART-04', 'Confirmación SAP', %s,
+                                %s, %s, %s, %s,
+                                'DONE', 'manual-upload', 1.0, %s::jsonb,
+                                'C5', %s,
+                                %s, %s, 'INTERNAL', 'ADMIN_ONLY', TRUE
+                            )
+                        """, [
+                            str(artifact_id), str(exp.id),
+                            str(exp.oc_id) if exp.oc_id else None,
+                            sap_id,
+                            file_ext, file_size_bytes, storage_url, paperless_task_id,
+                            json.dumps(ocr_payload),
+                            str(correlation_id),
+                            author_label,
+                            fabricacion_dt,
+                        ])
 
                     # Sprint 2026-05-06 · UPSERT idempotente en expedientes.documento
                     # con audience=ADMIN_ONLY → aparece en "Documentos
