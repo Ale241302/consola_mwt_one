@@ -1556,7 +1556,13 @@ def expediente_lineas(expediente_id: str, campos: str | None = None) -> Any:
     data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas")
     # Ola 3.8 · adjunta producto_nombre/marca_nombre legibles por línea.
     data = enrich_lineas(data)
-    return _project(campos, data)
+    # Una sola línea no debe colapsar en un objeto: quien suma cantidades o
+    # precios tiene que poder recorrer la respuesta igual con una línea o con
+    # veinte. El sobre paginado de DRF se conserva tal cual.
+    if isinstance(data, dict) and isinstance(data.get("results"), list):
+        return _project(campos, data)
+    rows = data if isinstance(data, list) else [data] if isinstance(data, dict) else data
+    return _project(campos, rows)
 
 
 @mcp.tool()
