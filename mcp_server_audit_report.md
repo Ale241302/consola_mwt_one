@@ -178,7 +178,7 @@ req = {
 names = {t.name for t in asyncio.run(mcp.list_tools())}
 print("TOTAL_UNICAS:", len(names), "FALTAN:", (req - names) or "ninguna ✅")
 assert not (req - names), "MCP viejo: repite el force-reinstall"
-assert len(names) == 99, f"Inventario MCP inesperado: {len(names)} herramientas únicas"
+assert "tipo_cambio" in names, "MCP viejo: falta tipo_cambio (repite el force-reinstall)"
 ```
 
 ### 7.5 Ejemplos de firmas corregidas para llamadas críticas

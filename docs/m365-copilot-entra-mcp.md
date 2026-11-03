@@ -6,7 +6,7 @@ pendiente** porque su filtrado por rol depende del gateway ContextForge.
 
 ## ✅ Vía PRINCIPAL (funciona, respeta roles) — DeviceToken / `.json`
 - Cómo conecta: el usuario pega el `.json` (o el agente corre `claude mcp add --transport http mcp-... https://mcp.mwt.one/device --header "Authorization: DeviceToken <token>"`).
-- El backend **mapea el token → usuario → rol** (`McpTokenView` + `core.roles.permissions`) y **`tool_rbac` filtra** → el usuario ve SOLO las tools de su rol (client_b2b ≈ 23 tools incl. `mwt_whoami`), ocultando las de otros roles.
+- El backend **mapea el token → usuario → rol** (`McpTokenView` + `core.roles.permissions`) y **`tool_rbac` filtra** → el usuario ve SOLO las tools de su rol (client_b2b ≈ 51 tools incl. `mwt_whoami`), ocultando las de otros roles.
 - Clientes soportados: Claude Code, Gemini CLI, Cursor, VS Code/Copilot, opencode.
 - **Claude Desktop (app)**: NO vía DeviceToken (no acepta header). Requiere el conector (ver abajo) → pendiente.
 
@@ -18,7 +18,7 @@ pendiente** porque su filtrado por rol depende del gateway ContextForge.
   (`idp.mwt.one`) con el **email + contraseña del usuario** de la consola. ✔ el OAuth y el login
   funcionan.
 - **Qué NO funciona aún**: **el filtrado por rol**. Conectando por el conector aparecen las
-  **99 tools** (todas) porque **ContextForge (gateway) no pasa la identidad del usuario (email)
+  **182 tools** (todas) porque **ContextForge (gateway) no pasa la identidad del usuario (email)
   al MCP upstream** → `tool_rbac` recibe identidad vacía → devuelve todas.
 - **Causa raíz**: `mcp-gateway` (IBM mcp-context-forge), en `streamablehttp_transport.py`
   (~línea 1499), inyecta headers de identidad con `build_identity_headers(identity, gateway)`,

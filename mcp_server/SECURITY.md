@@ -46,7 +46,7 @@ usuario y sigue entrando por el MCP".
 
 ```
 CAPA 1 · Lista de tools (tool_rbac.py)
-   Filtra las 106 tools por (módulo, acción) de la matriz core.roles.permissions.
+   Filtra las 182 tools por (módulo, acción) de la matriz core.roles.permissions.
    Sin clientes.create → no se ve cliente_crear. Fail-closed si identidad inválida.
 
 CAPA 2 · Redacción por rol en la respuesta (redact.py + _safe_role)
@@ -173,7 +173,7 @@ tablas, reportes, dashboards, exportaciones) extiende las garantías:
 ## 8. Checklist de hardening (estado actual)
 
 - [x] Token exchange OAuth→JWT con identidad real (fail-closed).
-- [x] RBAC por rol en `list_tools` (106 tools mapeadas).
+- [x] RBAC por rol en `list_tools` (182 tools mapeadas).
 - [x] Redacción por rol en la respuesta (`redact.py` + `_safe_role`).
 - [x] Auditoría durable `core.mcp_audit` (writes + reads sensibles).
 - [x] Throttle por usuario (mcp-token/audit/diag/health).

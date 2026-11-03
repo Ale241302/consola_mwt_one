@@ -367,7 +367,7 @@ Estos subagentes y skills se sincronizan desde `harness/canonical/` hacia `.clau
 - `backend-engineer` — Implementa y refactoriza la API Django 4 + DRF + SimpleJWT de MWT.ONE con modelos managed=False, excepciones especificas y log estructurado. Cambios en ai_hub exigen eval cases.
 - `db-architect` — Disena y evoluciona el esquema SQL-first de MWT.ONE creando archivos .sql numerados e idempotentes en backend/sql/. NUNCA usa migraciones Django.
 - `frontend-architect` — Construye y refactoriza la UI React + Vite (JSX) de alta densidad de MWT.ONE respetando las 6 reglas de oro y reutilizando los componentes core. NO Next.js.
-- `mcp-toolsmith` — Mantiene mcp_server/ (FastMCP, ~88 tools sobre la API REST de MWT.ONE) y conserva la paridad de las tools con la API. Token de servicio de larga vida.
+- `mcp-toolsmith` — Mantiene mcp_server/ (FastMCP, ~182 tools sobre la API REST de MWT.ONE) y conserva la paridad de las tools con la API. Token de servicio de larga vida.
 - `reviewer` — Audita diffs y componentes aplicando el Gate de Componentes (checklist de pre-commit). Marca R1 (cero hex), R3 (visibilidad) y R4 (policy-driven) como CRITICAL, no como warning.
 
 ### Skills

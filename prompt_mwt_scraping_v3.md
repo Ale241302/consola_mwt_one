@@ -53,7 +53,7 @@ Llama a **`mwt_whoami`** → debe devolver `alejandro@muitowork.com`, rol `admin
 
 ---
 
-# PARTE 1 — QUÉ PUEDE HACER EL MCP `mwt-one` (91 herramientas)
+# PARTE 1 — QUÉ PUEDE HACER EL MCP `mwt-one` (182 herramientas)
 
 | Dominio | Herramientas |
 |---|---|
@@ -741,7 +741,7 @@ Y para el **AWB/BL** (template 9): sube el PDF a `field-1778637230655`, pon el *
 
 Servidor MCP que expone la operación completa de la Consola MWT.ONE como herramientas para un agente de IA externo (Antigravity, Kimi CLI, Claude Desktop, Cursor). Autentica con un **token de servicio de larga vida (≈100 años)**. No guarda estado local: cada herramienta es una llamada autenticada a `https://consola.mwt.one/api`.
 
-## B.1 Qué puede hacer (91 herramientas)
+## B.1 Qué puede hacer (182 herramientas)
 Ver tabla completa en la **Parte 1**.
 
 ## B.2 Generar el token (sin vencimiento)
