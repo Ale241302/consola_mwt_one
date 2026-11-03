@@ -9,7 +9,7 @@ Uso:
 Ola 2 · 2.14 — split por dominio: `--domain` / `MWT_MCP_DOMAIN` levanta SOLO las
 tools de ese dominio (comercial | logistica | finanzas) más las compartidas,
 para reducir el costo fijo de contexto por conversación. Sin indicar dominio se
-arranca el monolito `mwt-one` (comportamiento anterior, 105 tools).
+arranca el monolito `mwt-one` (comportamiento anterior, 182 tools).
 """
 from __future__ import annotations
 

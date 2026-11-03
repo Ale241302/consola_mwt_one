@@ -61,8 +61,8 @@ from .schemas import (
 )
 from .tool_rbac import RbacFastMCP, TOOL_MODULES, allowed_tool_names
 
-# Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con 132 tools
-# (119 @mcp.tool + 13 de presentación vía mcp.add_tool; incluye las 6 tools
+# Ola 2 · 2.14-var — el MCP sigue siendo UN servidor monolito con 182 tools
+# (169 @mcp.tool + 13 de presentación vía mcp.add_tool; incluye las 6 tools
 # del MWT Builder externo builder.muito.work).
 # El filtrado por rol del usuario conectado se hace en list_tools vía
 # RbacFastMCP (tool_rbac.py), NO partiendo el server en 3 dominios.
@@ -1618,7 +1618,12 @@ def expediente_buscar(
                 "sap": e.get("sap"),
                 "product_count": e.get("product_count"),
                 "created_at": e.get("created_at"),
-                "monto_cliente_usd": e.get("total_cost"),
+                # Ola 5 · 2026-11-03 · antes se usaba `total_cost` (columna
+                # muerta) → el MCP devolvía 0.00 en el 2473. `total_client` es
+                # el rollup real Σ qty × precio cliente.
+                "monto_cliente_usd": (e.get("total_client")
+                                      if e.get("total_client") is not None
+                                      else e.get("total_cost")),
             })
     # Ola 3.8 · el mismo saneo de presentación que el listado: para un
     # client_b2b oculta `codigo` EXP-, UUIDs internos y expone referencia_cliente.

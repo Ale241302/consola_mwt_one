@@ -1,6 +1,6 @@
 """Ola 2 · filtrado de tools por rol del usuario conectado (RBAC).
 
-El MCP monolito (mwt-one) sigue exponiendo las 105 tools. En lugar de partir
+El MCP monolito (mwt-one) sigue exponiendo las 182 tools. En lugar de partir
 el servidor en 3 dominios, cada usuario conectado vía el gateway (ContextForge
 → Authentik) ve SOLO las tools cuyo (módulo, acción) su rol permite, según la
 matriz `core.roles.permissions` (modules[] + actions["modulo.accion"]) que el

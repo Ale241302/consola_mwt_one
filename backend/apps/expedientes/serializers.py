@@ -345,6 +345,16 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
     client_country  = serializers.SerializerMethodField()
     operator_name   = serializers.SerializerMethodField()
 
+    # Ola 5 · 2026-11-03 · el listado usa la MISMA definición de dinero que el
+    # detalle (financials.py). Antes estos 4 campos eran columnas del modelo
+    # que nadie actualiza → el frontend tapaba con el valor de pedido.
+    total_invoiced  = serializers.SerializerMethodField()
+    total_cost      = serializers.SerializerMethodField()
+    total_paid      = serializers.SerializerMethodField()
+    balance         = serializers.SerializerMethodField()
+    invoiced_source           = serializers.SerializerMethodField()
+    viewer_can_see_financials = serializers.SerializerMethodField()
+
     # ── role helpers ───────────────────────────────────────────
     def _viewer_role(self):
         request = self.context.get("request") if hasattr(self, "context") else None
@@ -570,6 +580,56 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
     def get_operator_name(self, obj):
         return self._client_info(getattr(obj, "operating_company_id", None)).get("name")
 
+    # ── Dinero (definición única, financials.py) ───────────────────
+    def _fin(self, obj):
+        from . import financials
+
+        cache = getattr(self, "_fin_cache", None)
+        if cache is None:
+            cache = {}
+            self._fin_cache = cache
+        eid = str(getattr(obj, "id", "") or "")
+        if not eid:
+            return financials._empty()
+        if eid not in cache:
+            shared = (self.context or {}).get("totals") or {}
+            cache[eid] = shared.get(eid) or financials.totals_for([eid]).get(eid) or financials._empty()
+        return cache[eid]
+
+    def _fin_visible(self, obj):
+        """POL_R3: bypass o el operador del expediente ven cifras; el cliente no."""
+        from apps.core.scoped_querysets import _is_bypass, _scope_ids
+
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user = getattr(request, "user", None) if request else None
+        if user is None:
+            return True
+        if _is_bypass and _is_bypass(user):
+            return True
+        op_id = getattr(obj, "operating_company_id", None)
+        if _scope_ids and op_id:
+            return str(op_id) in [str(s) for s in (_scope_ids(user) or [])]
+        return False
+
+    def get_total_invoiced(self, obj):
+        return self._fin(obj)["invoiced"] if self._fin_visible(obj) else 0
+
+    def get_total_cost(self, obj):
+        return self._fin(obj)["cost"] if self._fin_visible(obj) else 0
+
+    def get_total_paid(self, obj):
+        return self._fin(obj)["paid"] if self._fin_visible(obj) else 0
+
+    def get_balance(self, obj):
+        return self._fin(obj)["balance"] if self._fin_visible(obj) else 0
+
+    def get_invoiced_source(self, obj):
+        # No revelar si existe factura a quien no puede ver cifras.
+        return self._fin(obj)["invoiced_source"] if self._fin_visible(obj) else "NONE"
+
+    def get_viewer_can_see_financials(self, obj):
+        return bool(self._fin_visible(obj))
+
     class Meta:
         model  = Expediente
         fields = (
@@ -579,6 +639,7 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
             "origin", "destination", "origin_country", "destination_country",
             "shipment_date", "eta", "product_count",
             "moneda", "total_cost", "total_invoiced", "total_paid", "balance",
+            "invoiced_source", "viewer_can_see_financials",
             "projected_margin", "real_margin", "margin_drift",
             # Sprint 2026-05-10 · `forma_pago` necesario para que el
             # frontend filtre expedientes CONTADO al proyectar uso
@@ -642,6 +703,10 @@ class ExpedienteSerializer(serializers.ModelSerializer):
     total_cost      = serializers.SerializerMethodField()
     total_paid      = serializers.SerializerMethodField()
     balance         = serializers.SerializerMethodField()
+    # Ola 5 · 2026-11-03 · "facturado" ya no se disfraza de 0: la fuente y la
+    # visibilidad se exponen para que ni el front ni el agente adivinen.
+    invoiced_source          = serializers.SerializerMethodField()
+    viewer_can_see_financials = serializers.SerializerMethodField()
 
     # Sprint 2026-07-31 (CEO) · refs role-aware en el DETALLE (retrieve).
     # El header del ExpedienteDetail debe titularse con la proforma
@@ -734,173 +799,74 @@ class ExpedienteSerializer(serializers.ModelSerializer):
         except (ValueError, TypeError, AttributeError):
             return None
 
-    def get_total_invoiced(self, obj):
-        """SUM(field-0118) de ART-13 Factura Comercial vinculados.
+    def _fin_totals(self, obj):
+        """Totales del expediente desde la definición ÚNICA (financials.py)."""
+        from . import financials
 
-        Sprint 2026-05-26 (CEO) - visibility POL_R3:
-          · bypass (admin/CEO/staff)          -> ve el valor
-          · user cuyo scope incluye           -> ve el valor (es del operador)
-            obj.operating_company_id
-          · cliente final del expediente      -> recibe 0 (no expone)
-        """
-        from django.db import connection as _conn
-        try:
-            from apps.core.scoped_querysets import _is_bypass, _scope_ids
-        except ImportError:
-            _is_bypass = None
-            _scope_ids = None
-        # Visibility check
-        # Sprint 2026-05-26 (CEO) - cuando el serializer se invoca sin
-        # context (ej. Serializer(o).data desde un view custom), no hay
-        # request. En ese caso, TRUST y devolver el valor real (la auth
-        # ya se hizo en la capa HTTP). Si hay request, aplicamos la
-        # regla de operating_company.
+        cache = getattr(self, "_fin_cache", None)
+        if cache is None:
+            cache = {}
+            self._fin_cache = cache
+        eid = self._safe_uuid(getattr(obj, "id", None))
+        if not eid:
+            return financials._empty()
+        if eid not in cache:
+            shared = (self.context or {}).get("totals") or {}
+            cache[eid] = shared.get(eid) or financials.totals_for([eid]).get(eid) or financials._empty()
+        return cache[eid]
+
+    def get_total_invoiced(self, obj):
+        """Factura comercial (ART-13 `field-0118`, prorrateada). POL_R3: el
+        cliente final recibe 0; quien opera el expediente ve el valor."""
+        from apps.core.scoped_querysets import _is_bypass, _scope_ids
+
         request = self.context.get("request") if hasattr(self, "context") else None
         user = getattr(request, "user", None) if request else None
-        allowed = True
         if user is not None:
-            allowed = False
-            if _is_bypass and _is_bypass(user):
-                allowed = True
-            elif _scope_ids:
+            allowed = bool(_is_bypass and _is_bypass(user))
+            if not allowed and _scope_ids:
                 op_id = getattr(obj, "operating_company_id", None)
                 if op_id:
                     scope = _scope_ids(user) or []
-                    if str(op_id) in [str(s) for s in scope]:
-                        allowed = True
-        if not allowed:
-            return 0
-        eid = self._safe_uuid(getattr(obj, "id", None))
-        if not eid:
-            return 0
-        try:
-            with _conn.cursor() as c:
-                c.execute("""
-                    SELECT COALESCE(SUM(
-                        CASE 
-                            WHEN art_total.total_art_val > 0 THEN
-                                ROUND((exp_art.exp_art_val / art_total.total_art_val) * art_total.field_0118, 2)
-                            ELSE exp_art.exp_art_val
-                        END
-                    ), 0)
-                    FROM (
-                        SELECT bai.id AS instance_id,
-                               COALESCE(NULLIF(bai.data->>'field-0118','')::numeric, 0) AS field_0118,
-                               COALESCE(SUM(bal.qty * COALESCE(l.unit_price_client, l.unit_price, 0)), 0) AS total_art_val
-                        FROM nodos.builder_artifact_instance bai
-                        JOIN nodos.builder_artifact_line bal ON bal.builder_artifact_instance_id = bai.id AND bal.is_active = TRUE
-                        LEFT JOIN expedientes.linea l ON l.expediente_id = bal.expediente_id 
-                                                     AND l.producto_id = bal.producto_id 
-                                                     AND l.size = bal.talla 
-                                                     AND l.is_active = TRUE
-                        WHERE bai.template_id = 13 AND bai.is_active = TRUE
-                        GROUP BY bai.id, bai.data
-                    ) art_total
-                    JOIN (
-                        SELECT bai.id AS instance_id,
-                               COALESCE(SUM(bal.qty * COALESCE(l.unit_price_client, l.unit_price, 0)), 0) AS exp_art_val
-                        FROM nodos.builder_artifact_instance bai
-                        JOIN nodos.builder_artifact_line bal ON bal.builder_artifact_instance_id = bai.id AND bal.is_active = TRUE
-                        LEFT JOIN expedientes.linea l ON l.expediente_id = bal.expediente_id 
-                                                     AND l.producto_id = bal.producto_id 
-                                                     AND l.size = bal.talla 
-                                                     AND l.is_active = TRUE
-                        WHERE bai.template_id = 13 AND bai.is_active = TRUE AND bal.expediente_id = %s::uuid
-                        GROUP BY bai.id
-                    ) exp_art ON exp_art.instance_id = art_total.instance_id;
-                """, [eid])
-                r = c.fetchone()
-                val = float(r[0] or 0) if r else 0
-                if val > 0:
-                    return val
-
-                c.execute("""
-                    SELECT COALESCE(SUM(qty * COALESCE(unit_price_client, unit_price, 0)), 0)
-                    FROM expedientes.linea
-                    WHERE expediente_id = %s::uuid AND is_active = TRUE;
-                """, [eid])
-                r2 = c.fetchone()
-                return float(r2[0] or 0) if r2 else 0
-        except Exception:  # noqa: BLE001
-            return float(getattr(obj, "total_invoiced", 0) or 0)
+                    allowed = str(op_id) in [str(s) for s in scope]
+            if not allowed:
+                return 0
+        return self._fin_totals(obj)["invoiced"]
 
     def get_total_cost(self, obj):
-        """SUM amount_usd de transfers.cost_line en scope de este exp,
-        recalculando FX cuando currency!=USD y fx==1.0."""
-        from django.db import connection as _conn
-        eid = self._safe_uuid(getattr(obj, "id", None))
-        if not eid:
-            return 0
-        try:
-            from apps.core.fx_service import get_fx_to_usd
-        except ImportError:
-            get_fx_to_usd = None
-        try:
-            with _conn.cursor() as c:
-                c.execute("""
-                    SELECT cl.amount, cl.currency, cl.fx_to_usd, cl.amount_usd
-                    FROM transfers.cost_line cl
-                    WHERE cl.is_active = TRUE
-                      AND EXISTS (
-                          SELECT 1
-                          FROM inventario.expediente_nodo_assignment a
-                          WHERE a.transferencia_id = cl.transferencia_id
-                            AND a.expediente_id   = %s::uuid
-                            AND a.is_active = TRUE
-                      )
-                      AND (
-                        cl.scope_json IS NULL
-                        OR (cl.scope_json->>'applies_to_all')::bool = TRUE
-                        OR cl.scope_json->'expediente_ids' ? %s
-                      )
-                """, [eid, eid])
-                rows = c.fetchall()
-            total = 0.0
-            fx_cache = {}
-            for (amount, currency, fx_stored, amount_usd) in rows:
-                ccy = (currency or "USD").upper()
-                amt = float(amount or 0)
-                fx_s = float(fx_stored or 1)
-                aus = float(amount_usd or 0)
-                if ccy != "USD" and abs(fx_s - 1.0) < 1e-9 and amt > 0 and get_fx_to_usd:
-                    if ccy not in fx_cache:
-                        try: fx_cache[ccy] = float(get_fx_to_usd(ccy) or 1)
-                        except Exception: fx_cache[ccy] = 1.0
-                    total += amt * fx_cache[ccy]
-                else:
-                    total += aus
-            return round(total, 2)
-        except Exception:  # noqa: BLE001
-            return float(getattr(obj, "total_cost", 0) or 0)
+        """Costo landed real (transfers.cost_line en scope)."""
+        return self._fin_totals(obj)["cost"]
 
     def get_total_paid(self, obj):
-        """SUM monto_usd de finance.payment confirmados para este exp."""
-        from django.db import connection as _conn
-        eid = self._safe_uuid(getattr(obj, "id", None))
-        if not eid:
-            return 0
-        try:
-            with _conn.cursor() as c:
-                c.execute("""
-                    SELECT COALESCE(SUM(p.monto_usd), 0)
-                    FROM finance.payment p
-                    WHERE p.expediente_id = %s::uuid
-                      AND p.is_active     = TRUE
-                      AND p.estado IN ('CONFIRMADO_AI', 'CONFIRMADO_HUMANO')
-                """, [eid])
-                r = c.fetchone()
-                return float(r[0] or 0) if r else 0
-        except Exception:  # noqa: BLE001
-            return float(getattr(obj, "total_paid", 0) or 0)
+        """Pagos confirmados (finance.payment.monto_usd)."""
+        return self._fin_totals(obj)["paid"]
 
     def get_balance(self, obj):
-        """total_invoiced - total_paid (clamp >= 0)."""
-        try:
-            inv  = float(self.get_total_invoiced(obj) or 0)
-            paid = float(self.get_total_paid(obj) or 0)
-            return round(max(inv - paid, 0), 2)
-        except Exception:  # noqa: BLE001
-            return float(getattr(obj, "balance", 0) or 0)
+        """invoiced − paid (clamp >= 0)."""
+        return self._fin_totals(obj)["balance"]
+
+    def get_invoiced_source(self, obj):
+        """'INVOICE' si hay factura comercial; 'NONE' si no hay (o si el
+        viewer no puede ver cifras)."""
+        if not self.get_viewer_can_see_financials(obj):
+            return "NONE"
+        return self._fin_totals(obj)["invoiced_source"]
+
+    def get_viewer_can_see_financials(self, obj):
+        """True si el viewer puede ver cifras financieras (evita el 0 ambiguo)."""
+        from apps.core.scoped_querysets import _is_bypass, _scope_ids
+
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user = getattr(request, "user", None) if request else None
+        if user is None:
+            return True
+        if _is_bypass and _is_bypass(user):
+            return True
+        if _scope_ids:
+            op_id = getattr(obj, "operating_company_id", None)
+            if op_id and str(op_id) in [str(s) for s in (_scope_ids(user) or [])]:
+                return True
+        return False
 
     class Meta:
         model  = Expediente

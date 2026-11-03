@@ -621,18 +621,10 @@ export default function ScreenExpedientes() {
     const total_cost     = EXPEDIENTES.reduce((a,e)=>a+(e.total_cost||0),0);
     const total_paid     = EXPEDIENTES.reduce((a,e)=>a+(e.total_paid||0),0);
 
-    // Sprint 2026-05-01: receivables/payables con fallback a order_value
-    // calculado en load() (sum lineas con resolucion del catalogo) cuando
-    // los campos persistidos del backend son 0.
-    //   receivables = Σ max(balance, order_value − total_paid)
-    //   payables    = Σ (total_cost − pg_verified − pg_released)  [solo costos reales]
-    const receivables = EXPEDIENTES.reduce((a, e) => {
-      const persisted = Number(e.balance || 0);
-      if (persisted > 0) return a + persisted;
-      const ov = Number(e.order_value || 0);
-      const paid = Number(e.total_paid || 0);
-      return a + Math.max(0, ov - paid);
-    }, 0);
+    // Ola 5 · 2026-11-03 · receivables = Σ balance real (factura − pagos).
+    // Se elimina el fallback a `order_value`: con la lista devolviendo ceros,
+    // el KPI mostraba "por cobrar" = valor de pedido completo (mentira).
+    const receivables = EXPEDIENTES.reduce((a, e) => a + Math.max(0, Number(e.balance || 0)), 0);
     // Pagos por salir: solo costos REALES persistidos en backend.
     // Si no hay (total_cost = 0), el KPI queda en $0. Antes habia un
     // estimado del 70% del valor del pedido pero confundia (parecia dato
@@ -965,12 +957,19 @@ export default function ScreenExpedientes() {
 
                     {effectiveView === 'financial' && <>
                       <td className="td-money">
-                        {fmtMoney(e.total_invoiced > 0 ? e.total_invoiced : (e.total_client || e.order_value || 0))}
+                        {/* Ola 5 · 2026-11-03 · "Facturado" es la factura
+                            comercial (ART-13). Nunca el valor de pedido: el
+                            fallback anterior mostraba +4.325 en el 2473 y
+                            −14.494 en el 2472. */}
+                        {fmtMoney(e.total_invoiced || 0)}
+                        {String(e.invoiced_source || '') === 'NONE' && (
+                          <span title="Sin factura comercial emitida" style={{marginLeft:4,opacity:.45,fontSize:10}}>·</span>
+                        )}
                       </td>
                       {!isClient && (
                         <td className="td-money" style={{ textAlign: 'right' }}>
                           {Boolean(e.operating_company_id && e.operating_company_id !== e.client_id)
-                            ? fmtMoney(e.total_mwt || e.total_cost || 0)
+                            ? fmtMoney(e.total_mwt || 0)
                             : '$0'}
                         </td>
                       )}

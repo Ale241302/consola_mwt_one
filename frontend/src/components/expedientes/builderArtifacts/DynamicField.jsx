@@ -76,7 +76,9 @@ function FilePicker({ value, onChange, disabled, lang, field }) {
       // resp: { ok, key, bucket, etag, content_type, size }
       onChange?.({
         key:          resp.key,
-        url:          storageApi.downloadUrl(resp.key),
+        // Ola 5 · 2026-11-03 · NUNCA persistir la URL con `?token=`: ese JWT
+        // quedaba guardado dentro del artefacto (JSONB) y sobrevivía a la
+        // sesión. Se guarda la key; la URL se firma al abrir (openUrl).
         name:         file.name,
         mime:         resp.content_type || file.type || "",
         size:         resp.size || file.size || 0,

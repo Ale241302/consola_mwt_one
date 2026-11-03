@@ -194,6 +194,58 @@ def _deny_client_mutation(request, action_label: str = ""):
 # ════════════════════════════════════════════════════════════
 # OC
 # ════════════════════════════════════════════════════════════
+def decide_split(*, split_ids, active_line_ids, client_changed,
+                 split_quantities, new_qty_by_id, split_intent,
+                 has_lines_updated):
+    """Decide si un PATCH edit-full debe PARTIR el expediente o editar in-place.
+
+    Ola 5 · 2026-11-03 · función pura y testeable (antes vivía inline y un
+    cambio de cantidad partía el expediente). Reglas:
+
+      · Sin `split_ids` → nunca hay split.
+      · Cambio de cliente → split (comportamiento histórico).
+      · Split parcial REAL: la cantidad a separar es menor a la cantidad
+        NUEVA enviada para esa línea (`lines_updated`).
+      · Subconjunto de líneas: split sólo si el cliente lo pidió
+        (`split_intent`) o si no se está actualizando ninguna cantidad
+        (compat con el frontend viejo: "mover líneas" sin tocar qty).
+
+    Devuelve `(is_real_split, detalle)` para loguear/diagnosticar.
+    """
+    split_id_set = {str(x) for x in (split_ids or []) if x}
+    detail = {
+        "client_changed": bool(client_changed),
+        "subset_split": False,
+        "partial_qty_split": False,
+        "split_intent": bool(split_intent),
+    }
+    if not split_id_set:
+        return False, detail
+
+    detail["subset_split"] = split_id_set != {str(x) for x in (active_line_ids or [])}
+
+    partial = False
+    for lid in split_id_set:
+        new_q = (new_qty_by_id or {}).get(lid)
+        if new_q is None:
+            continue
+        try:
+            sep = float((split_quantities or {}).get(lid, new_q))
+        except (TypeError, ValueError):
+            sep = float(new_q)
+        if sep < float(new_q):
+            partial = True
+            break
+    detail["partial_qty_split"] = partial
+
+    is_split = bool(
+        client_changed
+        or partial
+        or (detail["subset_split"] and (split_intent or not has_lines_updated))
+    )
+    return is_split, detail
+
+
 class OcViewSet(viewsets.ViewSet):
     required_module = "expedientes"
 
@@ -727,6 +779,10 @@ class ExpedienteViewSet(viewsets.ViewSet):
         # Rollups batched (order_value/total_client/total_mwt + nombre de
         # cliente/operador): el listado queda autosuficiente.
         ctx.update(build_expediente_rollups(rows))
+        # Ola 5 · 2026-11-03 · dinero con la MISMA definición que el detalle
+        # (una sola tanda de queries para toda la página).
+        from .financials import totals_for as _totals_for
+        ctx["totals"] = _totals_for([r.id for r in rows])
         data = ExpedienteListSerializer(rows, many=True, context=ctx).data
         if limit_i is not None:
             return Response({
@@ -4363,13 +4419,30 @@ class ExpedienteViewSet(viewsets.ViewSet):
                         # no un split.
                         client_changed = bool(new_client_id) and str(new_client_id) != cur_client
                         subset_split = split_id_set != active_line_ids
-                        partial_qty_split = any(
-                            active_qty_by_id.get(lid) is not None
-                            and _split_qty_by_id.get(lid, active_qty_by_id[lid]) < active_qty_by_id[lid]
-                            for lid in split_id_set
-                        )
 
-                        is_real_split = client_changed or subset_split or partial_qty_split
+                        # Ola 5 · 2026-11-03 · la decisión vive en una función
+                        # pura y testeable (decide_split). Un cambio SOLO de
+                        # cantidad ya no parte el expediente.
+                        split_intent = str(payload.get("split_intent") or "").lower() in (
+                            "1", "true", "yes", "on",
+                        )
+                        _new_qty_by_id = {}
+                        for _u in (lines_updated or []):
+                            if isinstance(_u, dict) and _u.get("id") is not None:
+                                try:
+                                    _new_qty_by_id[str(_u["id"])] = int(_u.get("qty"))
+                                except (TypeError, ValueError):
+                                    continue
+                        is_real_split, _split_detail = decide_split(
+                            split_ids=split_ids,
+                            active_line_ids=active_line_ids,
+                            client_changed=client_changed,
+                            split_quantities=_split_qty_by_id,
+                            new_qty_by_id=_new_qty_by_id,
+                            split_intent=split_intent,
+                            has_lines_updated=bool(lines_updated),
+                        )
+                        partial_qty_split = _split_detail["partial_qty_split"]
 
                         # Log de diagnóstico para que el soporte vea por qué se
                         # disparó (o no) el split en producción.

@@ -25,7 +25,7 @@ propagada (acceso directo / stdio).
                                         │                            │
                                         ▼                            ▼
                               ┌──────────────────────────────────────────────┐
-                              │  Servidor MCP (mwt_mcp/server.py, 137 tools)  │
+                              │  Servidor MCP (mwt_mcp/server.py, 182 tools)  │
                               │  · RBAC por rol: tool_rbac.py (list_tools)     │
                               │  · Redacción por rol: redact.py (_safe_role)   │
                               │  · Auditoría durable: core.mcp_audit           │
@@ -34,7 +34,7 @@ propagada (acceso directo / stdio).
 ```
 
 **Capas de defensa (defensa en profundidad):**
-1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 137 tools por
+1. **CAPA 1 — Lista de tools:** `tool_rbac.py` filtra las 182 tools por
    `(módulo, acción)` de la matriz `core.roles.permissions`. Fail-closed.
 2. **CAPA 2 — Redacción por rol:** `redact.py` oscurece campos CEO_ONLY
    (costos/margen/comisiones/crédito/precio MWT) en la respuesta, aunque la
@@ -43,7 +43,7 @@ propagada (acceso directo / stdio).
 
 ---
 
-## 1. Qué puede hacer (137 herramientas)
+## 1. Qué puede hacer (182 herramientas)
 
 | Dominio      | Herramientas                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------------------- |
@@ -69,7 +69,7 @@ propagada (acceso directo / stdio).
 
 ### 1.1 Filtrado de tools por rol (RBAC) y fail-closed
 
-- **1 solo servidor MCP** (`mwt-one`) con las 137 tools. No se parte en 3
+- **1 solo servidor MCP** (`mwt-one`) con las 182 tools. No se parte en 3
   dominios; la reducción de contexto se logra ocultando al agente las tools que
   su rol no puede usar (`mcp_server/mwt_mcp/tool_rbac.py`).
 - `list_tools` consulta el perfil del usuario (rol + `permissions` de
@@ -77,7 +77,7 @@ propagada (acceso directo / stdio).
   tools del mapa `TOOL_MODULES` cuyo `(módulo, acción)` el rol permite.
   Ejemplo: un usuario sin `clientes.create` no ve `cliente_crear`.
 - Sin identidad (ServiceToken puro / stdio / registro del server) → se listan
-  las 106. Admin/superadmin o `modules=["*"]` → las 106.
+  las 182. Admin/superadmin o `modules=["*"]` → las 182.
 - **Fail-closed:** si hay identidad propagada pero el backend no emite JWT
   (usuario inactivo/borrado), `list_tools` devuelve `[]` y cada llamada a la API
   falla con 401 — **nunca** se cae al token de servicio admin. Esto cierra la
@@ -92,7 +92,7 @@ consola). Como referencia operativa, los roles típicos:
 
 | Rol | Qué ve | Herramientas típicas | Redacción aplicada |
 |---|---|---|---|
-| **superadmin / admin / ceo** | Todo | Las 137 tools según la matriz configurada | Ninguna (acceso total) |
+| **superadmin / admin / ceo** | Todo | Las 182 tools según la matriz configurada | Ninguna (acceso total) |
 | **manager** | Operación + finanzas del área | expedientes, transferencias, pagos, clientes, productos | Sí: costos/margen/comisiones/precio MWT → `***` |
 | **operator** | Operación día a día (estados, líneas, docs) | expedientes, documentos, SAP, nodos, inventario | Sí: costos/margen/comisiones |
 | **finance** | Pagos/crédito | pagos, cobros, transferencias | Sí: comisiones/margen |
@@ -167,7 +167,7 @@ Variables de entorno (ver `.env.example`): `MWT_API_BASE`, `MWT_MCP_TOKEN`,
 `MWT_MCP_TRANSPORT` (`stdio`|`http`), `MWT_MCP_HOST`, `MWT_MCP_PORT`,
 `MWT_HTTP_TIMEOUT`, `MWT_MCP_READONLY` (`1` = solo lectura),
 `MWT_MCP_DOMAIN` (`comercial`|`logistica`|`finanzas`; vacío = monolito),
-`MWT_MCP_RBAC` (`1` default = filtra tools por rol; `0` = lista las 105).
+`MWT_MCP_RBAC` (`1` default = filtra tools por rol; `0` = lista las 182).
 
 ---
 
@@ -189,7 +189,7 @@ debe ver.
 Los valores se reemplazan por `***` (la clave se conserva para no romper el
 shape que el agente espera). La implementación vive en
 `mcp_server/mwt_mcp/redact.py` y el wrapper `_safe_role` en `server.py`
-envuelve las ~96 tools de negocio. Sin identidad propagada (ServiceToken
+envuelve las 182 tools de negocio. Sin identidad propagada (ServiceToken
 puro / stdio) no se redacta (comportamiento anterior).
 
 Catálogo alineado con `POL_VISIBILIDAD` del portal B2B

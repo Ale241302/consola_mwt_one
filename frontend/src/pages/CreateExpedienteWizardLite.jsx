@@ -597,25 +597,29 @@ export default function CreateExpedienteWizardLite() {
         // un subconjunto de líneas y cambió operador o cliente, esas líneas se
         // mueven a un expediente NUEVO (misma OC); el original conserva el resto.
         if (isFullEdit) {
-          // SPLIT: basta con seleccionar líneas reales (existentes en el
-          // expediente). Se mueven a un expediente NUEVO con el operador/
-          // cliente actuales (cambien o no). Sin selección â†’ todo se mantiene.
-          const split_line_ids = orderLines
-            .filter((l) => l.isSelected && l.tmpId && initialIds.has(l.tmpId))
-            .map((l) => l.tmpId);
-          if (split_line_ids.length) {
-            body.split_line_ids = split_line_ids;
-            // Split PARCIAL: cantidades a separar por línea (default = total).
+          // Ola 5 · 2026-11-03 · Separar líneas exige INTENCIÓN explícita.
+          // Marcar el checkbox para editar una cantidad ya NO parte el
+          // expediente: sólo se separa si cambió el cliente o si el usuario
+          // pidió separar menos cantidad que la de la línea (`splitQty`).
+          const selected = orderLines
+            .filter((l) => l.isSelected && l.tmpId && initialIds.has(l.tmpId));
+          if (selected.length) {
             const split_quantities = {};
-            orderLines.forEach((l) => {
-              if (l.isSelected && l.tmpId && initialIds.has(l.tmpId)) {
-                const tot = Number(l.cantidad) || 0;
-                const sq = (l.splitQty == null ? tot : Number(l.splitQty));
-                split_quantities[l.tmpId] = Math.max(0, Math.min(sq || tot, tot));
-              }
+            let wantsPartial = false;
+            selected.forEach((l) => {
+              const tot = Number(l.cantidad) || 0;
+              const sq = (l.splitQty == null ? tot : Number(l.splitQty));
+              const clamp = Math.max(0, Math.min(sq || tot, tot));
+              split_quantities[l.tmpId] = clamp;
+              if (clamp > 0 && clamp < tot) wantsPartial = true;
             });
-            body.split_quantities = split_quantities;
-            if (clientChanged) body.client_id = selClient.id;
+            const wantsSplit = wantsPartial || clientChanged;
+            if (wantsSplit) {
+              body.split_line_ids = selected.map((l) => l.tmpId);
+              body.split_quantities = split_quantities;
+              body.split_intent = true;
+              if (clientChanged) body.client_id = selClient.id;
+            }
           }
         }
         if (clientChanged && !isFullEdit && !pendingSplitBodyRef.current) {

@@ -678,12 +678,80 @@ table.ct .trow td{border-top:2px solid var(--navy);}
 # Vista CLIENTE reutilizable (Sprint 2026-07-19)
 # La usa la tri-vista (tab) y el renderer standalone de audiencia CLIENT.
 # ─────────────────────────────────────────────────────────────────────
+def _entrega_por_incoterm(expediente) -> tuple[str, str]:
+    """Devuelve (etiqueta_entrega, nota_de_entrega) según el incoterm real.
+
+    Ola 5 · 2026-11-03 · antes la vista CLIENTE imprimía siempre
+    "DDP bodega (nacionalizado)" aunque el expediente fuera FOB/CIF/EXW.
+    Un documento que el cliente lee no puede afirmar una condición de entrega
+    que no fue pactada.
+    """
+    inc = (getattr(expediente, "incoterm", None) or "").strip().upper()
+    mwt_nac = (
+        "Entrega <strong>DDP</strong> (Delivered Duty Paid) en bodega del "
+        "cliente, mercancía nacionalizada por {mwt} — el cliente no gestiona "
+        "importación ni aduana."
+    )
+    if inc == "DDP":
+        return "DDP bodega (nacionalizado)", mwt_nac
+    if inc == "FOB":
+        return "FOB puerto de origen", (
+            "Entrega <strong>FOB</strong> (Free On Board) en el puerto de "
+            "origen. El cliente gestiona el flete internacional, la importación "
+            "y la aduana."
+        )
+    if inc == "CIF":
+        return "CIF puerto de destino", (
+            "Entrega <strong>CIF</strong> (Cost, Insurance and Freight) en el "
+            "puerto de destino, con flete y seguro incluidos hasta ese punto. "
+            "La importación y la aduana las gestiona el cliente."
+        )
+    if inc == "CIP":
+        return "CIP destino convenido", (
+            "Entrega <strong>CIP</strong> (Carriage and Insurance Paid To) en "
+            "el destino convenido, con transporte y seguro incluidos hasta ese "
+            "punto. La importación y la aduana las gestiona el cliente."
+        )
+    if inc == "CFR":
+        return "CFR puerto de destino", (
+            "Entrega <strong>CFR</strong> (Cost and Freight) en el puerto de "
+            "destino, con flete incluido y seguro a cargo del cliente."
+        )
+    if inc == "CPT":
+        return "CPT destino convenido", (
+            "Entrega <strong>CPT</strong> (Carriage Paid To) en el destino "
+            "convenido, con transporte incluido y seguro a cargo del cliente."
+        )
+    if inc in ("DAP", "DPU"):
+        return f"{inc} destino convenido", (
+            f"Entrega <strong>{inc}</strong> en el destino convenido. La "
+            "importación y los derechos de aduana los gestiona el cliente."
+        )
+    if inc == "EXW":
+        return "EXW bodega del proveedor", (
+            "Entrega <strong>EXW</strong> (Ex Works) en bodega del proveedor. "
+            "El cliente gestiona el retiro, el transporte, la exportación, la "
+            "importación y la aduana."
+        )
+    if inc == "FCA":
+        return "FCA transportista", (
+            "Entrega <strong>FCA</strong> (Free Carrier) al transportista "
+            "designado por el cliente."
+        )
+    return "Según contrato", (
+        "Condición de entrega según contrato. Consultar las condiciones "
+        "pactadas antes de gestionar el despacho."
+    )
+
+
 def _build_view_cliente(*, expediente, cliente, groups, mwt, brand_name,
                         codigo, cli_days, po_codigo, total_pares, total_cli,
                         today, active=False, with_print_buttons=True):
     """HTML de la vista CLIENTE (V2): card cliente, condiciones (valor
     neto en letras), datos proforma, líneas con precio unit_price_client,
-    observaciones DDP y desglose por talla en pills."""
+    observaciones por incoterm y desglose por talla en pills."""
+    entrega_label, entrega_nota = _entrega_por_incoterm(expediente)
+    entrega_nota = entrega_nota.replace("{mwt}", _esc(str(mwt.get("razon_social") or "")))
     rows_cli = []
     for i, g in enumerate(groups, 1):
         rows_cli.append(
@@ -730,7 +798,7 @@ def _build_view_cliente(*, expediente, cliente, groups, mwt, brand_name,
       <div class="card-b">
         <div class="sr"><span class="k">Forma de Pago</span><span class="v">{_esc(_forma_pago_label(expediente.forma_pago))}</span></div>
         <div class="sr"><span class="k">Plazo de pago</span><span class="v">{cli_days} días</span></div>
-        <div class="sr"><span class="k">Entrega</span><span class="v" style="font-size:11px;">DDP bodega (nacionalizado)</span></div>
+        <div class="sr"><span class="k">Entrega</span><span class="v" style="font-size:11px;">{_esc(entrega_label)}</span></div>
         <div class="sr"><span class="k">Moneda</span><span class="v" style="font-size:11px;">Dólares (USD)</span></div>
         <div class="sr"><span class="k">Valor Neto</span><span class="v" style="font-size:9.5px;font-style:italic;">{_esc(_money_words_es(total_cli))}</span></div>
       </div>
@@ -756,7 +824,7 @@ def _build_view_cliente(*, expediente, cliente, groups, mwt, brand_name,
       </tbody>
     </table>
   </div>
-  <div class="notes-card"><strong>Observaciones:</strong> Entrega <strong>DDP</strong> (Delivered Duty Paid) en bodega del cliente, mercancía nacionalizada por {_esc(mwt["razon_social"])} — el cliente no gestiona importación ni aduana. Ref. PO {_esc(po_codigo)}. Operado por {_esc(mwt["razon_social"])}. Precios sujetos a ajuste por flete definitivo.</div>
+  <div class="notes-card"><strong>Observaciones:</strong> {entrega_nota} Ref. PO {_esc(po_codigo)}. Operado por {_esc(mwt["razon_social"])}. Precios sujetos a ajuste por flete definitivo.</div>
   {_talla_sections(groups, "Desglose por talla")}
   {buttons}
 </div>
