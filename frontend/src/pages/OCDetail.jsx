@@ -922,7 +922,25 @@ export default function ScreenOCDetail() {
       // blob:text/html se queda en blanco en Chrome. El visor
       // proforma-html responde text/html inline (página normal); como
       // navegación top-level no manda headers, le adjuntamos ?token=.
-      const openInlineHtml = (target) => {
+      // Ola 5 · 2026-11-03 · enlace firmado de un solo recurso (10 min):
+      // la proforma se abre sin el JWT de la cuenta en la URL.
+      const openInlineHtml = async (target) => {
+        const m = String(target || "").match(/\/api\/expedientes\/([^/]+)\/proforma-html\b/);
+        if (m) {
+          try {
+            const codigo = new URL(target, window.location.origin).searchParams.get('codigo');
+            const qs = codigo ? `?codigo=${encodeURIComponent(codigo)}` : '';
+            const r = await fetch(`/api/expedientes/${m[1]}/proforma-link/${qs}`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${getToken() || ''}` },
+            });
+            const j = await r.json().catch(() => ({}));
+            if (j?.url) {
+              window.open(j.url, '_blank', 'noopener,noreferrer');
+              return;
+            }
+          } catch { /* fallback abajo */ }
+        }
         const token = getToken() || '';
         const sep = target.includes('?') ? '&' : '?';
         window.open(`${target}${sep}token=${encodeURIComponent(token)}`, '_blank', 'noopener,noreferrer');

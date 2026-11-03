@@ -429,7 +429,40 @@ class QueryTokenJWTAuthentication(MwtJWTAuthentication):
         else:
             raw = request.query_params.get("token") or None
         if not raw:
+            # Ola 5 · 2026-11-03 · enlace firmado de UN recurso (`?dt=`).
+            # No es un JWT: no sirve como Bearer ni abre otros endpoints, y
+            # vence. Se usa para abrir la proforma en una pestaña nueva sin
+            # poner el token de la cuenta en la URL.
+            dt = request.query_params.get("dt")
+            if dt:
+                payload = self._resolve_dt(request, dt)
+                if payload:
+                    user = self.get_user({"user_uuid": payload.get("u")})
+                    return (user, {"dt": True})
             return None
         validated = self.get_validated_token(raw)
         user = self.get_user(validated)
         return (user, validated)
+
+    @staticmethod
+    def _resolve_dt(request, dt):
+        """Valida un `dt` emitido para ESTE recurso. Devuelve payload o None."""
+        import time as _time
+
+        try:
+            from apps.storage.views import read_download_link_token
+        except Exception:  # noqa: BLE001
+            return None
+        try:
+            payload = read_download_link_token(dt)
+        except Exception:  # noqa: BLE001 - firma inválida / token corrupto
+            return None
+        if int(payload.get("exp") or 0) < int(_time.time()):
+            return None
+        match = getattr(request, "resolver_match", None)
+        exp_id = (getattr(match, "kwargs", None) or {}).get("expediente_id")
+        if not exp_id:
+            return None
+        if str(payload.get("k") or "") != f"proforma:{exp_id}":
+            return None
+        return payload

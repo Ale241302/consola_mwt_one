@@ -461,9 +461,28 @@ export default function ScreenFusionDetail() {
       url = storageUrl(url, { forceToken: true }) || url;
       // Sprint 2026-09-03 (rev2) · HTML inline SIN blob. window.open a un
       // blob:text/html queda en blanco en Chrome; en cambio el endpoint
-      // proforma-html responde text/html inline (como una página normal),
-      // y como top-level nav no manda headers, le adjuntamos ?token=.
-      const openInlineHtml = (target) => {
+      // proforma-html responde text/html inline (como una página normal).
+      // Ola 5 · 2026-11-03 · se abre con un enlace FIRMADO de un solo
+      // recurso (?dt=, 10 min): ya no viaja el JWT de la cuenta en la URL.
+      const openInlineHtml = async (target) => {
+        const m = String(target || "").match(/\/api\/expedientes\/([^/]+)\/proforma-html\b/);
+        if (m) {
+          try {
+            const qs = new URLSearchParams();
+            const codigo = new URL(target, window.location.origin).searchParams.get("codigo");
+            if (codigo) qs.set("codigo", codigo);
+            const r = await fetch(
+              `/api/expedientes/${m[1]}/proforma-link/${qs.toString() ? `?${qs}` : ""}`,
+              { method: "POST", headers: { Authorization: `Bearer ${getToken() || ""}` } },
+            );
+            const j = await r.json().catch(() => ({}));
+            if (j?.url) {
+              window.open(j.url, "_blank", "noopener,noreferrer");
+              return;
+            }
+          } catch { /* fallback abajo */ }
+        }
+        // Fallback: visor por descarga (proxy con token).
         const token = getToken() || "";
         const sep = target.includes("?") ? "&" : "?";
         window.open(`${target}${sep}token=${encodeURIComponent(token)}`, "_blank", "noopener,noreferrer");
@@ -578,6 +597,12 @@ export default function ScreenFusionDetail() {
     m.lineas.map((l) => ({ l, badge: badgeOf(m), m }))
   );
   const totalValue = allLines.reduce((a, { l }) => a + lineTotal(l), 0);
+  // Ola 5 · 2026-11-03 · el grupo NO recalcula dinero desde líneas: suma la
+  // factura/pagos/saldo que ya calcula el backend para cada miembro
+  // (decisión A: el grupo es la suma de sus miembros).
+  const invoicedTotal = members.reduce((a, m) => a + Number(m.exp.total_invoiced || 0), 0);
+  const paidTotal     = members.reduce((a, m) => a + Number(m.exp.total_paid || 0), 0);
+  const balanceTotal  = members.reduce((a, m) => a + Number(m.exp.balance || 0), 0);
   const totalUnits = allLines.reduce((a, { l }) => a + Number(l.qty || 0), 0);
   const linesWithSap = allLines.filter(({ l }) => !!l.sap).length;
   const covPct = allLines.length ? linesWithSap / allLines.length : 0;
@@ -945,6 +970,9 @@ export default function ScreenFusionDetail() {
                 ? `Valor combinado de ${members.length} expedientes`
                 : `Combined value of ${members.length} expedientes`}
             </span>
+            <div style={{ marginTop: 4, font: "600 11.5px/1.5 var(--font-body)", color: "var(--text-muted)" }}>
+              {es ? "Facturado" : "Invoiced"} {fmtMoney(invoicedTotal)} · {es ? "Pagado" : "Paid"} {fmtMoney(paidTotal)} · {es ? "Saldo" : "Balance"} {fmtMoney(balanceTotal)}
+            </div>
           </div>
         </div>
         {isAdmin && (

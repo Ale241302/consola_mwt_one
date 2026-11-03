@@ -384,6 +384,50 @@ def proforma_html_dynamic(request, expediente_id):
 # el flag operated_by_mwt. El expediente no tiene flete/seguro, así que
 # CIF = mercadería (extra=0) en la sección de nacionalización.
 # ═════════════════════════════════════════════════════════════════════
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def proforma_link(request, expediente_id):
+    """POST /api/expedientes/{id}/proforma-link/ — URL firmada para la proforma.
+
+    Devuelve `{url, expires_at, expires_in}` con `?dt=<token firmado>`: el
+    token vale SÓLO para la proforma de ESTE expediente, vence en 10 minutos
+    y no es un JWT (no sirve como Bearer ni abre la API). Reemplaza el
+    `?token=<JWT de la cuenta>` que usaba el frontend al abrir la proforma
+    en una pestaña nueva.
+    """
+    import time as _time
+    from urllib.parse import quote as _quote
+
+    from django.conf import settings as _settings
+
+    try:
+        uuid.UUID(str(expediente_id))
+    except (TypeError, ValueError):
+        return Response({"detail": "expediente_id inválido"}, status=400)
+
+    # Scope: el usuario debe poder ver ese expediente (bypass o en su scope).
+    try:
+        from apps.core.scoped_querysets import scoped_expediente_ids
+
+        exp_ids = scoped_expediente_ids(request.user)
+        if exp_ids is not None and str(expediente_id) not in exp_ids:
+            return Response({"detail": "No autorizado para este expediente"}, status=403)
+    except Exception:  # noqa: BLE001 - fail-open igual que el resto del scope
+        pass
+
+    from apps.storage.views import mint_download_link_token
+
+    token, exp = mint_download_link_token(f"proforma:{expediente_id}", 600, request.user)
+    base = (getattr(_settings, "CONSOLA_PUBLIC_URL", "") or "https://consola.mwt.one").rstrip("/")
+    codigo = (request.query_params.get("codigo") or "").strip()
+    q = f"&codigo={_quote(codigo, safe='')}" if codigo else ""
+    return Response({
+        "url": f"{base}/api/expedientes/{expediente_id}/proforma-html/?dt={token}{q}",
+        "expires_at": exp,
+        "expires_in": max(0, exp - int(_time.time())),
+    })
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def factura_payload(request, expediente_id):

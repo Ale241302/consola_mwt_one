@@ -18,7 +18,9 @@ from .views_builder_artifacts import (
     BuilderArtifactsListCreateView, BuilderArtifactDetailView,
     builder_templates_list, builder_template_detail,
 )
-from .views_proforma import generate_proforma, proforma_html_dynamic, factura_payload
+from .views_proforma import (
+    generate_proforma, proforma_html_dynamic, factura_payload, proforma_link,
+)
 from .views_pronto_pago import apply_pronto_pago
 from .views_product_ocs import ProductOcsView
 from .views_timeline import ExpedienteTimelineBundleView
@@ -121,6 +123,10 @@ urlpatterns = [
     # expediente con el mismo generador que la factura de transferencia.
     path("expedientes/<uuid:expediente_id>/factura-payload/",
          factura_payload, name="expedientes-factura-payload"),
+    # Ola 5 · enlace firmado de un solo recurso para abrir la proforma sin
+    # poner el JWT de la cuenta en la URL.
+    path("expedientes/<uuid:expediente_id>/proforma-link/",
+         proforma_link, name="expedientes-proforma-link"),
 
     # Sprint 2026-05-10 · Aplica tier de pronto pago a unit_price_client
     # de las líneas matched (SKU+talla viene del extractor IA de proforma).

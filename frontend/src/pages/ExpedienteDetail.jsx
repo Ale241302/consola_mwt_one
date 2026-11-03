@@ -1881,29 +1881,22 @@ function PaymentsTab({
   // {date, method, ref, applied_to, amount, status} para no romper la demo.
   const isReal = !isHero;
 
-  const clientInvoicedFromLines = (Array.isArray(lines) ? lines : []).reduce(
-    (acc, l) => acc + Number(l?.qty || 0) * Number(l?.unit_price_client || l?.unit_price || 0),
-    0,
-  );
-  const mwtInvoicedFromLines = (Array.isArray(lines) ? lines : []).reduce(
-    (acc, l) => acc + Number(l?.qty || 0) * Number(l?.unit_price_mwt || l?.unit_price_client || l?.unit_price || 0),
-    0,
-  );
+  // Ola 5 · 2026-11-03 · el backend ya entrega la factura y los pagos reales
+  // (financials.py). Se elimina el recálculo desde líneas: era una segunda
+  // definición del mismo número (y usaba unit_price/unit_price_client, que
+  // ahora conviven con el total facturado real).
+  const invoiced = Number(exp?.total_invoiced || 0);
+  const mwtInvoiced = Number(exp?.total_invoiced || 0);
 
-  const effectiveClientInvoiced = clientInvoicedFromLines > 0
-    ? clientInvoicedFromLines
-    : Number(exp?.total_invoiced || 0);
-
-  const effectiveMwtInvoiced = mwtInvoicedFromLines > 0
-    ? mwtInvoicedFromLines
-    : (Number(exp?.total_invoiced || 0) || clientInvoicedFromLines);
+  const effectiveClientInvoiced = invoiced;
+  const effectiveMwtInvoiced = mwtInvoiced;
 
   const isMwt = isMwtOperated(exp?.operating_company_id);
   const showMwtTotal = isMwt && !isClient;
 
-  const effectiveInvoiced = isClient ? effectiveClientInvoiced : effectiveClientInvoiced;
+  const effectiveInvoiced = effectiveClientInvoiced;
   const effectivePaid     = Number(exp?.total_paid || 0);
-  const effectiveBalance  = Math.max(0, effectiveInvoiced - effectivePaid);
+  const effectiveBalance  = Number(exp?.balance ?? Math.max(0, effectiveInvoiced - effectivePaid));
   const effectivePct = effectiveInvoiced > 0
     ? (effectivePaid / effectiveInvoiced) * 100
     : 0;
@@ -3269,15 +3262,8 @@ function TrackingSummaryCard({ exp, shippingInfo, lines = [], lang }) {
   };
   const tech = (exp?.status || exp?.estado || '').toUpperCase();
   const map  = STATE_PUBLIC[tech] || { es: tech || '—', en: tech || '—', step: 0 };
-  // Sprint 2026-05-26 (CEO) - vista cliente: usar SUM(qty * unit_price_client)
-  // de las lineas en lugar del exp.total_invoiced (que es la factura interna).
-  const _clientInvoiced = (Array.isArray(lines) ? lines : []).reduce(
-    (acc, l) => acc + Number(l?.qty || 0) * Number(l?.unit_price_client || 0),
-    0,
-  );
-  const _denom = _clientInvoiced > 0
-    ? _clientInvoiced
-    : Number(exp?.total_invoiced || 0);
+  // Ola 5 · 2026-11-03 · cobertura = pagos / factura real (backend).
+  const _denom = Number(exp?.total_invoiced || 0);
   const coverage = _denom > 0
     ? Math.round((Number(exp?.total_paid || 0) / _denom) * 100)
     : 0;

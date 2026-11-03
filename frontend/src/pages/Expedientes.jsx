@@ -958,13 +958,12 @@ export default function ScreenExpedientes() {
                     {effectiveView === 'financial' && <>
                       <td className="td-money">
                         {/* Ola 5 · 2026-11-03 · "Facturado" es la factura
-                            comercial (ART-13). Nunca el valor de pedido: el
-                            fallback anterior mostraba +4.325 en el 2473 y
-                            −14.494 en el 2472. */}
-                        {fmtMoney(e.total_invoiced || 0)}
-                        {String(e.invoiced_source || '') === 'NONE' && (
-                          <span title="Sin factura comercial emitida" style={{marginLeft:4,opacity:.45,fontSize:10}}>·</span>
-                        )}
+                            comercial (ART-13). Sin factura se muestra "—"
+                            (no aplica), nunca el valor de pedido ni un 0 que
+                            se confunda con "facturado cero". */}
+                        {String(e.invoiced_source || '') === 'NONE'
+                          ? <span title="Sin factura comercial emitida" style={{ color: 'var(--text-muted)' }}>—</span>
+                          : fmtMoney(e.total_invoiced || 0)}
                       </td>
                       {!isClient && (
                         <td className="td-money" style={{ textAlign: 'right' }}>

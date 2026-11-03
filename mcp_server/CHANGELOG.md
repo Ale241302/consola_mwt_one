@@ -1,3 +1,6 @@
+> Nota: los conteos de tools de cada versiÃ³n son los de esa versiÃ³n.
+> El total vigente es **182**.
+
 # MWT.ONE MCP — Changelog
 
 Todos los cambios notables del servidor MCP `mwt_mcp` (y el backend que lo

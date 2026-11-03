@@ -1,3 +1,9 @@
+> **Documento histÃ³rico.** Refleja el estado del MCP en la fecha en que se escribiÃ³
+> (los conteos de tools que aparecen abajo â€”99 / 105 / 125â€” quedaron obsoletos).
+> Hoy el servidor registra **182** herramientas (169 @mcp.tool() Ãºnicos + 13 de
+> presentaciÃ³n); un admin ve 182, el rol gente_mcp 177 y client_b2b 51.
+> Fuente vigente: docs/rol-agente-mcp-propuesta.md. No se reescribe el cuerpo
+> para preservar el registro.
 # Auditoría MCP Server — Flujo Sondel Costa Rica 2026
 
 **Fecha de auditoría:** 2026-06-24  
