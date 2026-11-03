@@ -25,7 +25,11 @@ from django.db import connection
 log = logging.getLogger(__name__)
 
 CLIENT_ROLE_ALIASES = {"client", "cliente", "client_b2b"}
-CEO_ADMIN_ROLES = {"superadmin", "admin", "ceo"}
+# Ola 5 · 2026-11-03 · `agente_mcp` es un rol interno equivalente a admin para
+# VISIBILIDAD (finanzas, márgenes, analytics CEO), pero la matriz RBAC le
+# quita delete/usuarios/roles. No entra en `_permissions_for_role` (allí el
+# wildcard es sólo admin/superadmin), así que su restricción se respeta.
+CEO_ADMIN_ROLES = {"superadmin", "admin", "ceo", "agente_mcp"}
 
 
 def normalize_role(role) -> str:

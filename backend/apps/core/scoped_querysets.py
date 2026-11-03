@@ -48,7 +48,12 @@ from django.db.models import Q, QuerySet
 
 # Spec del CEO (2026-05-22): SOLO estos roles bypassean el scope.
 # NO incluir ceo / manager / finance / operator / viewer / client_b2b.
-BYPASS_ROLES: Tuple[str, ...] = ("superadmin", "admin")
+# Ola 5 · 2026-11-03 · `agente_mcp` (rol de agentes MCP) también ve Todo el
+# dato: es un rol interno operativo al que la matriz RBAC le quita las acciones
+# destructivas y de administración (delete, usuarios.*, roles.*), pero que
+# necesita el mismo scope de datos que admin para operar. Sin esto, un usuario
+# no-bypass con legal_entity_ids=[] cae en qs.none() y no vería NADA.
+BYPASS_ROLES: Tuple[str, ...] = ("superadmin", "admin", "agente_mcp")
 
 
 def _user_role(user) -> str:

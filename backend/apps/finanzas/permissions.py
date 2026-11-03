@@ -9,7 +9,9 @@ mapeado a admin en el JWT).
 from rest_framework.permissions import BasePermission
 
 
-_CEO_ROLES = {"superadmin", "admin", "ceo"}
+# Ola 5 · 2026-11-03 · `agente_mcp` (rol de agentes MCP) tiene visibilidad
+# financiera completa; la matriz RBAC le quita delete/usuarios/roles.
+_CEO_ROLES = {"superadmin", "admin", "ceo", "agente_mcp"}
 
 
 class IsCeoOrAdmin(BasePermission):

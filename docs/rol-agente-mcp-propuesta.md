@@ -1,7 +1,22 @@
-# Rol `agente_mcp` — propuesta para aprobación del CEO
+# Rol `agente_mcp` — ACTIVADO (2026-11-03)
 
-> Estado: **PROPUESTA — no creada en la base de datos.** Se activa solo con la
-> aprobación explícita (ver §5). Fecha: 2026-11-03.
+> Estado: **ACTIVO en producción.** Creado desde `/roles` (API de la misma
+> consola), matriz guardada y sincronizada a `core.roles`. Usuario del agente
+> creado desde `/usuarios`.
+
+## 0. Resumen de lo que quedó activo
+
+| Qué | Valor |
+|---|---|
+| Rol | `agente_mcp` — "Agente MCP (operación)" · `is_system=false` |
+| Matriz | 21 módulos × 6 acciones (sin `delete`) = **121 permisos** |
+| Tabla que lee el MCP | `core.roles.permissions` (21 módulos / 121 acciones / 0 `delete`) |
+| Usuario | `agente@muitowork.com` — "Agente MCP" · rol `agente_mcp` · activo |
+| IdP | existe y está activo en Authentik (username `agente`) |
+| Tools visibles en el MCP | **177** de 182 (se ocultan las 4 de borrado + `mwt_diag_scope`) |
+
+La contraseña inicial se entregó por canal directo (no se guarda en este repo).
+Recomendación: cambiarla en `/usuarios` → Reset tras el primer uso.
 
 ## 1. Problema
 
@@ -13,46 +28,47 @@ agente hereda **todo**, incluido:
 - `usuarios.*` y `roles.*` (administración de usuarios y de la matriz RBAC)
 - `finanzas.*` de escritura (saldo inicial, metas, comisiones)
 
-Un error del modelo (o un prompt malicioso dentro de un PDF/OCR) puede llegar a
-un borrado o a un cambio de permisos. El objetivo del rol nuevo es **quitar el
-poder destructivo y de administración**, no el trabajo diario.
+Un error del modelo (o un prompt malicioso dentro de un PDF/OCR) podía llegar a
+un borrado o a un cambio de permisos. El rol nuevo quita el poder destructivo y
+de administración, no el trabajo diario.
 
 ## 2. Diseño
 
-Rol nuevo: `agente_mcp` — nombre visible "Agente MCP (operación)", `is_system=false`.
-
-Regla base: **todo lo de Admin (CEO) MENOS**:
+Rol `agente_mcp` = todo lo de Admin (CEO) **menos**:
 
 | Se excluye | Motivo |
 |---|---|
 | `*.delete` en todos los módulos | el agente no borra; si hay que borrar, lo hace una persona |
 | `usuarios.*` | administración de usuarios |
 | `roles.*` | administración de la matriz RBAC (incluye `mwt_diag_scope`) |
-| `builder.delete`, `builder.artefacto_eliminar` | plantillas/artefactos del Builder |
-| `expedientes.anular`, `expediente_recrear` vía MCP | requieren `expedientes.update`, se restringen en la tool (ver §4) |
+| `builder.delete` | plantillas/artefactos del Builder |
 
-Se conserva (lectura + escritura operativa) en los 21 módulos restantes:
+Se conserva lectura + escritura operativa en 20 módulos, y solo lectura en
+`analytics` (charts/reportes, no se escribe nada).
 
-`analytics`, `builder`, `cartera`, `clientes`, `correo`, `dashboard`,
-`expedientes`, `finanzas`, `historial-precios`, `inventario`, `marcas`, `nodos`,
-`notificaciones`, `pagos`, `portal`, `productos`, `sizing`, `storage`, `tareas`,
-`tickets`, `transferencias`.
+### Visibilidad de datos (cambio de código necesario)
 
-Acciones por módulo: `view`, `create`, `update`, `upload_doc`, `download_doc`,
-`view_doc` (sin `delete`).
+`agente_mcp` no es `admin`, así que por defecto caía en
+`scoped_querysets.BYPASS_ROLES` = sólo `(superadmin, admin)` → un usuario
+no-bypass con `legal_entity_ids=[]` recibe `qs.none()` y **no vería ningún
+expediente**. Se agregó `agente_mcp` a:
 
-## 3. Matriz propuesta (literal para copiar en /roles)
+- `backend/apps/core/scoped_querysets.py` · `BYPASS_ROLES` (scope de datos)
+- `backend/apps/core/permissions.py` · `CEO_ADMIN_ROLES` (analytics CEO)
+- `backend/apps/finanzas/permissions.py` · `_CEO_ROLES` (módulo finanzas)
+- `mcp_server/mwt_mcp/redact.py` · `_CEO_ADMIN_ROLES` (sin redacción de costos/márgenes)
 
-**Regla:** los 21 módulos de abajo, cada uno con las **6 acciones**
-`create, update, view, upload_doc, download_doc, view_doc` (sin `delete`).
+La **restricción** sigue viviendo en la matriz RBAC (`core.roles.permissions`):
+no hay wildcard para este rol.
 
-Módulos (21): `analytics, builder, cartera, clientes, correo, dashboard,
-expedientes, finanzas, historial-precios, inventario, marcas, nodos,
-notificaciones, pagos, portal, productos, sizing, storage, tareas, tickets,
-transferencias`.
+## 3. Matriz (literal guardada)
 
-Equivale a 21 × 6 = **126 pares** `modulo.accion`. JSON exacto para el campo
-`permissions` de `core.roles`:
+**Regla:** 20 módulos con las 6 acciones `create, update, view, upload_doc,
+download_doc, view_doc` (sin `delete`) + `analytics` solo `view`.
+
+Módulos: `analytics, builder, cartera, clientes, correo, dashboard, expedientes,
+finanzas, historial-precios, inventario, marcas, nodos, notificaciones, pagos,
+portal, productos, sizing, storage, tareas, tickets, transferencias`.
 
 ```json
 {
@@ -86,27 +102,37 @@ Equivale a 21 × 6 = **126 pares** `modulo.accion`. JSON exacto para el campo
 }
 ```
 
-> `analytics` va solo con `view`: son charts/reportes, no se escribe nada.
+## 4. Dos bugs de plataforma corregidos en el camino
 
-## 4. Efecto sobre las 182 tools del MCP
+1. **Guardar la matriz de un rol NUEVO fallaba con 500**
+   (`null value in column "id" of relation "role_permission"`): el
+   `update_or_create` intentaba INSERTAR con PK NULL. Corregido en
+   `backend/apps/roles/views.py` (get/create explícito con `uuid4`).
 
-- Se mantienen todas las de lectura y las de operación (crear/editar/subir).
-- **Desaparecen** del listado (RBAC por matriz):
-  `expediente_eliminar`, `documento_eliminar`, `transferencia_cancelar*`,
-  `transfer_costo_eliminar`, `builder_artefacto_eliminar`, `mwt_diag_scope`,
-  `mwt_audit_write_registry`.
-  (`*` cancelar transferencia requiere `update`; se puede excluir además en la
-  tool si querés que el agente no cancele nunca sin humano.)
-- `mwt_whoami` debe mostrar `rol: agente_mcp`.
+2. **Un rol nuevo nunca llegaba a `core.roles`**: la función
+   `users.sync_role_permissions_to_core()` sólo hacía `UPDATE`, así que el rol
+   vivía en `users.role_cat`/`users.role_permission` pero el JWT del MCP, el
+   enforcement y el filtrado de tools leían `core.roles` → **fail-closed: 0
+   tools**. Corregido en `backend/sql/M5_role_sync_upsert_core.sql` (INSERT si
+   falta la fila + backfill de los roles existentes).
 
-## 5. Activación (solo tras aprobación)
+## 5. Pruebas de aceptación (2026-11-03)
 
-1. Crear el rol en `/roles` → "Nuevo rol" con slug `agente_mcp` y la matriz de §3.
-2. Asignar `agente_mcp` al usuario/servicio del conector (usuario dedicado
-   `agente@muitowork.com`, no la cuenta personal del CEO).
-3. Probar: `mwt_whoami` → `agente_mcp`; `documento_eliminar` → rechazado;
-   `expediente_obtener` / `documento_listar` → OK.
+| Prueba | Resultado |
+|---|---|
+| Login del agente | ✅ 200 · rol en el JWT = `agente_mcp` |
+| `POST /api/auth/mcp-token/` para el agente | ✅ 21 módulos · 121 acciones · **0 con `.delete`** |
+| `mwt_whoami` por el MCP | ✅ rol `agente_mcp` |
+| Tools visibles en el MCP | ✅ 177 (antes 182); ninguna de borrado ni `mwt_diag_scope` |
+| Borrado de prueba por el MCP (`documento_eliminar`) | ✅ `TOOL_NOT_ALLOWED` |
+| Borrado por API directa (`DELETE /api/documentos/…`) | ✅ 403 |
+| Alta de usuario por API (`POST /api/users/`) | ✅ 403 |
+| Roles/matriz por API (`GET/PATCH /api/roles|permissions`) | ✅ 403 |
+| Consultas normales (`expediente_listar`, `expediente_obtener`, `finanzas_overview`) | ✅ 200 y datos visibles |
 
-> Decisión pendiente del CEO: ¿el agente puede **cancelar/anular** operaciones
-> (transferencia_cancelar, expediente_anular) o esas también quedan solo para
-> humanos? Por defecto la propuesta las deja **fuera**.
+## 6. Decisión pendiente (sin bloquear)
+
+`transferencia_cancelar` y `expediente_anular` requieren `*.update` y hoy
+**siguen permitidas** para el agente. Si se quieren reservar solo a humanos hay
+que gatearlas en la tool (`TOOL_MODULES` → acción inexistente o un guard
+explícito). No se cambió nada acá.

@@ -84,7 +84,10 @@ B2B_FORBIDDEN_KEYS: frozenset[str] = CEO_ONLY_KEYS | frozenset({
     "proforma", "proforma_codigo", "proforma_codigos",
 })
 
-_CEO_ADMIN_ROLES = {"superadmin", "admin", "ceo"}
+# Ola 5 · 2026-11-03 · `agente_mcp` (rol de agentes MCP) lee costos/márgenes
+# sin redacción: su restricción vive en la matriz RBAC (sin delete ni
+# administración), no en la redacción de campos.
+_CEO_ADMIN_ROLES = {"superadmin", "admin", "ceo", "agente_mcp"}
 
 
 def is_ceo_or_admin(role: str) -> bool:

@@ -218,24 +218,36 @@ class RoleGroupMatrixView(APIView):
         for cell in ser.validated_data["matrix"]:
             if cell["module"] not in valid_modules:
                 continue
-            obj, created = RolePermission.objects.update_or_create(
+            # Ola 5 · 2026-11-03 · fix: `update_or_create` sobre un modelo cuya PK
+            # UUID no tiene default intentaba INSERTAR con id=NULL →
+            # NotNullViolation (500) al guardar la matriz de un rol NUEVO.
+            # Se hace get/create explícito con id generado.
+            values = {
+                "can_create":       cell["can_create"],
+                "can_read":         cell["can_read"],
+                "can_update":       cell["can_update"],
+                "can_delete":       cell["can_delete"],
+                "can_upload_doc":   cell.get("can_upload_doc", False),
+                "can_download_doc": cell.get("can_download_doc", False),
+                "can_view_doc":     cell.get("can_view_doc", False),
+            }
+            obj = RolePermission.objects.filter(
                 role_slug=slug, module_slug=cell["module"],
-                defaults={
-                    "can_create":       cell["can_create"],
-                    "can_read":         cell["can_read"],
-                    "can_update":       cell["can_update"],
-                    "can_delete":       cell["can_delete"],
-                    "can_upload_doc":   cell.get("can_upload_doc", False),
-                    "can_download_doc": cell.get("can_download_doc", False),
-                    "can_view_doc":     cell.get("can_view_doc", False),
-                    "updated_by_id":    updated_by,
-                },
-            )
-            if created:
-                obj.id = uuid.uuid4()
-                obj.save()
+            ).first()
+            if obj is None:
+                RolePermission.objects.create(
+                    id=uuid.uuid4(),
+                    role_slug=slug,
+                    module_slug=cell["module"],
+                    updated_by_id=updated_by,
+                    **values,
+                )
                 n_created += 1
             else:
+                for field, val in values.items():
+                    setattr(obj, field, val)
+                obj.updated_by_id = updated_by
+                obj.save(update_fields=[*values.keys(), "updated_by_id", "updated_at"])
                 n_updated += 1
         return Response({
             "ok":        True,
