@@ -42,7 +42,7 @@ from rest_framework.views import APIView
 
 from .document_matchmaker import extract_document, cross_match
 from .models import Expediente
-from .views import _deny_client_mutation
+from .views import _deny_client_mutation, _file_from_storage_key as _file_from_storage_key_match
 
 log = logging.getLogger(__name__)
 
@@ -167,10 +167,12 @@ class UploadMatchView(APIView):
                 status=400,
             )
 
-        f = request.FILES.get("file") or request.FILES.get("document")
+        f = (request.FILES.get("file") or request.FILES.get("document")
+             or _file_from_storage_key_match(request))
         if not f:
             return Response(
-                {"detail": "Falta el archivo. Esperado bajo el campo 'file' (multipart)."},
+                {"detail": "Falta el archivo. Mandá 'file' (multipart) o "
+                           "'storage_key' (subida por enlace firmado)."},
                 status=400,
             )
 

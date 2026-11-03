@@ -298,6 +298,67 @@ def get_object_stream(key: str, *, bucket: Optional[str] = None):
     return client.get_object(bucket, key)
 
 
+def uploaded_file_from_key(key: str, *, bucket: Optional[str] = None):
+    """Devuelve un `SimpleUploadedFile` con el contenido de un key de MinIO.
+
+    Puente para los endpoints que esperan `request.FILES` (match_subir,
+    sap_upsert, sap_confirmar, analyze-sap): el agente sube el binario con un
+    enlace firmado y luego manda `storage_key` en lugar del multipart.
+    Devuelve None si no hay key o el objeto no existe.
+    """
+    key = (key or "").strip()
+    if not key:
+        return None
+    if "download/?key=" in key:
+        key = key.split("download/?key=")[-1].split("&")[0]
+    meta = stat_object(key, bucket=bucket)
+    if not meta.get("exists"):
+        return None
+    resp = get_object_stream(key, bucket=bucket)
+    if resp is None:
+        return None
+    try:
+        data = resp.read()
+    finally:
+        try:
+            resp.close()
+            resp.release_conn()
+        except Exception:  # noqa: BLE001
+            pass
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    name = key.rsplit("/", 1)[-1] or "archivo"
+    return SimpleUploadedFile(
+        name, data,
+        content_type=meta.get("content_type") or "application/octet-stream",
+    )
+
+
+def stat_object(key: str, *, bucket: Optional[str] = None) -> dict:
+    """Metadatos de un objeto de MinIO (para registrar archivos ya subidos).
+
+    Devuelve `{exists, available, size, content_type}`. No lanza: si el objeto
+    no existe o MinIO no responde, `exists=False`.
+    """
+    bucket = bucket or getattr(settings, "MINIO_BUCKET", "mwt-one")
+    client = _get_minio_client()
+    if client is None:
+        return {"exists": False, "available": False, "error": "storage_unavailable"}
+    try:
+        st = client.stat_object(bucket, key)
+        return {
+            "exists": True,
+            "available": True,
+            "size": int(getattr(st, "size", 0) or 0),
+            "content_type": getattr(st, "content_type", None),
+        }
+    except Exception as exc:  # noqa: BLE001 - NoSuchKey / bucket / red
+        msg = str(exc)
+        if "NoSuchKey" in msg or "NoSuchBucket" in msg or "Not Found" in msg:
+            return {"exists": False, "available": True}
+        return {"exists": False, "available": True, "error": msg[:200]}
+
+
 def make_object_key(scope: str, filename: str) -> str:
     """
     Genera una key única dentro del bucket: <scope>/<uuid>-<filename-saneado>.

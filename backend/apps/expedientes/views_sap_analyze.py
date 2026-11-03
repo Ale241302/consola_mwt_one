@@ -45,7 +45,7 @@ from rest_framework.views import APIView
 
 from .models import Expediente
 from .sap_extractor import analyze_sap_document
-from .views import _deny_client_mutation
+from .views import _deny_client_mutation, _file_from_storage_key as _file_from_storage_key_sap
 # Sprint 2026-05-04 (AG-03) · reusamos helpers del matchmaker:
 #   _resolve_add_line_pricing → cascada doc → CPA cliente → precio_lista
 #   _apply_update_qty         → UPDATE qty en expedientes.linea
@@ -76,10 +76,12 @@ class AnalyzeSapConfirmationView(APIView):
         if denied is not None:
             return denied
 
-        f = request.FILES.get("file") or request.FILES.get("documento_sap")
+        f = (request.FILES.get("file") or request.FILES.get("documento_sap")
+             or _file_from_storage_key_sap(request))
         if not f:
             return Response(
-                {"detail": "Falta el archivo. Esperado bajo el campo 'file'."},
+                {"detail": "Falta el archivo. Mandá 'file' (multipart) o "
+                           "'storage_key' (subida por enlace firmado)."},
                 status=400,
             )
 

@@ -17,13 +17,16 @@ Reglas:
 import base64
 import logging
 import mimetypes
+import time
 
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.views import APIView
 
+from django.core import signing as django_signing
 from django.http import HttpResponseRedirect, StreamingHttpResponse
 from django.conf import settings
 
@@ -87,6 +90,84 @@ def _is_public_key(key: str) -> bool:
         return False
     prefixes = getattr(settings, "STORAGE_PUBLIC_KEY_PREFIXES", [])
     return any(key.startswith(prefix) for prefix in prefixes)
+
+
+# ── Enlaces de descarga de UN solo archivo (MCP / agentes) ───────────────
+# Ola 5 · 2026-11-03 · P0 seguridad: las tools del MCP armaban
+# `/api/storage/download/?key=...&token=<JWT de la cuenta>` — un token de
+# acceso completo (1 h) metido en la URL de cada artefacto que devolvía
+# `inventario_artefactos_expediente`. Ese token servía como Bearer contra
+# toda la API y quedaba en logs/historial. Ahora se firma un token propio,
+# atado a UN key y con vencimiento: no es un JWT, no abre la API.
+_DOWNLOAD_LINK_SALT = "mwt.storage.download-link"
+_DOWNLOAD_LINK_DEFAULT_TTL = 600      # 10 min
+_DOWNLOAD_LINK_MAX_TTL = 3600         # 1 h
+
+
+def mint_download_link_token(key: str, ttl_seconds: int | None = None, user=None) -> tuple[str, int]:
+    """Firma un token de descarga atado a `key`. Devuelve (token, expires_at)."""
+    ttl = _DOWNLOAD_LINK_DEFAULT_TTL if not ttl_seconds else int(ttl_seconds)
+    ttl = max(60, min(ttl, _DOWNLOAD_LINK_MAX_TTL))
+    exp = int(time.time()) + ttl
+    token = django_signing.dumps(
+        {"k": str(key), "exp": exp, "u": str(getattr(user, "pk", "") or "")},
+        salt=_DOWNLOAD_LINK_SALT,
+        compress=True,
+    )
+    return token, exp
+
+
+def read_download_link_token(token: str) -> dict:
+    """Valida la firma del token. Levanta BadSignature si fue alterado.
+
+    El vencimiento se evalúa acá (no con `max_age`) para respetar el TTL con
+    el que se emitió el enlace.
+    """
+    payload = django_signing.loads(token, salt=_DOWNLOAD_LINK_SALT)
+    return payload if isinstance(payload, dict) else {}
+
+
+class StorageDownloadLinkView(APIView):
+    """POST /api/storage/download-link/ → enlace firmado de un archivo.
+
+    Body: { key: str, ttl: int (seg, default 600, máx 3600) }
+    Respuesta: { url, key, expires_at, expires_in }
+
+    Se emite SÓLO si el usuario puede ver ese key (`_user_can_access_key`), y
+    la URL no lleva credenciales de la cuenta: el token `dt` sirve únicamente
+    para ese objeto y vence.
+    """
+
+    required_module = "storage"
+    required_action = "download_doc"
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        key = str((request.data or {}).get("key") or "").strip()
+        if not key:
+            return Response({"detail": "Falta 'key'"}, status=400)
+        if "download/?key=" in key:
+            key = key.split("download/?key=")[-1]
+
+        try:
+            ttl = int((request.data or {}).get("ttl") or _DOWNLOAD_LINK_DEFAULT_TTL)
+        except (TypeError, ValueError):
+            ttl = _DOWNLOAD_LINK_DEFAULT_TTL
+
+        if not _user_can_access_key(request.user, key):
+            return Response({"detail": "No autorizado para este archivo"}, status=403)
+
+        token, exp = mint_download_link_token(key, ttl, request.user)
+        base = (getattr(settings, "CONSOLA_PUBLIC_URL", "") or "https://consola.mwt.one").rstrip("/")
+        from urllib.parse import quote as _quote
+
+        url = f"{base}/api/storage/download/?key={_quote(key, safe='')}&dt={token}"
+        return Response({
+            "url": url,
+            "key": key,
+            "expires_at": exp,
+            "expires_in": max(0, exp - int(time.time())),
+        })
 
 
 def _authenticate_token_from_query(request):
@@ -312,6 +393,28 @@ class StorageViewSet(viewsets.ViewSet):
 
         if _is_public_key(key):
             return _stream_object_response(key, public=True)
+
+        # Enlace firmado de un solo archivo (MCP / agentes). No es un JWT: no
+        # sirve como Bearer ni abre ningún otro endpoint, y vence.
+        dt = request.query_params.get("dt")
+        if dt:
+            try:
+                payload = read_download_link_token(dt)
+            except django_signing.BadSignature:
+                return Response({"detail": "Enlace de descarga inválido."}, status=401)
+            except Exception:  # noqa: BLE001 - token corrupto/base64 raro
+                return Response({"detail": "Enlace de descarga inválido."}, status=401)
+            if int(payload.get("exp") or 0) < int(time.time()):
+                return Response(
+                    {"detail": "El enlace de descarga venció. Pedí uno nuevo."},
+                    status=401,
+                )
+            if str(payload.get("k") or "") != str(key):
+                return Response(
+                    {"detail": "El enlace no corresponde a este archivo."},
+                    status=403,
+                )
+            return _stream_object_response(key, public=False)
 
         _authenticate_token_from_query(request)
 

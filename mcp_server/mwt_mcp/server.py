@@ -385,28 +385,54 @@ def _has_identity() -> bool:
         return False
 
 
-def _descarga_url_con_token(key: str) -> str:
-    """Fix 2026-08-19 · URL de descarga directa del backend CON el token del usuario.
+def _clean_storage_key(key: Any) -> str:
+    """Normaliza un key de MinIO (acepta la URL del proxy y objetos {key,url})."""
+    if isinstance(key, dict):
+        key = key.get("key") or key.get("url")
+    key = str(key or "").strip()
+    if "download/?key=" in key:
+        key = key.split("download/?key=")[-1]
+        key = key.split("&")[0]
+    return key
 
-    El endpoint /api/storage/download/?key=... exige autenticación para keys no
-    públicas (401 si no hay token). Cuando el MCP entrega una URL al usuario
-    (proforma, artefactos, documentos), le adjunta `&token=<jwt>` del usuario
-    conectado para que el enlace funcione al abrirlo en el navegador (el backend
-    lo autentica vía `_authenticate_token_from_query`). El token minted ya tiene
-    el scope correcto del usuario.
+
+def _descarga_link(key: Any, ttl_seconds: int = 600) -> dict:
+    """Enlace firmado de UN archivo (sin token de la cuenta).
+
+    Ola 5 · 2026-11-03 · P0 seguridad: antes se devolvía
+    `/api/storage/download/?key=...&token=<JWT de la cuenta>` — un access token
+    completo (1 h) dentro de la URL, que además servía como Bearer contra toda
+    la API y quedaba en logs/historial. Ahora el backend firma un token propio
+    atado a ese key y con vencimiento (`POST /api/storage/download-link/`).
+
+    Devuelve `{url, key, expires_at, expires_in}` o `{key, hint}` si el vínculo
+    no se pudo emitir (nunca un token de la cuenta).
     """
-    from urllib.parse import quote as _quote
-
-    base = f"{settings.public_api_base}/storage/download/?key={_quote(str(key), safe='')}"
+    clean = _clean_storage_key(key)
+    if not clean:
+        return {"hint": "Falta el key del archivo."}
     try:
-        from .jwt_minter import get_identity_token
+        res = api.post("storage/download-link/", {"key": clean, "ttl": int(ttl_seconds)})
+        if isinstance(res, dict) and res.get("url"):
+            return {
+                "url": res.get("url"),
+                "key": clean,
+                "expires_at": res.get("expires_at"),
+                "expires_in": res.get("expires_in"),
+            }
+        reason = (res or {}).get("detail") if isinstance(res, dict) else None
+    except Exception as exc:  # noqa: BLE001 - fail-safe: nunca romper la tool
+        reason = str(exc)[:200]
 
-        tok = get_identity_token()
-        if tok:
-            return f"{base}&token={tok}"
-    except Exception:  # noqa: BLE001 - sin token, la URL igual se entrega
-        pass
-    return base
+    return {
+        "key": clean,
+        "hint": (
+            "No se pudo emitir el enlace de descarga"
+            + (f" ({reason})" if reason else "")
+            + ". Usá `artefacto_archivo_descargar` con este `key` para obtener "
+              "una URL firmada de MinIO."
+        ),
+    }
 
 
 def _attach_artefacto_files(data: Any, role: str) -> Any:
@@ -440,7 +466,13 @@ def _attach_artefacto_files(data: Any, role: str) -> Any:
                         fkey = v.get("key") or v.get("url")
                         if "download/?key=" in str(fkey):
                             fkey = str(fkey).split("download/?key=")[-1]
-                        out["archivo_url"] = _descarga_url_con_token(fkey)
+                        link = _descarga_link(fkey)
+                        out["archivo_key"] = link.get("key") or _clean_storage_key(fkey)
+                        if link.get("url"):
+                            out["archivo_url"] = link["url"]
+                            out["archivo_expira"] = link.get("expires_at")
+                        elif link.get("hint"):
+                            out["archivo_hint"] = link["hint"]
                         out["archivo_nombre"] = v.get("name")
                         out["archivo_mime"] = v.get("mime")
                         out["archivo_size"] = v.get("size")
@@ -543,6 +575,34 @@ def _saneo_documentos(data: Any, role: str, expediente_ref: str | None = None) -
     return data
 
 
+def _exp_or_error(identificador: str) -> tuple[str | None, dict | None]:
+    """Resuelve un expediente (UUID/EXP-/OC/SAP/proforma) o devuelve error claro.
+
+    Ola 5 · 2026-11-03 · un identificador legible (ej. "2473-2026") que no se
+    resuelve NO debe llegar al backend (terminaba en 500/404 o en una lista
+    vacía silenciosa). Nunca devuelve lista vacía: error explícito.
+    """
+    v = (identificador or "").strip()
+    if not v:
+        return None, {
+            "error": True,
+            "code": "EXPEDIENTE_REQUERIDO",
+            "detail": "Falta el identificador del expediente (UUID, EXP-…, OC, SAP o proforma ####-####).",
+        }
+    rid = _resolve_expediente_id(v)
+    if not rid:
+        return None, {
+            "error": True,
+            "code": "EXPEDIENTE_NO_ENCONTRADO",
+            "detail": (
+                f"No existe un expediente para '{v}'. Probá con el número de "
+                "proforma (####-####), la OC, el SAP o el código EXP-…; podés "
+                "verificarlo con `expediente_buscar`."
+            ),
+        }
+    return rid, None
+
+
 def _resolve_expediente_id(identificador: str) -> str | None:
     """Resuelve un identificador de expediente (UUID, EXP-…, OC, SAP o proforma) al UUID.
 
@@ -585,6 +645,16 @@ def _resolve_expediente_id(identificador: str) -> str | None:
             _res = e.get("id")
             break
         if tn_pf and tn_pf in [(x or "").strip().lower() for x in (e.get("proforma_codigos") or [])]:
+            _res = e.get("id")
+            break
+        # Ola 5 · búsqueda parcial por el número de proforma: "2405" debe
+        # encontrar "2405-2026" (antes exigía el código completo y con q=2405
+        # el listado devolvía vacío).
+        if tn and any(
+            _norm_num(str(pf).split("-")[0]) == tn
+            for pf in (e.get("proforma_codigos") or [])
+            if pf
+        ):
             _res = e.get("id")
             break
     if _res:
@@ -1446,15 +1516,27 @@ def expediente_listar(
     `campos`: lista separada por comas (ej. "id,codigo,estado") para proyectar y ahorrar contexto
     (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
-    data = _project(
-        campos,
-        _safe_role(
-            lambda: api.get(
-                "expedientes/",
-                _params(oc=oc, client=client, estado=estado, phase_signal=phase_signal, q=q, limit=lim, offset=off),
-            )
+    data = _safe_role(
+        lambda: api.get(
+            "expedientes/",
+            _params(oc=oc, client=client, estado=estado, phase_signal=phase_signal, q=q, limit=lim, offset=off),
         )
     )
+    # Ola 5 · `q` del backend solo matchea el código interno (EXP-…). Si el
+    # usuario busca por OC/SAP/proforma (ej. "2405"), reintentamos con el
+    # resolvedor y devolvemos ese expediente en vez de una lista vacía.
+    if q:
+        rows = _as_rows(data)
+        if not rows:
+            rid = _resolve_expediente_id(q)
+            if rid:
+                one = _safe_role(lambda: api.get(f"expedientes/{rid}/"))
+                if isinstance(one, dict) and not one.get("error"):
+                    if isinstance(data, dict):
+                        data = {**data, "results": [one], "count": 1}
+                    else:
+                        data = [one]
+    data = _project(campos, data)
     return _present_codigos(data)
 
 
@@ -1500,11 +1582,14 @@ def expediente_buscar(
     normalizando prefijos 'PO'/'OC' y separadores.
 
     Recomendado pasar `client_id` para acotar la búsqueda. Devuelve
-    `{existe, total, matches:[{expediente_codigo, referencia_cliente, oc_codigos,
-    proforma_codigos, sap_codigos, estado, fusion_label, fusion_members}]}`.
-    Los UUIDs internos (id/expediente_id/oc_id/fusion_id) NUNCA se exponen;
-    para encadenar `expediente_obtener` usa `expediente_codigo` (EXP-…) que el
-    backend resuelve. Si `existe=true` → **NO crees**, edita el existente."""
+    `{existe, total, matches:[{codigos_presentacion, referencia_cliente,
+    oc_codigos, proforma_codigos, sap_codigos, estado, fusion_label,
+    fusion_members}]}`.
+    El código interno EXP- y los UUIDs (id/expediente_id/oc_id/fusion_id)
+    NUNCA se exponen: para encadenar `expediente_obtener` usá
+    `referencia_cliente` (proforma para admin/CEO; OC o SAP para el cliente),
+    que el resolvedor acepta igual que el EXP-….
+    Si `existe=true` → **NO crees**, edita el existente."""
     params = _params(client=client_id, oc_number=oc_number, proforma=proforma)  # oc_number/proforma los usa el backend si está parcheado
     raw = api.get("expedientes/", params)
     data = _safe_role(lambda: raw)
@@ -1852,6 +1937,144 @@ def expediente_edit_full_patch(expediente_id: str, cambios: dict) -> Any:
 # --- Documentos -------------------------------------------------------------
 @mcp.tool()
 @write_tool
+def archivo_subir_url(
+    filename: str,
+    scope: str = "documento",
+    content_type: str | None = None,
+    ttl_minutes: int = 15,
+) -> Any:
+    """PASO 1 de la subida por ENLACE FIRMADO (funciona con el MCP remoto).
+
+    Devuelve `{upload_url, key, method, headers, expires_at}`. El agente sube
+    los bytes del archivo local con un PUT directo:
+
+        curl -X PUT "<upload_url>" -H "Content-Type: <content_type>" \\
+             --data-binary "@C:/ruta/al/archivo.pdf"
+
+    y después registra el archivo:
+      · Documento del expediente → `documento_registrar_archivo(expediente_id, storage_key=<key>, kind=...)`
+      · Campo file de un artefacto → usa `key` dentro de `data[<field_id>]` y llama
+        `nodo_artefacto_crear` / `transfer_artefacto_crear`.
+      · match/SAP → `match_subir(...)`, `sap_consolidar`/`sap_confirmar` con `storage_key=<key>`.
+
+    `scope`: prefijo del key. Usá "documento" (default) para documentos del
+    expediente y "artifact-field/<field_id>" para campos de archivo de artefactos.
+    Ventaja frente a `file_path`: el archivo NUNCA pasa por el contexto del modelo
+    y no hace falta que el servidor MCP vea tu disco."""
+    g = _wguard()
+    if g:
+        return g
+    try:
+        ttl = max(1, min(int(ttl_minutes or 15), 60)) * 60
+    except (TypeError, ValueError):
+        ttl = 900
+    data = {"filename": filename, "scope": scope, "ttl": ttl}
+    if content_type:
+        data["content_type"] = content_type
+    res = _safe_role(lambda: api.post("storage/upload-url/", data))
+    if isinstance(res, dict) and res.get("key"):
+        res.setdefault("method", "PUT")
+        res["next"] = (
+            "Hacé PUT del binario a `upload_url` con el header Content-Type y "
+            "luego `documento_registrar_archivo(expediente_id=..., storage_key="
+            f"'{res['key']}', kind=...)`."
+        )
+    return res
+
+
+@mcp.tool()
+@write_tool
+def documento_registrar_archivo(
+    expediente_id: str | None = None,
+    storage_key: str | None = None,
+    kind: str = "OTRO",
+    codigo: str | None = None,
+    oc_id: str | None = None,
+    audience: str = "CLIENT",
+    filename: str | None = None,
+) -> Any:
+    """PASO 2 de la subida por ENLACE FIRMADO: registra en el expediente un
+    archivo YA subido a MinIO (el `key` que devolvió `archivo_subir_url`).
+
+    Úsala cuando el archivo está en tu PC: `archivo_subir_url` → PUT del binario
+    → esta tool. No requiere `file_path` y el binario no pasa por el modelo.
+    `kind`: OC, PROFORMA, BL, FACTURA, DUA, OTRO... `codigo`: número limpio
+    (para PROFORMA "####-####", para OC el nº de PO real)."""
+    g = _wguard()
+    if g:
+        return g
+    if not storage_key:
+        return {"error": True, "detail": "Falta storage_key (el `key` que devuelve archivo_subir_url)."}
+    if not expediente_id and not oc_id:
+        return {"error": True, "detail": "Pasa expediente_id (u oc_id); sin ellos el documento queda huérfano."}
+    if expediente_id:
+        # Ola 5 · mismo resolvedor que el resto de las tools (UUID, EXP-…,
+        # OC, SAP o nº de proforma).
+        expediente_id = _resolve_expediente_id(expediente_id) or expediente_id
+    if str(kind).upper() == "PROFORMA" and codigo and not re.fullmatch(r"\d{4}-\d{4}", str(codigo).strip()):
+        return {"error": True, "detail": f"codigo de PROFORMA inválido: '{codigo}'. Debe ser '####-####'."}
+    payload = {
+        "storage_key": storage_key,
+        "kind": str(kind).upper(),
+        "codigo": codigo,
+        "expediente_id": expediente_id,
+        "oc_id": oc_id,
+        "audience": audience,
+        "filename": filename,
+    }
+    payload = {k: v for k, v in payload.items() if v not in (None, "")}
+    return _safe_role(lambda: api.post("documentos/", payload))
+
+
+@mcp.tool()
+@write_tool
+def storage_subir_base64(
+    filename: str,
+    content_base64: str,
+    scope: str = "documento",
+    content_type: str | None = None,
+) -> Any:
+    """Sube un archivo pequeño desde base64 y devuelve `{ok, key, ...}`.
+
+    ALTERNATIVA de último recurso: el base64 viaja por el contexto del modelo
+    (caro y con límite de tamaño). Preferí SIEMPRE `archivo_subir_url` + PUT,
+    que no pasa el binario por el contexto. `scope`: "documento" (default) o
+    "artifact-field/<field_id>".
+    Solo para archivos < ~2 MB."""
+    g = _wguard()
+    if g:
+        return g
+    import base64 as _b64
+    import tempfile as _tempfile
+
+    raw = str(content_base64 or "").strip()
+    if raw.startswith("data:") and "," in raw:
+        raw = raw.split(",", 1)[1]
+    try:
+        blob = _b64.b64decode(raw, validate=False)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": True, "detail": f"content_base64 inválido: {exc}"}
+    if len(blob) > 8 * 1024 * 1024:
+        return {"error": True, "detail": "Archivo > 8 MB: usá archivo_subir_url + PUT."}
+    safe = (filename or "archivo.bin").replace("/", "_").replace("\\", "_")
+    tmp = _tempfile.NamedTemporaryFile(delete=False, suffix="_" + safe)
+    tmp.write(blob)
+    tmp.close()
+    try:
+        data = {"scope": scope, "filename": safe}
+        if content_type:
+            data["content_type"] = content_type
+        return _safe_role(lambda: api.post_multipart("storage/upload-proxy/", data, tmp.name, file_field="file"))
+    finally:
+        try:
+            import os as _os
+            _os.unlink(tmp.name)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@mcp.tool()
+@write_tool
 def documento_subir(
     file_path: str | None = None,
     kind: str = "OTRO",
@@ -1859,6 +2082,7 @@ def documento_subir(
     expediente_id: str | None = None,
     oc_id: str | None = None,
     audience: str = "CLIENT",
+    storage_key: str | None = None,
 ) -> Any:
     """Sube un documento (PDF, etc.) a un expediente u OC; lo almacena en MinIO. `kind`:
     tipo (OC, PROFORMA, BL, FACTURA, DUA, OTRO...). `codigo`: nombre/código (default =
@@ -1881,10 +2105,24 @@ def documento_subir(
     # 5.3 · evitar documentos huérfanos
     if not expediente_id and not oc_id:
         return {"error": True, "detail": "Pasa expediente_id (u oc_id); sin ellos el documento queda huérfano y no aparece en el expediente."}
+    if expediente_id:
+        expediente_id = _resolve_expediente_id(expediente_id) or expediente_id
     # 5.6 · proforma con código limpio
     if str(kind).upper() == "PROFORMA" and codigo and not re.fullmatch(r"\d{4}-\d{4}", str(codigo).strip()):
         return {"error": True, "detail": f"codigo de PROFORMA inválido: '{codigo}'. Debe ser el número limpio ####-#### (ej. '2228-2026'), sin filename ni prefijos."}
     data = _params(kind=kind, codigo=codigo, expediente_id=expediente_id, oc_id=oc_id, audience=audience)
+    # Ola 5 · 2026-11-03 · subida por enlace firmado: si el agente ya subió el
+    # binario con `archivo_subir_url` + PUT, registra el documento por `key`
+    # (el servidor MCP no necesita ver el archivo local).
+    if storage_key and not file_path:
+        data["storage_key"] = storage_key
+        return _safe_role(lambda: api.post("documentos/", {k: v for k, v in data.items() if v not in (None, "")}))
+    if not file_path:
+        return {
+            "error": True,
+            "detail": "Pasá file_path (ruta local del servidor MCP) o storage_key "
+                      "(subida por enlace firmado con archivo_subir_url).",
+        }
     return _safe_role(lambda: api.post_multipart("documentos/", data, file_path))
 
 
@@ -1900,6 +2138,13 @@ def documento_listar(
     `limit`/`offset`: paginación (default limit=50, máx 200).
     `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
     lim, off = _paging(limit, offset)
+    # Ola 5 · resolver el identificador (proforma/OC/SAP) antes de filtrar:
+    # el backend filtra por UUID, así que un "2473-2026" devolvía [].
+    if expediente:
+        rid, err = _exp_or_error(expediente)
+        if err:
+            return err
+        expediente = rid
     data = _safe_role(lambda: api.get("documentos/", _params(expediente=expediente, oc=oc, kind=kind, limit=lim, offset=off)))
     # Ola 3.8 · un client_b2b SOLO ve audience=CLIENT y kind OC/PROFORMA/FACTURA.
     data = filter_documentos_for_role(data, _current_role())
@@ -1988,13 +2233,20 @@ def documento_editar(documento_id: str, cambios: dict) -> Any:
 # --- SAP --------------------------------------------------------------------
 @mcp.tool()
 @write_tool
-def sap_analizar(expediente_id: str, file_path: str) -> Any:
+def sap_analizar(expediente_id: str, file_path: str | None = None,
+                 storage_key: str | None = None) -> Any:
     """Pre-analiza un archivo de confirmación SAP (Excel/PDF) contra las líneas del
-    expediente: autocompleta sap_id, detecta discrepancias. No persiste nada."""
+    expediente: autocompleta sap_id, detecta discrepancias. No persiste nada.
+    Acepta `file_path` (ruta en el servidor MCP) o `storage_key` (archivo ya
+    subido con `archivo_subir_url` + PUT)."""
     g = _wguard()
     if g:
         return g
-    return _safe_role(lambda: api.post_multipart(f"expedientes/{expediente_id}/analyze-sap-confirmation/", {}, file_path))
+    if not file_path and not storage_key:
+        return {"error": True, "detail": "Pasá file_path o storage_key."}
+    data = {"storage_key": storage_key} if storage_key and not file_path else {}
+    return _safe_role(lambda: api.post_multipart(
+        f"expedientes/{expediente_id}/analyze-sap-confirmation/", data, file_path))
 
 
 @mcp.tool()
@@ -2005,14 +2257,18 @@ def sap_confirmar(
     lineas_confirmadas: list,
     fecha_fabricacion: str | None = None,
     file_path: str | None = None,
+    storage_key: str | None = None,
 ) -> Any:
     """Confirma un SAP por primera vez (comando C5): asigna productos al SAP y
     transiciona REGISTRO→PRODUCCION. `lineas_confirmadas`: [{linea_id, qty_confirmada, unit_price?}].
-    Requiere que el expediente esté en REGISTRO (si no, usa sap_upsert)."""
+    Requiere que el expediente esté en REGISTRO (si no, usa sap_upsert).
+    `storage_key`: archivo ya subido con `archivo_subir_url` + PUT (alternativa a file_path)."""
     g = _wguard()
     if g:
         return g
     data = _params(sap_id=sap_id, lineas_confirmadas=lineas_confirmadas, fecha_fabricacion=fecha_fabricacion)
+    if storage_key and not file_path:
+        data["storage_key"] = storage_key
     return _safe_role(lambda: api.post_multipart(
         f"expedientes/{expediente_id}/confirm-sap/", data, file_path, file_field="documento_sap"))
 
@@ -2025,13 +2281,17 @@ def sap_upsert(
     lineas_confirmadas: list,
     fecha_fabricacion: str | None = None,
     file_path: str | None = None,
+    storage_key: str | None = None,
 ) -> Any:
     """Crea o edita un SAP sin cambiar el estado del expediente (C5-upsert).
-    Mismo body que sap_confirmar."""
+    Mismo body que sap_confirmar. `storage_key`: archivo ya subido con
+    `archivo_subir_url` + PUT (alternativa a file_path)."""
     g = _wguard()
     if g:
         return g
     data = _params(sap_id=sap_id, lineas_confirmadas=lineas_confirmadas, fecha_fabricacion=fecha_fabricacion)
+    if storage_key and not file_path:
+        data["storage_key"] = storage_key
     return _safe_role(lambda: api.post_multipart(
         f"expedientes/{expediente_id}/upsert-sap/", data, file_path, file_field="documento_sap"))
 
@@ -2071,14 +2331,21 @@ def sap_sincronizar_discrepancias(expediente_id: str, actions: list) -> Any:
 # --- Matchmaker / balanceo IA ----------------------------------------------
 @mcp.tool()
 @write_tool
-def match_subir(expediente_id: str, document_type: str, file_path: str) -> Any:
+def match_subir(expediente_id: str, document_type: str, file_path: str | None = None,
+                storage_key: str | None = None) -> Any:
     """Sube un documento (OC/Proforma/SAP) y lo cruza con IA contra las líneas del
     expediente, devolviendo discrepancias. `document_type`: ART-01_OC, ART-02_PROFORMA o ART-04_SAP.
-    Devuelve un log_id para luego resolver con match_resolver."""
+    Devuelve un log_id para luego resolver con match_resolver.
+    Acepta `file_path` (ruta en el servidor MCP) o `storage_key` (archivo ya
+    subido con `archivo_subir_url` + PUT)."""
     g = _wguard()
     if g:
         return g
+    if not file_path and not storage_key:
+        return {"error": True, "detail": "Pasá file_path o storage_key."}
     data = _params(document_type=document_type)
+    if storage_key and not file_path:
+        data["storage_key"] = storage_key
     return _safe_role(lambda: api.post_multipart(f"expedientes/{expediente_id}/upload-match/", data, file_path))
 
 
@@ -2301,7 +2568,7 @@ def _proforma_documento_inner(expediente_id: str, codigo: str | None,
     if "download/?key=" in str(key):
         key = str(key).split("download/?key=")[-1]
 
-    download_url = _descarga_url_con_token(key)
+    download_url = _descarga_link(key)
     return {
         "found": True,
         "documento_id": did,
@@ -2310,18 +2577,24 @@ def _proforma_documento_inner(expediente_id: str, codigo: str | None,
         "codigo": target.get("codigo"),
         "file_ext": target.get("file_ext"),
         "file_size_bytes": target.get("file_size_bytes"),
-        "url": download_url,
+        "url": download_url.get("url"),
+        "archivo_key": download_url.get("key"),
+        "expires_at": download_url.get("expires_at"),
         "hint": ("Abre/descarga `url` para entregar el HTML/PDF de la proforma "
-                 "al usuario como archivo. Si prefieres la URL firmada de MinIO "
-                 "(necesita permiso storage), usa documento_descargar."),
+                 "al usuario como archivo. Si `url` viene vacía, usá "
+                 "`artefacto_archivo_descargar` con `archivo_key`."),
     }
 
 
 @mcp.tool()
 def factura_payload(expediente_id: str) -> Any:
     """Devuelve el payload estructurado de la factura comercial del expediente
-    (líneas con FOB/landed/dai_rate/ncm, cost_breakdown, totales)."""
-    return _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/factura-payload/"), "factura_payload")
+    (líneas con FOB/landed/dai_rate/ncm, cost_breakdown, totales).
+    Acepta UUID, EXP-…, OC, SAP o nº de proforma (####-####)."""
+    rid, err = _exp_or_error(expediente_id)
+    if err:
+        return err
+    return _safe_role_read(lambda: api.get(f"expedientes/{rid}/factura-payload/"), "factura_payload")
 
 
 # --- Estados SAP / pipeline -------------------------------------------------
@@ -2429,8 +2702,12 @@ def expediente_phase_durations_set(expediente_id: str, phase_durations: dict) ->
 
 @mcp.tool()
 def expediente_eventos(expediente_id: str, limit: int = 200) -> Any:
-    """Historial de eventos (transiciones) del expediente."""
-    return _safe_role(lambda: api.get(f"expedientes/{expediente_id}/events/", _params(limit=limit)))
+    """Historial de eventos (transiciones) del expediente. Acepta UUID, EXP-…,
+    OC, SAP o nº de proforma (####-####)."""
+    rid, err = _exp_or_error(expediente_id)
+    if err:
+        return err
+    return _safe_role(lambda: api.get(f"expedientes/{rid}/events/", _params(limit=limit)))
 
 
 # =========================================================================== #
@@ -2661,7 +2938,9 @@ def expediente_documentos_completos(
     Devuelve `{documentos: [...], artefactos: [...]}`. `q` filtra por texto
     (código/título). Para un client_b2b los documentos se limitan a audience=CLIENT
     (OC/PROFORMA/FACTURA del cliente) y los artefactos a los `publicado=True`."""
-    resolved = _resolve_expediente_id(expediente_id) or expediente_id
+    resolved = _resolve_expediente_id(expediente_id)
+    if not resolved:
+        return _exp_or_error(expediente_id)[1]
     ocs_ref = expediente_id  # referencia legible con la que el caller encadenó
     expediente_id = resolved
     lim, off = _paging(limit, offset)

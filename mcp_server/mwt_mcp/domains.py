@@ -34,6 +34,8 @@ SHARED_TOOLS = {
     "mwt_health",
     "mwt_audit_write_registry",
     "storage_subir_archivo",
+    "storage_subir_base64",
+    "archivo_subir_url",
     "artefacto_archivo_descargar",
 }
 
@@ -60,7 +62,7 @@ LOGISTICA = {
     "expediente_edit_full_get", "expediente_edit_full_patch",
     "expediente_resolve_oc_preview",
     # documentos
-    "documento_subir", "documento_listar", "documento_eliminar",
+    "documento_subir", "documento_registrar_archivo", "documento_listar", "documento_eliminar",
     "documento_descargar", "documento_editar",
     # SAP / matchmaker
     "sap_analizar", "sap_confirmar", "sap_upsert", "sap_obtener",

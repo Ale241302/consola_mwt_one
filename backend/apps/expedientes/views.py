@@ -2566,7 +2566,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
         sap_id             = (request.data.get("sap_id") or "").strip()
         fecha_fabricacion  = (request.data.get("fecha_fabricacion") or "").strip()
         lineas_confirmadas = request.data.get("lineas_confirmadas") or "[]"
-        documento_file     = request.FILES.get("documento_sap")
+        documento_file     = (request.FILES.get("documento_sap")
+                              or _file_from_storage_key(request))
 
         # Tolerar que `lineas_confirmadas` llegue como string JSON (multipart)
         if isinstance(lineas_confirmadas, str):
@@ -5311,7 +5312,8 @@ class ExpedienteViewSet(viewsets.ViewSet):
         sap_id             = (request.data.get("sap_id") or "").strip()
         fecha_fabricacion  = (request.data.get("fecha_fabricacion") or "").strip()
         lineas_confirmadas = request.data.get("lineas_confirmadas") or "[]"
-        documento_file     = request.FILES.get("documento_sap")
+        documento_file     = (request.FILES.get("documento_sap")
+                              or _file_from_storage_key(request))
         remove_documento   = (str(request.data.get("remove_documento") or "")
                               .lower() in ("true", "1", "yes"))
 
@@ -5881,6 +5883,118 @@ class LineaViewSet(viewsets.ViewSet):
 # ════════════════════════════════════════════════════════════
 # Documento
 # ════════════════════════════════════════════════════════════
+def _file_from_storage_key(request):
+    """Archivo desde un `storage_key` de MinIO (subida por enlace firmado).
+
+    Los endpoints de match/SAP esperaban multipart; con esto el agente puede
+    subir el binario con `POST /api/storage/upload-url/` + PUT y luego mandar
+    `storage_key` en el JSON, sin que el servidor MCP vea el archivo local.
+    """
+    key = (request.data.get("storage_key") or request.data.get("storage_url") or "").strip()
+    if not key:
+        return None
+    try:
+        from apps.storage.services import uploaded_file_from_key
+        return uploaded_file_from_key(key)
+    except Exception as exc:  # noqa: BLE001 - nunca romper el endpoint
+        log.warning("_file_from_storage_key(%s) falló: %s", key, exc)
+        return None
+
+
+def _documento_create_from_storage_key(request, storage_key: str):
+    """Crea un Documento que apunta a un objeto YA subido a MinIO.
+
+    Flujo de subida por enlace firmado (MCP remoto / agentes), sin que el
+    servidor vea el archivo del usuario:
+      1) POST /api/storage/upload-url/   → {upload_url, key}
+      2) PUT  <upload_url>               → sube los bytes a MinIO
+      3) POST /api/documentos/           → {expediente_id, kind, codigo, storage_key}
+
+    Reglas: el key debe vivir bajo `documento/` (no se puede "colgar" un objeto
+    arbitrario del bucket), el objeto debe existir, y el usuario debe poder
+    acceder a ese key.
+    """
+    from apps.storage.views import _user_can_access_key
+    from apps.storage.services import stat_object
+
+    key = storage_key
+    if "download/?key=" in key:
+        key = key.split("download/?key=")[-1].split("&")[0]
+    key = key.strip()
+
+    if not key.startswith("documento/"):
+        return Response({
+            "detail": "storage_key inválido: debe empezar con 'documento/' "
+                      "(generá el key con POST /api/storage/upload-url/)."
+        }, status=400)
+
+    if not _user_can_access_key(request.user, key):
+        return Response({"detail": "No autorizado para ese storage_key"}, status=403)
+
+    meta = stat_object(key)
+    if not meta.get("exists"):
+        return Response({
+            "detail": "El archivo no está en storage: subí primero el binario al "
+                      "upload_url que devuelve /api/storage/upload-url/ y reintentá.",
+            "storage_key": key,
+            "storage": {k: v for k, v in meta.items() if k != "exists"},
+        }, status=409)
+
+    kind = (request.data.get("kind") or "OTRO").strip().upper()
+    codigo = (request.data.get("codigo") or "").strip() or key.rsplit("/", 1)[-1]
+    oc_id = request.data.get("oc_id") or None
+    exp_id = request.data.get("expediente_id") or None
+
+    audience = (request.data.get("audience") or "CLIENT").strip().upper()
+    if audience not in ("CLIENT", "MWT_INTERNAL", "ADMIN_ONLY"):
+        audience = "CLIENT"
+    if _is_client_viewer(request):
+        audience = "CLIENT"
+    elif audience == "ADMIN_ONLY" and not _is_admin_viewer(request):
+        audience = "MWT_INTERNAL"
+
+    fname = (request.data.get("filename") or "").strip() or key.rsplit("/", 1)[-1]
+    file_ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else None
+    file_size = int(meta.get("size") or 0)
+    doc_uuid = uuid.uuid4()
+
+    try:
+        with connection.cursor() as c:
+            c.execute("""
+                INSERT INTO expedientes.documento (
+                    id, oc_id, expediente_id,
+                    kind, audience, codigo,
+                    file_ext, file_size_bytes, storage_url,
+                    author, fecha,
+                    is_active, created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, CURRENT_DATE,
+                    TRUE, now(), now()
+                )
+            """, [
+                str(doc_uuid),
+                oc_id if oc_id else None,
+                exp_id if exp_id else None,
+                kind, audience, codigo,
+                file_ext, file_size, key,
+                (getattr(request.user, "email", None)
+                 or getattr(request.user, "username", None)
+                 or "system"),
+            ])
+    except Exception as exc:  # noqa: BLE001
+        log.exception("documento.create(storage_key) falló: %s", exc)
+        return Response({"detail": "No se pudo registrar el documento",
+                         "error": str(exc)[:200]}, status=400)
+
+    d = Documento.objects.get(pk=doc_uuid)
+    log.info("[documento.create] registrado desde storage_key: %s (%s, %s bytes)",
+             key, kind, file_size)
+    return Response(DocumentoSerializer(d).data, status=201)
+
+
 class DocumentoViewSet(viewsets.ViewSet):
     required_module = "expedientes"
     # Sprint 2026-05-01: accept multipart para subir el archivo en el create.
@@ -5936,6 +6050,16 @@ class DocumentoViewSet(viewsets.ViewSet):
             return denied
 
         documento_file = request.FILES.get("file") or request.FILES.get("documento_file")
+
+        # Ola 5 · 2026-11-03 · subida por enlace firmado (MCP / agentes).
+        # El agente pide `POST /api/storage/upload-url/`, hace el PUT del
+        # binario a MinIO y acá registra el documento con el `key` resultante
+        # (no requiere que el servidor MCP vea el archivo local).
+        storage_key_in = (request.data.get("storage_key")
+                          or request.data.get("storage_url") or "").strip()
+        if not documento_file and storage_key_in:
+            return _documento_create_from_storage_key(request, storage_key_in)
+
         if documento_file:
             kind   = (request.data.get("kind") or "OTRO").strip().upper()
             codigo = (request.data.get("codigo") or "").strip() or documento_file.name

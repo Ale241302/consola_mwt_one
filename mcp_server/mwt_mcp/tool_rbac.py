@@ -114,6 +114,7 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "expediente_desfusionar": ("expedientes", "update"),
     # ── Documentos ─────────────────────────────────────────────────────────
     "documento_subir": ("expedientes", "upload_doc"),
+    "documento_registrar_archivo": ("expedientes", "upload_doc"),
     "documento_listar": ("expedientes", "view_doc"),
     "documento_eliminar": ("expedientes", "delete"),
     "documento_descargar": ("expedientes", "download_doc"),
@@ -213,6 +214,8 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "cliente_meta_listar":           ("finanzas", "view"),
     # ── Storage ────────────────────────────────────────────────────────────
     "storage_subir_archivo": ("storage", "create"),
+    "storage_subir_base64": ("storage", "create"),
+    "archivo_subir_url": ("storage", "create"),
     "artefacto_archivo_descargar": ("storage", "download_doc"),
     # ── Presentación (Ola 3.10 ampliada · 5 categorías, solo lectura) ──────
     # Dos grupos:
