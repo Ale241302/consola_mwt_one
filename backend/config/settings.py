@@ -253,7 +253,15 @@ REST_FRAMEWORK = {
         #   · mcp-token  → token exchange (1 por usuario por 5 min; el MCP cachea 45 min).
         #   · mcp-audit  → POST de auditoría (el MCP escribe por tool-call; generoso).
         #   · mcp_diag   → diagnóstico de scope (soporte; poco uso).
-        "mcp-token": "6/minute",
+        # Ola 5 · fix 2026-11-03: el bucket de `mcp-token` es COMPARTIDO (un solo
+        # ServiceToken → DRF cuenta todo junto, no por usuario). Con 6/min, al
+        # activar el tools/list en vivo (direct_proxy por rol) cada sesión nueva
+        # acuña un JWT y una ráfaga de reconexiones agotaba el bucket → 429 →
+        # el MCP cae a fail-closed y el usuario ve la lista de tools VACÍA. El
+        # endpoint sólo acepta ServiceToken con scope mcp:token_exchange y el
+        # backend autoriza a cada usuario igual, así que se sube el techo
+        # (ajustable por env sin redeploy de código).
+        "mcp-token": os.environ.get("MWT_MCP_TOKEN_RATE", "600/minute"),
         "mcp_audit": "120/minute",
         "mcp_diag": "10/minute",
         "mcp_health": "30/minute",
