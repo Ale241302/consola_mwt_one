@@ -293,7 +293,15 @@ export default function ComisionesCalendario({ lang }) {
                       <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-secondary, #475569)" }}>
                         {r.total_cliente != null ? `$${fmt(r.total_cliente)}` : "—"}
                       </td>
-                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>${fmt(r.monto_usd)}</td>
+                      <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>
+                        ${fmt(r.monto_usd)}
+                        {r.diferencia_usd != null && Math.abs(Number(r.diferencia_usd)) > 0.02 && (
+                          <div style={{ fontSize: 10, fontWeight: 600, color: "#B45309", marginTop: 2 }}
+                               title={es ? `Diferencia calculado − cobrado: $${fmt(r.diferencia_usd)}` : `Calculated − collected: $${fmt(r.diferencia_usd)}`}>
+                            {es ? `Cobrado $${fmt(r.monto_cobrado_usd)}` : `Collected $${fmt(r.monto_cobrado_usd)}`}
+                          </div>
+                        )}
+                      </td>
                       <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{fdate(r.fecha_esperada)}</td>
                       <td className="tabular-nums" style={{ color: "var(--text-secondary, #475569)" }}>{r.fecha_recibida ? fdate(r.fecha_recibida) : "—"}</td>
                       <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 600, color: dColor }}>{dTxt}</td>

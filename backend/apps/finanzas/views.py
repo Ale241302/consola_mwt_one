@@ -31,6 +31,7 @@ debe ver el negocio completo, no solo lo operado directamente por MWT).
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
@@ -203,6 +204,7 @@ def _fetch_expedientes() -> list[dict]:
             SELECT
                 e.id::text                                        AS expediente_id,
                 e.codigo                                          AS codigo,
+                e.estado                                          AS exp_estado,
                 (
                     SELECT d.codigo
                       FROM expedientes.documento d
@@ -373,6 +375,14 @@ def _build_item(row: dict, today: date) -> dict:
         total_paid=paid_total,
         today=today,
     )
+
+    # Un pedido que todavía no despacha no tiene comisión exigible: no puede
+    # estar VENCIDA aunque la proyección (REGISTRO + plazo) ya haya pasado.
+    # Se queda en PROYECTADA hasta DESPACHO.
+    if estado == "VENCIDA" and (row.get("exp_estado") or "").upper() in (
+        "REGISTRO", "PRODUCCION", "PREPARACION",
+    ):
+        estado = "PROYECTADA"
 
     # Fecha de devengo = fecha en que finalizó la fase de PREPARACION
     # (PREPARACION_DESPACHO si la fase visual fusionada reemplazó a PREPARACION).
@@ -1635,6 +1645,51 @@ def comisiones_historicas(request):
 
 
 # ---------------------------------------------------------------------
+# Cobros REALES de comisión (event_log) — fuente de verdad para "recibida"
+# ---------------------------------------------------------------------
+def _cobros_reales_comision() -> dict:
+    """Notas de cierre por pago de comisión, con fecha real y monto cobrado.
+
+    Formato de la nota: "Cierre por pago de comisión: USD 8.324,15 cobrada en
+    Payoneer el 19/10/2026 (id 1050740423); ...". El pago del cliente a MWT es
+    otro flujo: no debe confundirse con este cobro.
+    """
+    out = {}
+    with connection.cursor() as c:
+        c.execute(
+            """
+            SELECT aggregate_id::text,
+                   COALESCE(payload->>'occurred_at', created_at::date::text) AS ocurrio,
+                   payload->>'note' AS nota
+              FROM pipeline.event_log
+             WHERE is_active = TRUE
+               AND payload->>'note' ILIKE '%comisi%'
+               AND payload->>'note' ILIKE '%payoneer%'
+             ORDER BY created_at
+            """
+        )
+        for eid, ocurrio, nota in c.fetchall():
+            monto = None
+            m = re.search(r"USD\s+([\d.,]+)", nota or "")
+            if m:
+                try:
+                    monto = Decimal(m.group(1).replace(".", "").replace(",", "."))
+                except InvalidOperation:
+                    monto = None
+            try:
+                fecha = date.fromisoformat(str(ocurrio)[:10]).isoformat()
+            except (TypeError, ValueError):
+                fecha = None
+            out[eid] = {
+                "fecha": fecha,
+                "monto_usd": str(monto) if monto is not None else None,
+                # "de 2427 y 2428" = monto del grupo, no comparable por fila.
+                "compartido": bool(re.search(r"\by\b", nota or "")),
+            }
+    return out
+
+
+# ---------------------------------------------------------------------
 # Sprint 2026-09 · CALENDARIO DE COMISIONES
 # Responde: ¿cuándo la recibí? ¿cuándo la debería recibir? ¿cuáles están
 # pendientes / vencidas / en tránsito? Cruza el devengo de cada expediente
@@ -1659,6 +1714,9 @@ def comisiones_calendario(request):
             """
         )
         recibido = {r[0]: {"fecha": r[1], "monto": r[2]} for r in c.fetchall()}
+
+    # Cobros reales de la comisión (Payoneer, registrados en el event_log).
+    cobros = _cobros_reales_comision()
 
     items = []
     # La OC visible es la del PDF real del cliente (misma resolución que el
@@ -1703,9 +1761,23 @@ def comisiones_calendario(request):
         else:
             estado = "POR_RECIBIR"
 
+        real = cobros.get(it["expediente_id"])
         fecha_rec = None
         if r and r.get("fecha"):
             fecha_rec = r["fecha"].isoformat() if hasattr(r["fecha"], "isoformat") else str(r["fecha"])
+
+        monto_cobrado = None
+        diferencia = None
+        if real:
+            # Hay cobro real de la comisión (Payoneer): manda sobre el pago del
+            # cliente, que es otro flujo de dinero y otra fecha.
+            estado = "RECIBIDA"
+            if real.get("fecha"):
+                fecha_rec = real["fecha"]
+            if real.get("monto_usd") is not None and not real.get("compartido"):
+                monto_cobrado = _dec(real["monto_usd"]).quantize(Decimal("0.01"))
+                diferencia = (amt - monto_cobrado).quantize(Decimal("0.01"))
+
         dias = (f_esp - today).days if (estado != "RECIBIDA" and f_esp) else None
 
         items.append({
@@ -1725,6 +1797,8 @@ def comisiones_calendario(request):
             "ventana_fin":     None,
             "fecha_recibida":  fecha_rec,
             "dias":            dias,
+            "monto_cobrado_usd": str(monto_cobrado) if monto_cobrado is not None else None,
+            "diferencia_usd":  str(diferencia) if diferencia is not None else None,
         })
 
     def _sum(pred):
