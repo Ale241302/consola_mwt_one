@@ -262,7 +262,7 @@ export default function ComisionesCalendario({ lang }) {
                   <th>{es ? "Estado" : "Status"}</th>
                   <th>{es ? "Importador" : "Importer"}</th>
                   <th>PF</th>
-                  <th>{es ? "Expediente" : "File"}</th>
+                  <th title={es ? "Se muestra la OC del cliente; el código EXP interno va en el tooltip" : "Client PO shown; internal EXP code in tooltip"}>{es ? "OC" : "PO"}</th>
                   <th>{es ? "Periodo" : "Period"}</th>
                   <th style={{ textAlign: "right" }}>{es ? "Total Cliente" : "Client total"}</th>
                   <th style={{ textAlign: "right" }}>{es ? "Monto USD" : "Amount"}</th>
@@ -288,7 +288,7 @@ export default function ComisionesCalendario({ lang }) {
                       <td><Chip estado={r.estado} /></td>
                       <td>{r.importador || r.cliente || "—"}</td>
                       <td className="mono-sm">{r.pf || "—"}</td>
-                      <td className="mono-sm" style={{ color: "var(--brand-primary, #013A57)" }}>{r.expediente || "—"}</td>
+                      <td className="mono-sm" style={{ color: "var(--brand-primary, #013A57)" }} title={r.expediente || ""}>{r.oc_codigo || r.expediente || "—"}</td>
                       <td className="mono-sm">{periodoLabel(r.periodo)}</td>
                       <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-secondary, #475569)" }}>
                         {r.total_cliente != null ? `$${fmt(r.total_cliente)}` : "—"}

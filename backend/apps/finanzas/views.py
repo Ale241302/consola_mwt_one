@@ -212,6 +212,8 @@ def _fetch_expedientes() -> list[dict]:
                      LIMIT 1
                 )                                                 AS proforma_codigo,
                 e.client_id::text                                 AS client_id,
+                (SELECT o.codigo FROM expedientes.oc o
+                  WHERE o.id = e.oc_id AND o.is_active)             AS oc_codigo,
                 e.operating_company_id::text                      AS operating_company_id,
                 e.shipment_date                                   AS shipment_date,
                 e.eta                                             AS eta,
@@ -377,6 +379,7 @@ def _build_item(row: dict, today: date) -> dict:
 
     return {
         "expediente_id":         row["expediente_id"],
+        "oc_codigo":             row.get("oc_codigo"),
         "display_id":            _resolve_display_id(row["codigo"], row["proforma_codigo"]),
         "codigo":                row["codigo"],
         "proforma_codigo":       row["proforma_codigo"],
@@ -1079,35 +1082,63 @@ def flujo(request):
             if (moneda or "").upper() == "CRC":
                 b["salidas_crc"] += _dec(monto)
 
-    # Proyecciones desde EXPEDIENTES (lo que realmente va a entrar/salir).
-    #   Entrada = cobro del cliente en fecha_pago_aprox (total cliente).
-    #   Salida  = pago a proveedor (vencimiento compra) para MWT-operados.
+    # Proyecciones desde EXPEDIENTES: saldo pendiente, no facturación bruta.
+    #   Entrada = saldo por cobrar del cliente (facturado − pagado confirmado),
+    #             en la fecha esperada (ancla REGISTRO + plazo del cliente).
+    #   Salida  = saldo pendiente al proveedor (solo operados por MWT).
+    #   La MISMA ventana aplica a ambas, y lo ya vencido entra como pendiente
+    #   inmediato (bucket de hoy): antes las entradas sumaban la factura
+    #   completa y las salidas exigían fecha futura, por eso daban $0.
     proy_e = Decimal("0")
     proy_s = Decimal("0")
+
+    def _fdate(v):
+        try:
+            return date.fromisoformat(str(v)[:10]) if v else None
+        except (TypeError, ValueError):
+            return None
+
     try:
-        for it in [_build_item(r, today) for r in _fetch_expedientes()]:
-            fp = it.get("fecha_pago_aprox")
-            if fp:
-                try:
-                    d = date.fromisoformat(fp)
-                except (TypeError, ValueError):
-                    d = None
-                if d and today <= d <= today + timedelta(days=dias):
-                    amt = _dec(it.get("total_client"))
-                    _bucket(d)["entradas_usd"] += amt
-                    proy_e += amt
+        with connection.cursor() as c:
+            c.execute("""
+                SELECT expediente_id::text, SUM(monto_usd)
+                  FROM finance.payment
+                 WHERE is_active = TRUE AND COALESCE(direction,'IN') = 'OUT'
+                   AND estado IN ('CONFIRMADO_HUMANO','CONFIRMADO_AI')
+                 GROUP BY expediente_id
+            """)
+            pagado_prov = {r[0]: _dec(r[1]) for r in c.fetchall()}
+
+        for row in _fetch_expedientes():
+            it = _build_item(row, today)
+            fin = today + timedelta(days=dias)
+
+            # Entrada: saldo por cobrar del cliente.
+            pagado = _dec(row.get("paid_from_payments"))
+            if pagado <= 0:
+                pagado = _dec(row.get("total_paid"))
+            facturado = _dec(row.get("total_invoiced"))
+            if facturado <= 0:
+                facturado = _dec(it.get("total_client"))
+            pendiente = max(facturado - pagado, Decimal("0"))
+            d = _fdate(it.get("fecha_facturada"))
+            if pendiente > 0 and d:
+                d = max(d, today)          # vencido → se cobra ya
+                if d <= fin:
+                    _bucket(d)["entradas_usd"] += pendiente
+                    proy_e += pendiente
+
+            # Salida: saldo pendiente al proveedor, solo si lo opera MWT.
             if str(it.get("operating_company_id") or "") == MWT_OPERATING_CLIENT_ID:
-                base = it.get("shipment_date")
+                base = _fdate(it.get("shipment_date"))
                 cd_mwt = it.get("credit_days_mwt")
-                if base and cd_mwt is not None:
-                    try:
-                        cv = date.fromisoformat(base) + timedelta(days=int(cd_mwt))
-                    except (TypeError, ValueError):
-                        cv = None
-                    if cv and today <= cv <= today + timedelta(days=dias):
-                        amt = _dec(it.get("total_mwt"))
-                        _bucket(cv)["salidas_usd"] += amt
-                        proy_s += amt
+                deuda_prov = max(_dec(it.get("total_mwt")) - pagado_prov.get(it["expediente_id"], Decimal("0")),
+                                 Decimal("0"))
+                if base and cd_mwt is not None and deuda_prov > 0:
+                    cv = max(base + timedelta(days=int(cd_mwt)), today)
+                    if cv <= fin:
+                        _bucket(cv)["salidas_usd"] += deuda_prov
+                        proy_s += deuda_prov
     except Exception:
         pass
 
@@ -1145,7 +1176,7 @@ def flujo(request):
         "proyecciones": {
             "entradas_usd": str(proy_e.quantize(Decimal("0.01"))),
             "salidas_usd": str(proy_s.quantize(Decimal("0.01"))),
-            "fuente": "cobros/pagos esperados de expedientes (fecha_pago_aprox y vencimiento compra)",
+            "fuente": "saldo pendiente de cobrar/pagar por expediente (ancla REGISTRO + plazo; lo vencido entra como pendiente inmediato)",
         },
         "saldo_final_proyectado": {
             "USD": str((saldo_usd + neto_usd).quantize(Decimal("0.01"))),
@@ -1646,6 +1677,7 @@ def comisiones_calendario(request):
             "origen":          "OPERATIVA",
             "concepto":        "COMISION",
             "expediente":      it.get("codigo"),
+            "oc_codigo":       it.get("oc_codigo"),
             "pf":              str(it.get("proforma_codigo") or "").strip() or it.get("display_id"),
             "cliente":         it.get("cliente_razon_social"),
             "importador":      it.get("operador_razon_social") or it.get("cliente_razon_social"),
