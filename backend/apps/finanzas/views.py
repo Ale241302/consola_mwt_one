@@ -1778,7 +1778,13 @@ def comisiones_calendario(request):
                 monto_cobrado = _dec(real["monto_usd"]).quantize(Decimal("0.01"))
                 diferencia = (amt - monto_cobrado).quantize(Decimal("0.01"))
 
-        dias = (f_esp - today).days if (estado != "RECIBIDA" and f_esp) else None
+        dias = None
+        if estado != "RECIBIDA" and f_esp:
+            dias = (f_esp - today).days
+            if dias < 0 and estado == "POR_RECIBIR":
+                # Proyección pasada de un pedido aún no despachado: no es
+                # atraso, solo una fecha estimada que quedó atrás.
+                dias = None
 
         items.append({
             "origen":          "OPERATIVA",
