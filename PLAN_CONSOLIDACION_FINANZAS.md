@@ -26,11 +26,19 @@
 
 ### Expedientes (45 activos)
 
+> **Corrección 2026-11-04:** la primera pasada se hizo contra
+> `_PROFORMAS_RUTAS.csv`, que está desactualizado (no conoce carpetas renombradas
+> como `2498-2026 + 2505-2026` ni `2519-2026`). La tabla de abajo se recalculó
+> **escaneando los nombres de carpeta reales en disco** (258 tokens `NNNN-AAAA`).
+> Lección: el CSV no es fuente de verdad; las carpetas sí.
+
 | Hallazgo | Detalle |
 |---|---|
-| Sin proforma en BD | `EXP-PO 504649` (Sondel, REGISTRO, creado 2026-11-03). Solo tiene OC `PO 504649`. |
-| Proformas en BD sin carpeta en `01 Marluvas\` | `2400-2026`, `2465-2026`, `2505-2026`, `2515-2026`, `2519-2026`, `2520-2026`, `2521-2026`, `2522-2026`, `PF-2026-0001` |
-| Carpetas 2026 sin expediente | `2415-2026` (COMTEK), `2416-2026` (UMMIE) |
+| Proformas en BD sin carpeta real | Solo `PF-2026-0001` (EXP-20330, formato irregular). `2437-2026` existe como `2437-2026b`; el sufijo `b` rompe el match y hay que normalizarlo. |
+| Carpetas 2026 sin expediente | `2415-2026` (COMTEK), `2416-2026` (UMMIE), `2513-2026` (EGUISA), `2514-2026` (SONEPAR, OC 11002340) |
+| OC cruzada | `EXP-IyC 003-2026-2` cuelga documentos de `IyC 003` **y** de `IyC 004` |
+| OC con más de un documento | EXP-110021558, EXP-12543, EXP-2026-0008, EXP-505201-2, EXP-700143 |
+| SAP compartido | `279689` en UMMIE-02 y UMMIE-02-2 (split real, ver decisiones) |
 | Proforma con formato irregular | `PF-2026-0001` (EXP-20330); el resto usa `NNNN-AAAA` o `PF NNNN-AAAA` |
 | OC con más de un documento | EXP-110021558 (`110021558`,`110021559`), EXP-12543 (`12543`,`12548`), EXP-2026-0008 (`20973`,`505107`), EXP-505201-2 (`505200`,`505201`), EXP-700143 (`700141`,`700143`) |
 | OC cruzada | `EXP-IyC 003-2026-2` cuelga documentos de `IyC 003` **y** `IyC 004` |
@@ -65,6 +73,61 @@ Hipótesis a confirmar en `TRF-20260911-V76P` / `GT-POD-GUATEMALA`:
   Si el IVA no es capitalizable (regla ya aplicada en `transfers/liquidation.py`),
   el landed debería ser $3,803.63 y el IVA ir como línea informativa.
 - Validar que "Total SIN IVA · coste base + MWT" coincida con la suma de costos reales.
+
+---
+
+## Decisiones tomadas y aplicadas (2026-11-04)
+
+### 1. `EXP-IyC 003-2026-2` → la OC correcta es **IyC 003**
+
+Evidencia: la carpeta es `2498-2026 + 2505-2026   I y C 003 2026` (dos PFs en una
+sola OC 003). `IyC 004` tiene su propia carpeta (`2519-2026   I y C 004 2026`) y su
+propio expediente. Sus líneas son SKU 700239 / SAP 288740, distintas de 003 (700644 /
+286650), pero comparten OC y HBL.
+
+**Aplicado:** el documento `IyC 004-2026` se movió de `EXP-IyC 003-2026-2` a
+`EXP-IyC 004-2026`. El expediente ahora muestra `PO IyC 003-2026`.
+
+### 2. `EXP-PO 504649` → PF **2391-2025**
+
+Evidencia: carpeta `01 M Costa Rica\02 M Muito Work\2025\01 MW SONDEL\2391-2025  PO 504649`
+con PF, PO del cliente, DUA, factura y liquidación. Nadie más usaba esa PF.
+
+**Aplicado:** PDF subido a MinIO (`documento/59d0a0c9-…pdf`, 105,821 bytes) y registrado
+como documento PROFORMA. El listado ya muestra `2391-2025`.
+
+### 3. `2400-2026` vs `2405-2026` → **no es error de dedo, no se toca**
+
+Evidencia (leyendo los PDF, no el nombre):
+
+| PF | Contenido | Fecha | Pares | Total |
+|---|---|---|---|---|
+| 2400-2026 | Consolidado OC 110021558 + 110021559; SKU 700010 (270) + 702064 (1,855) | 16/mar/2026 | 2,125 | $40,198.05 |
+| 2405-2026 | SKU 700010 (135) + 701935 (925) | 13/ene/2026 | 1,060 | $20,050.65 |
+
+Las cantidades de 2400 coinciden **exactamente** con las líneas del expediente
+(270 + 1,855). 2405 incluye el SKU 701935, que no está en el expediente, y su carpeta
+delata otra OC (`OC 110021559`). Conclusión: 2400 es la PF del expediente; 2405 es otra
+orden. No se borra nada.
+
+### 4. UMMIE-02 / UMMIE-02-2 → **split intencional**
+
+Mismo SKU 701276, mismas tallas repartidas (02: 33/38/39/40/41 · 02-2: 34/38/39),
+mismo SAP 279689, misma OC y misma PF 2478-2026. Es un embarque partido: el SAP
+compartido es correcto.
+
+### 5. `2415-2026` / `2416-2026` → **no se crean todavía**
+
+- `2416-2026`: PF limpia (UMMIE, 474 pares, $7,603.06, crédito 120 d) pero **sin
+  número de OC** en la carpeta, en la BD ni en el correo. UMMIE usa la convención
+  `PO UMMIE-2026-NN` y ya existen 01, 02, 03: inventar el 04 repetiría el defecto.
+- `2415-2026`: además hay **conflicto de cliente** — la carpeta está bajo
+  `03 M Colombia\01 COMTEK` y la PF dice "Sonepar Colombia". No se puede decidir sin
+  el cliente real.
+
+**Pendiente:** conseguir la OC de ambas (correo al cliente o factura) antes de crear.
+Aparecieron además `2513-2026` (EGUISA) y `2514-2026` (SONEPAR OC 11002340) sin
+expediente.
 
 ---
 
