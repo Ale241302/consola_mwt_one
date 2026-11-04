@@ -42,7 +42,6 @@ from rest_framework.response import Response
 
 from apps.core.constants import MWT_OPERATING_CLIENT_ID
 from apps.expedientes.serializers import build_expediente_ref_batches
-from apps.expedientes.financials import totals_for
 
 from .permissions import IsCeoOrAdmin
 
@@ -1085,20 +1084,6 @@ def flujo(request):
         c.execute("SELECT moneda, monto FROM finanzas.saldo_inicial")
         saldo = {r[0]: _dec(r[1]) for r in c.fetchall()}
 
-    with connection.cursor() as c:
-        c.execute("""
-            SELECT direction, moneda, fecha,
-                   COALESCE(monto_usd, 0) AS monto_usd,
-                   COALESCE(monto, 0)     AS monto
-              FROM finance.payment
-             WHERE is_active = TRUE AND fecha IS NOT NULL
-               AND fecha BETWEEN %s AND %s
-               -- Solo pagos confirmados: un PENDIENTE_AI no es caja y además
-               -- se contaría dos veces (como cobro y como saldo proyectado).
-               AND estado IN ('CONFIRMADO_HUMANO', 'CONFIRMADO_AI')
-        """, [today, today + timedelta(days=dias)])
-        pagos = c.fetchall()
-
     def _wk(d):
         return d - timedelta(days=d.weekday())
 
@@ -1111,28 +1096,17 @@ def flujo(request):
         })
 
     weeks: dict = {}
-    for direction, moneda, fecha, monto_usd, monto in pagos:
-        b = _bucket(fecha)
-        if direction == "IN":
-            b["entradas_usd"] += _dec(monto_usd)
-            if (moneda or "").upper() == "CRC":
-                b["entradas_crc"] += _dec(monto)
-        elif direction == "OUT":
-            b["salidas_usd"] += _dec(monto_usd)
-            if (moneda or "").upper() == "CRC":
-                b["salidas_crc"] += _dec(monto)
 
-    # Proyecciones desde EXPEDIENTES con la definición canónica de dinero
-    # (apps.expedientes.financials.totals_for): `invoiced` viene de la factura
-    # comercial (ART-13). Si no hay factura NO hay saldo por cobrar y NUNCA se
-    # sustituye por el valor del pedido — eso se reporta aparte en
-    # `proyecciones.sin_factura_usd`. Lo vencido entra como pendiente inmediato
-    # (bucket de hoy) y la misma ventana aplica a entradas y salidas.
-    # Sin try/except global: un fallo aquí debe romper la respuesta, no dejar
-    # un flujo parcial como si fuera válido.
+    # FLUJO DE COMISIONES (no de mercancía). Esta página es "Comisiones MWT":
+    #   Entrada = comisión por cobrar en la ventana, con su fecha esperada.
+    #   Salida  = 0: cobrar una comisión no tiene un pago asociado. El pago a
+    #             Marluvas por la mercadería es otro flujo y no se mezcla aquí.
+    #   Lo ya cobrado (DEVENGADA) se excluye; lo vencido entra como pendiente
+    #   inmediato. Así el neto cuadra con el total devengable del encabezado.
+    #   Sin try/except global: un fallo debe romper la respuesta, no dejar un
+    #   flujo parcial como si fuera válido.
     proy_e = Decimal("0")
     proy_s = Decimal("0")
-    sin_factura_usd = Decimal("0")
 
     def _fdate(v):
         try:
@@ -1140,53 +1114,21 @@ def flujo(request):
         except (TypeError, ValueError):
             return None
 
-    with connection.cursor() as c:
-        c.execute("""
-            SELECT expediente_id::text, SUM(monto_usd)
-              FROM finance.payment
-             WHERE is_active = TRUE AND COALESCE(direction,'IN') = 'OUT'
-               AND estado IN ('CONFIRMADO_HUMANO','CONFIRMADO_AI')
-               -- Solo pagos al proveedor de la mercadería: un flete o un gasto
-               -- aduanero NO cancela la deuda de compra.
-               AND counterparty_type IN ('PROVEEDOR','SUPPLIER')
-             GROUP BY expediente_id
-        """)
-        pagado_prov = {r[0]: _dec(r[1]) for r in c.fetchall()}
-
-    rows = _fetch_expedientes()
-    totales = totals_for([r["expediente_id"] for r in rows])
     fin = today + timedelta(days=dias)
-
-    for row in rows:
+    for row in _fetch_expedientes():
         it = _build_item(row, today)
-        t = totales.get(it["expediente_id"], {})
-
-        # Entrada: saldo por cobrar real (facturado − pagado).
-        pendiente = _dec(t.get("balance"))
-        if pendiente > 0:
-            d = _fdate(it.get("fecha_facturada"))
-            if d:
-                d = max(d, today)              # vencido → se cobra ya
-                if d <= fin:
-                    _bucket(d)["entradas_usd"] += pendiente
-                    proy_e += pendiente
-        elif not _dec(t.get("invoiced")) and _dec(it.get("total_client")) > 0:
-            # Pedido sin factura: no es cuenta por cobrar todavía.
-            sin_factura_usd += _dec(it.get("total_client"))
-
-        # Salida: saldo pendiente al proveedor, solo si lo opera MWT.
         if str(it.get("operating_company_id") or "") == MWT_OPERATING_CLIENT_ID:
-            base = _fdate(it.get("shipment_date"))
-            cd_mwt = it.get("credit_days_mwt")
-            deuda_prov = max(
-                _dec(it.get("total_mwt")) - pagado_prov.get(it["expediente_id"], Decimal("0")),
-                Decimal("0"),
-            )
-            if base and cd_mwt is not None and deuda_prov > 0:
-                cv = max(base + timedelta(days=int(cd_mwt)), today)
-                if cv <= fin:
-                    _bucket(cv)["salidas_usd"] += deuda_prov
-                    proy_s += deuda_prov
+            continue                    # su ingreso es arbitraje, no comisión
+        amt = _dec(it.get("commission_amount") or 0)
+        if amt <= 0 or it["devengo_estado"] == "DEVENGADA":
+            continue                    # sin tasa o ya cobrada
+        d = _fdate(it.get("fecha_devengo_calculada"))
+        if not d:
+            continue
+        d = max(d, today)               # vencida → pendiente inmediato
+        if d <= fin:
+            _bucket(d)["entradas_usd"] += amt
+            proy_e += amt
 
     series = []
     tot = {"entradas_usd": Decimal("0"), "salidas_usd": Decimal("0"),
@@ -1222,9 +1164,7 @@ def flujo(request):
         "proyecciones": {
             "entradas_usd": str(proy_e.quantize(Decimal("0.01"))),
             "salidas_usd": str(proy_s.quantize(Decimal("0.01"))),
-            "fuente": "saldo pendiente de cobrar/pagar por expediente (ancla REGISTRO + plazo; lo vencido entra como pendiente inmediato)",
-            "sin_factura_usd": str(sin_factura_usd.quantize(Decimal("0.01"))),
-            "sin_factura_nota": "pedidos sin factura comercial (ART-13): no son cuenta por cobrar todavía y no entran en las entradas",
+            "fuente": "comisiones por cobrar en la ventana (no incluye mercadería: el pago a Marluvas es otro flujo)",
         },
         "saldo_final_proyectado": {
             "USD": str((saldo_usd + neto_usd).quantize(Decimal("0.01"))),

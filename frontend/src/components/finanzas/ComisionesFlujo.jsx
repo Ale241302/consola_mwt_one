@@ -144,7 +144,7 @@ export default function ComisionesFlujo({ lang = "es" }) {
       </Card>
 
       {/* Flujo 90 días */}
-      <Card title={es ? "FLUJO 90 DÍAS · USD + CRC" : "90-DAY FLOW · USD + CRC"} lang={lang}
+      <Card title={es ? "FLUJO 90 DÍAS · COMISIONES (USD)" : "90-DAY FLOW · COMMISSIONS (USD)"} lang={lang}
             right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{flujo?.dias || 90} {es ? "días" : "days"}</span>}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
           <MiniKpi label={es ? "Entradas USD" : "In USD"} value={money(t.entradas_usd)} color="#0E8A6D" />
