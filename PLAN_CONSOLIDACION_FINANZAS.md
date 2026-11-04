@@ -394,6 +394,27 @@ Resultado: Recibidas 16 ($27,683.58) · En tránsito 7 ($16,014.69) · Proyectad
 
 ---
 
+### Base de la comisión = lo realmente cobrado (2026-11-04)
+
+`EXP-110022220`: la PF suma 2,128.50 pero el cobro real fue 229.73 = 7 % de 3,281.80.
+La base correcta no es el valor del pedido sino **el monto cobrado**.
+
+Regla aplicada en `_build_item()` (commit `1a14462`): con pagos confirmados, la
+comisión se escala a `pagado / total_client`. Sin cobro, se proyecta sobre el total.
+
+Verificación contra Payoneer: tres de las seis filas con cobro documentado ahora
+coinciden al centavo (110022220, 12543, IyC 001). Quedan con diferencia:
+
+- `EXP-110022589`: calculado 1,246.01 vs cobrado 872.21 → el cobro real equivale a
+  **7 %**, pero el expediente no tiene override y las líneas traen 10 %. Pendiente
+  fijar `commission_pct = 0.07` si se confirma que esa era la tasa.
+- `EXP-UMMIE-2026-01` (dif 2.50) y `EXP-110022868` (dif 22.33): diferencias menores,
+  compatibles con cargos bancarios.
+
+Total devengable tras el cambio: **$56,968.61**.
+
+---
+
 ## Orden recomendado
 
 `F1 → F2 → F3 → F4 → F5`, porque las fechas y montos de F2/F3 dependen de que las
