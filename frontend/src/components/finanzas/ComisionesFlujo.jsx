@@ -179,7 +179,8 @@ export default function ComisionesFlujo({ lang = "es" }) {
             {es ? "Saldo final proyectado" : "Projected end balance"}
           </div>
           <div className="tabular-nums" style={{ fontSize: 16, fontWeight: 800, color: "var(--brand-primary, #013A57)", marginTop: 2 }}>
-            USD {money(sf.USD)} <span style={{ color: "var(--text-tertiary, #94A3B8)", fontWeight: 400 }}>·</span> CRC {money(sf.CRC, "CRC")}
+            {/* money() ya incluye la moneda: no anteponer "USD"/"CRC" otra vez */}
+            {money(sf.USD)} <span style={{ color: "var(--text-tertiary, #94A3B8)", fontWeight: 400 }}>·</span> {money(sf.CRC, "CRC")}
           </div>
         </div>
         <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>

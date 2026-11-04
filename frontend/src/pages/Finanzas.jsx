@@ -304,12 +304,12 @@ export default function Finanzas({ lang = "es" }) {
         </div>
       )}
 
-      {/* Calendario de comisiones: cuándo la recibí / cuándo la debería recibir */}
-      <ComisionesCalendario lang={lang} />
-
-      {/* Comisiones por marca + flujo 90 días + arbitraje + objetivos */}
-      <ComisionesFlujo lang={lang} />
-      <ObjetivosCliente lang={lang} />
+      {/* Calendario + marca/flujo + objetivos, con ritmo vertical consistente */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <ComisionesCalendario lang={lang} />
+        <ComisionesFlujo lang={lang} />
+        <ObjetivosCliente lang={lang} />
+      </div>
 
 
       {/* Sprint 2026-05-30 (CEO) - footer 'Proximos sprints' removido
