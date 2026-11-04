@@ -4,6 +4,7 @@
 // =====================================================================
 import React, { useCallback, useEffect, useState } from "react";
 import { finanzasApi } from "../../lib/api.js";
+import { usePagination, TablePagination } from "../ui/TablePagination.jsx";
 
 const money = (v, ccy = "USD") => {
   const n = Number(v);
@@ -55,6 +56,7 @@ export default function ComisionesFlujo({ lang = "es" }) {
   const [saldo, setSaldo] = useState({ USD: "", CRC: "" });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
+  const pg = usePagination(arb?.results || [], { defaultPerPage: 20 });
 
   const load = useCallback(async () => {
     try {
@@ -230,6 +232,7 @@ export default function ComisionesFlujo({ lang = "es" }) {
             <thead>
               <tr>
                 <th>{es ? "Expediente" : "File"}</th>
+                <th>{es ? "Estado" : "Status"}</th>
                 <th>{es ? "Cliente" : "Client"}</th>
                 <th style={{ textAlign: "right" }}>{es ? "Δ Bruto" : "Gross Δ"}</th>
                 <th>{es ? "Pago compra (real)" : "Pay purchase (actual)"}</th>
@@ -238,11 +241,12 @@ export default function ComisionesFlujo({ lang = "es" }) {
               </tr>
             </thead>
             <tbody>
-              {(arb.results || []).map((r) => (
+              {pg.pageItems.map((r) => (
                 <tr key={r.expediente_id}>
                   <td className="mono-sm" style={{ fontWeight: 700, color: "var(--brand-primary, #013A57)" }}>
                     {r.display_id || "—"}
                   </td>
+                  <td><span className="micro" style={{ color: "var(--text-secondary, #475569)", fontWeight: 700 }}>{r.estado || "—"}</span></td>
                   <td>{r.cliente}{r.brand_name ? ` · ${r.brand_name}` : ""}</td>
                   <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700, color: "var(--brand-accent, #0E8A6D)" }}>
                     {money(r.arbitraje_bruto)}
@@ -280,6 +284,11 @@ export default function ComisionesFlujo({ lang = "es" }) {
               ))}
             </tbody>
           </table>
+
+          <TablePagination
+            page={pg.page} totalPages={pg.totalPages} perPage={pg.perPage}
+            setPerPage={pg.setPerPage} setPage={pg.setPage} total={pg.total} lang={lang}
+          />
 
           <div style={{ fontSize: 11, color: "var(--text-tertiary, #94A3B8)", marginTop: 10 }}>
             {es

@@ -414,6 +414,7 @@ def _build_item(row: dict, today: date) -> dict:
     return {
         "expediente_id":         row["expediente_id"],
         "oc_codigo":             row.get("oc_codigo"),
+        "exp_estado":            row.get("exp_estado"),
         "display_id":            _resolve_display_id(row["codigo"], row["proforma_codigo"]),
         "codigo":                row["codigo"],
         "proforma_codigo":       row["proforma_codigo"],
@@ -1338,6 +1339,7 @@ def arbitraje(request):
         results.append({
             "expediente_id": eid,
             "display_id": it["display_id"],
+            "estado": it.get("exp_estado"),
             "cliente": it.get("cliente_razon_social"),
             "brand_name": it.get("brand_name"),
             "total_client": it["total_client"],
