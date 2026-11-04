@@ -442,6 +442,28 @@ ahora muestra la fecha real de compra en esas dos filas.
 
 ---
 
+### Corrección de las PFs 2519 y 2521 (2026-11-04)
+
+Extracción de los precios reales de la PF (no de la consola):
+
+- **2519-2026 / EXP-IyC 004-2026**: la PF trae precio cliente **y** precio Marluvas.
+  Se cargó `unit_price_mwt` por SKU → **Δ real 6,415.35** (antes 0). El total de compra
+  Marluvas ($26,681.50) y el de venta ($33,096.85) cuadran con el documento.
+- **2521-2026 / EXP-110024463-3**: la PF tiene **un solo precio** y el registro indica
+  comisión 7 %. Es modelo COMISION, no arbitraje: el operador pasa a SONEPAR y
+  `commission_pct = 0.07`. Genera **$1,620.47** de comisión (antes 0).
+
+Efecto: arbitraje total $68,887.24 → **$75,302.59**; devengable → **$58,589.08**.
+
+### Otros ajustes
+
+- Chip renombrado a **"A financiar (proyección)"** con tooltip: usa el desfase
+  planificado, no el realizado.
+- El **neto CRC** ahora es `neto_usd × USD/CRC` (454.238941 en vivo), no la suma de
+  pagos en colones que siempre daba 0.
+
+---
+
 ## Orden recomendado
 
 `F1 → F2 → F3 → F4 → F5`, porque las fechas y montos de F2/F3 dependen de que las
