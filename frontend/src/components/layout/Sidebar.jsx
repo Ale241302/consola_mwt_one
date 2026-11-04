@@ -186,10 +186,8 @@ export function Sidebar({ collapsed, onToggleCollapse, lang }) {
   const allItems = [
     { key: 'dashboard',      icon: <IconHome/>,       label: tr(lang,'dashboard'),     group: 'core' },
     { key: 'expedientes',    icon: <IconFolder/>,     label: expedientesLabel,         group: 'core', counter: expedientesCount },
-    // Sprint 2026-07-20 · Mesa de trabajo: expedientes que requieren
-    // atención. adminOnly → solo admin/CEO/superadmin (no staff MWT, no client).
-    // Mesa de trabajo unificada (Tareas + Atención). Visible según módulo `tareas`.
-    { key: 'mesa-trabajo',   icon: <IconClipboard/>,  label: lang === 'en' ? 'Workbench' : 'Mesa de trabajo', group: 'core' },
+    // Mesa de trabajo: OCULTA del sidebar (decisión 2026-11-04). La ruta
+    // /mesa-trabajo sigue existiendo; solo se retira el acceso del menú.
     { key: 'cronograma',     icon: <IconHistory/>,    label: lang === 'en' ? 'Timeline' : 'Cronograma', group: 'core' },
     { key: 'portal',         icon: <IconBuilding/>,   label: tr(lang,'portal'),        group: 'core' },
     // Almacén & Logística
