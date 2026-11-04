@@ -33,12 +33,14 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 
 from django.db import connection
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 
 from apps.core.constants import MWT_OPERATING_CLIENT_ID
+from apps.expedientes.serializers import build_expediente_ref_batches
 
 from .permissions import IsCeoOrAdmin
 
@@ -214,6 +216,7 @@ def _fetch_expedientes() -> list[dict]:
                 e.client_id::text                                 AS client_id,
                 (SELECT o.codigo FROM expedientes.oc o
                   WHERE o.id = e.oc_id AND o.is_active)             AS oc_codigo,
+                e.oc_id::text                                       AS oc_id,
                 e.operating_company_id::text                      AS operating_company_id,
                 e.shipment_date                                   AS shipment_date,
                 e.eta                                             AS eta,
@@ -1632,7 +1635,13 @@ def comisiones_calendario(request):
         recibido = {r[0]: {"fecha": r[1], "monto": r[2]} for r in c.fetchall()}
 
     items = []
-    for it in [_build_item(r, today) for r in _fetch_expedientes()]:
+    # La OC visible es la del PDF real del cliente (misma resolución que el
+    # listado de expedientes), no el código autogenerado de la tabla OC.
+    rows = _fetch_expedientes()
+    batch_ocs = build_expediente_ref_batches(
+        [SimpleNamespace(id=r["expediente_id"], oc_id=r.get("oc_id")) for r in rows]
+    )["batch_ocs"]
+    for it in [_build_item(r, today) for r in rows]:
         # SOLO comisiones. El arbitraje (expedientes operados por MWT) se ve
         # en su propia sección — aquí no se cuenta. Para los operados por MWT
         # la comisión es 0 (se quedan con el arbitraje).
@@ -1677,7 +1686,7 @@ def comisiones_calendario(request):
             "origen":          "OPERATIVA",
             "concepto":        "COMISION",
             "expediente":      it.get("codigo"),
-            "oc_codigo":       it.get("oc_codigo"),
+            "oc_codigo":       (batch_ocs.get(it["expediente_id"]) or [it.get("oc_codigo")])[0],
             "pf":              str(it.get("proforma_codigo") or "").strip() or it.get("display_id"),
             "cliente":         it.get("cliente_razon_social"),
             "importador":      it.get("operador_razon_social") or it.get("cliente_razon_social"),
