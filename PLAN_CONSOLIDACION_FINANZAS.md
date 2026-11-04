@@ -464,6 +464,32 @@ Efecto: arbitraje total $68,887.24 → **$75,302.59**; devengable → **$58,589.
 
 ---
 
+### Conciliación de cobros y comisiones de octubre (2026-11-04)
+
+Corrección de datos en producción, ejecutada en una transacción con validación de cada
+fila y de los totales antes del commit. No hubo cambios de código.
+
+| PF | Corrección aplicada | Comisión antes | Comisión después |
+|---|---|---:|---:|
+| 2465 | `PAY-2026-00035`: IN $4,758.85; NC CO-0002 de $500; tasa efectiva documentada 9.84%; línea PVC 701414 corregida a 6% | $525.88 · Vencida | **$468.27 · Recibida** |
+| 2478 original | `PAY-2026-00036`: transferencia ID 1498359; base comisionable $2,397.15, sin flete/seguro; no toca 2478B | $241.72 · Vencida | **$239.72 · Recibida** |
+| 2505 | `PAY-2026-00008/00009` desactivados como FIXTURE; `total_paid=0` | $120.00 · Recibida | **$277.88 · Proyectada, 20-dic** |
+| 2456 | Base neta $28,105.00 | $2,812.50 | **$2,810.50** |
+| 2468 | Base neta $6,922.80 | $694.28 | **$692.28** |
+| 2466 | Base neta $4,148.00; giro CIP $4,768.00 queda en metadata | $416.80 | **$414.80** |
+| 2432 | Override `commission_pct=0.07`, confirmado por cobro Payoneer | $1,246.01 | **$872.21** |
+
+El ajuste conjunto de 2456/2468 ($40) se repartió en $20 por PF; el total documentado
+queda en $3,502.78. Las fuentes quedaron en `finance.payment.metadata` y notas: correos
+Hostinger UID 20616/20657/20857 (2465), 20164/20411/20857 (2478), SWIFT TE500889925
+(2456/2468) y S44864 (2466).
+
+Resultado verificado: Recibidas 17 / **$27,802.17** · En tránsito 7 / $16,014.69 ·
+Proyectadas 8 / $5,802.09 · Vencidas 3 / $8,688.60. **Total devengable $58,307.55**.
+La cancelación de 2467 no formó parte de este ajuste de pagos y no se aplicó aquí.
+
+---
+
 ## Orden recomendado
 
 `F1 → F2 → F3 → F4 → F5`, porque las fechas y montos de F2/F3 dependen de que las
