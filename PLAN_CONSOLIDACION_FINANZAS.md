@@ -321,6 +321,56 @@ autogenerado. Las 31 filas tienen OC.
 
 ---
 
+### Fase 6 — Review del diff (2026-11-04)
+
+El `code-reviewer` pasó sobre `git diff 8f4182c..HEAD`. Hallazgos bloqueantes y su
+resolución (commit `b847123`):
+
+| # | Hallazgo | Corrección |
+|---|---|---|
+| 1 | El flujo inventaba saldo por cobrar desde el valor del pedido | Ahora usa `totals_for()` (ART-13). Sin factura no hay cuenta por cobrar; se reporta aparte en `proyecciones.sin_factura_usd` ($214,822.50) |
+| 2 | `except Exception: pass` devolvía un flujo parcial como válido | Eliminado: un fallo rompe la respuesta |
+| 3 | Pagos no confirmados se contaban dos veces (caja + proyección) | Solo `CONFIRMADO_*` entran como caja |
+| 4 | Cualquier OUT reducía la deuda con el proveedor | Solo `counterparty_type IN ('PROVEEDOR','SUPPLIER')` |
+| 5 | `mes_comision` usaba otra ancla (PREPARACION.end) | Ahora usa el mismo ancla REGISTRO |
+| 6 | `SIN_TASA` diluía el denominador del margen | Se excluye del denominador |
+| 7 | `ivaCostoUsd` quedó sin consumidor | Variable eliminada |
+
+### SONEPAR 7 %: origen y decisión
+
+El event_log lo documenta: `EXP-110021558` cobró **USD 2,813.86 = 7 % de 40,198.05**
+en Payoneer el 20/07/2026 (id 1013278031). **No es basura: es la tasa negociada.**
+El cálculo la ignoraba porque la suma por línea ganaba al override. Corregido en
+`_build_item()` (commit `02fcd3c`): el override del expediente tiene precedencia.
+
+`EXP-110022220` queda con 7 % × 2,128.50 = $149.00, pero el cobro real fue **$229.73**
+(= 7 % de 3,281.80). La base real difiere de la suma de líneas: pendiente de revisar.
+
+### Datos: sync de los 21 y alineación con ART-13
+
+- `total_paid` = SUM(pagos IN confirmados) en los 21.
+- `total_invoiced`/`balance` se alinearon a `totals_for()` (ART-13) en 11 filas donde
+  la aproximación desde el balance legado no coincidía con la fuente canónica.
+
+### Expedientes creados desde carpeta (2026-11-04)
+
+| PF | Expediente | Cliente | Pares | Total |
+|---|---|---|---|---|
+| 2415-2026 | EXP-COMTEK 001-2026 | COMTEK (carpeta; la PF dice Sonepar, queda anotado) | 6 | $144.12 |
+| 2416-2026 | EXP-2416-2026 | UMMIE | 474 | $7,603.06 |
+| 2513-2026 | EXP-2513-2026 | EGUISA | 50 | $389.00 |
+
+Se usó el orquestador real (`create_from_oc`), con precios tomados de la PF y el
+documento PROFORMA registrado en MinIO. `REGISTRO.start` = fecha de la PF (2026-02-12)
+en 2415/2416, no la fecha de digitación.
+
+**No creado:** `2514-2026` es un *ajuste* de `EXP-110023409` (PF 2484) + OC 110023539,
+no una orden independiente. Requiere decidir si se anexa al expediente existente.
+
+Total tras la creación: **48 expedientes**, comisión devengable **$57,058.21**.
+
+---
+
 ## Orden recomendado
 
 `F1 → F2 → F3 → F4 → F5`, porque las fechas y montos de F2/F3 dependen de que las
