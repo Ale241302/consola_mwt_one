@@ -318,6 +318,8 @@ def _fetch_expedientes() -> list[dict]:
                    AND p.estado IN ('CONFIRMADO_HUMANO', 'CONFIRMADO_AI')
             ) pay ON TRUE
             WHERE e.is_active = TRUE
+              -- Un pedido cancelado no genera comisión ni proyección financiera.
+              AND UPPER(COALESCE(e.estado, '')) NOT IN ('CANCELADO', 'CANCELADA')
             GROUP BY e.id, cl.id, cl.razon_social, cl.segmento, cl.dias_credito, cl.comision_pct,
                      oc.id, oc.razon_social,
                      e.brand_id, bm.nombre,
