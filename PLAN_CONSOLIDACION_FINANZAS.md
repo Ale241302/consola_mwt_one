@@ -371,6 +371,29 @@ Total tras la creación: **48 expedientes**, comisión devengable **$57,058.21**
 
 ---
 
+### Calendario: estados y días verificados contra el cobro real (2026-11-04)
+
+Tres correcciones (commits `b246c3f` y `b6dad3e`):
+
+1. **Fecha y monto reales de cobro.** `_cobros_reales_comision()` lee las notas de
+   cierre del event_log (`occurred_at` + "USD … Payoneer"). Cuando existen, mandan
+   sobre la fecha del pago del cliente. Si la nota agrupa varias PFs, el monto se marca
+   `compartido` y no se compara por fila.
+2. **No se vence lo que no ha despachado.** Un expediente en REGISTRO / PRODUCCION /
+   PREPARACION pasa a PROYECTADA: aún no hay comisión exigible. Vencidas bajó de 8 a 5
+   filas ($11,940.24 → $9,456.20).
+3. **Diferencia visible.** La UI muestra "Cobrado $X" bajo el monto calculado cuando
+   difiere (ej. 110022589: calculado 1,246.01 vs cobrado 872.21; 110022220: 149.00 vs
+   229.73).
+
+Además: una proyección ya pasada de un pedido no despachado deja de mostrarse como
+"atraso" (días en blanco), para no contradecir el estado.
+
+Resultado: Recibidas 16 ($27,683.58) · En tránsito 7 ($16,014.69) · Proyectado 6
+($3,903.74) · Vencidas 5 ($9,456.20). Total $57,058.21.
+
+---
+
 ## Orden recomendado
 
 `F1 → F2 → F3 → F4 → F5`, porque las fechas y montos de F2/F3 dependen de que las
