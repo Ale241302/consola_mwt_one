@@ -456,12 +456,29 @@ def overview(request):
     tot_en_transito = Decimal("0")
     tot_vencida = Decimal("0")
     tot_margen = Decimal("0")
+    tot_arbitraje = Decimal("0")
+    tot_comision_margen = Decimal("0")
     sum_client_for_pct = Decimal("0")
-    sum_delta_for_pct = Decimal("0")
     sin_tasa = 0
 
     for it in items:
         amt_str = it["commission_amount"]
+        es_mwt = str(it.get("operating_company_id") or "") == str(MWT_OPERATING_CLIENT_ID)
+
+        # Beneficio de MWT por expediente (regla CEO): si lo opera MWT es el
+        # arbitraje (Δ = cliente − MWT); si lo opera el cliente es la comisión.
+        # Antes se sumaba el `total_client` completo en los operados por el
+        # cliente, y el KPI "margen" salía ~6x inflado (incluía facturación
+        # bruta, no margen).
+        if es_mwt:
+            tot_margen += _dec(it["delta_total"])
+            tot_arbitraje += _dec(it["delta_total"])
+        else:
+            tot_margen += _dec(amt_str or 0)
+            tot_comision_margen += _dec(amt_str or 0)
+
+        sum_client_for_pct += _dec(it["total_client"])
+
         if amt_str is None:
             sin_tasa += 1
             continue
@@ -479,13 +496,9 @@ def overview(request):
         elif estado == "VENCIDA":
             tot_vencida += amt
 
-        tot_margen += _dec(it["delta_total"])
-        sum_client_for_pct += _dec(it["total_client"])
-        sum_delta_for_pct += _dec(it["delta_total"])
-
     margen_pct_pond = None
     if sum_client_for_pct > 0:
-        margen_pct_pond = (sum_delta_for_pct / sum_client_for_pct).quantize(Decimal("0.0001"))
+        margen_pct_pond = (tot_margen / sum_client_for_pct).quantize(Decimal("0.0001"))
 
     return Response({
         "kpis": {
@@ -497,6 +510,9 @@ def overview(request):
             "comision_vencida":          str(tot_vencida.quantize(Decimal("0.01"))),
             "comision_real_total":       str((tot_devengada + tot_pendiente).quantize(Decimal("0.01"))),
             "margen_total_usd":          str(tot_margen.quantize(Decimal("0.01"))),
+            "margen_arbitraje_usd":      str(tot_arbitraje.quantize(Decimal("0.01"))),
+            "margen_comisiones_usd":     str(tot_comision_margen.quantize(Decimal("0.01"))),
+            "margen_base_usd":           str(sum_client_for_pct.quantize(Decimal("0.01"))),
             "margen_pct_ponderado":      (str(margen_pct_pond) if margen_pct_pond is not None else None),
             "expedientes_count":         len(items),
             "expedientes_sin_tasa_count": sin_tasa,

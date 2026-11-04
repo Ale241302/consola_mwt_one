@@ -484,7 +484,10 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
                     cod, created_at, has_file = item
                     norm = _normalize_po_code(cod)
                     matches = (norm == principal_norm) if principal_norm else False
-                    return (-int(has_file), -int(matches),
+                    # `has_file` es la storage_url (str) o None: hay que
+                    # convertirlo a bool antes de int(), si no revienta y el
+                    # except devuelve [] (el detalle se quedaba sin OC).
+                    return (-int(bool(has_file)), -int(matches),
                             created_at or datetime.min, -len(cod))
                 doc_code = sorted(doc_rows, key=_sort_key)[0][0]
             else:
