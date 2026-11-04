@@ -545,10 +545,6 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
     const extraTotal = freight + insurance;
     // IVA = crédito fiscal: no capitaliza en el landed cost (regla compartida
     // con el backend `liquidation.py` d7d21b2, vía `isCapitalizable`).
-    const ivaCostoUsd = viewCostLines.reduce((a, c) =>
-      (!isCapitalizable(c.kind)
-        ? a + Number(c.amount || 0) * Number(c.fx_to_usd || 1)
-        : a), 0);
     const destTotal = viewCostLines.reduce((a, c) => {
       const k = String(c.kind || "").toUpperCase();
       if (!isCapitalizable(k)) return a;
@@ -683,7 +679,6 @@ export default function TransferLiquidationPanel({ transfer, lang = "es", onLiqu
       daiTotal,
       leyTotal,
       ivaTotal,
-      ivaCostoUsd,
       customTaxesSum,
       customCostsSum,
       avgLanded: qtyTotalAll > 0 ? landedTotal / qtyTotalAll : 0,
