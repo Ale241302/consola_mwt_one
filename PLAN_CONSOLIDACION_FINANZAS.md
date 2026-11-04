@@ -486,7 +486,15 @@ Hostinger UID 20616/20657/20857 (2465), 20164/20411/20857 (2478), SWIFT TE500889
 
 Resultado verificado: Recibidas 17 / **$27,802.17** · En tránsito 7 / $16,014.69 ·
 Proyectadas 8 / $5,802.09 · Vencidas 3 / $8,688.60. **Total devengable $58,307.55**.
-La cancelación de 2467 no formó parte de este ajuste de pagos y no se aplicó aquí.
+Después de esa conciliación se canceló **2467 / EXP-COMTEK 002-2026** mediante el
+`transition` oficial: `PRODUCCION → CANCELADO`, `occurred_at=2026-09-16T18:12:30Z`,
+evento inmutable `5fe5bbf6-c60d-4b52-9a00-341cb714c153`. Se conserva el expediente y
+su documentación; no se eliminó nada. `_fetch_expedientes()` ahora excluye
+CANCELADO/CANCELADA de todos los cálculos de Finanzas (commit `2dccb35`).
+
+**Resultado final verificado:** Recibidas 17 / $27,802.17 · En tránsito 7 / $16,014.69 ·
+Proyectadas 7 / $4,086.45 · Vencidas 3 / $8,688.60. **Total devengable $56,591.91**
+en 34 filas; 2467 ya no aparece en el calendario.
 
 ---
 
