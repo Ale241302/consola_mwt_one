@@ -66,19 +66,41 @@ def _resolve_display_id(codigo: str | None, proforma_codigo: str | None) -> str:
     return raw
 
 
+def _anchor_plazo_cliente(row: dict) -> tuple[date | None, str | None]:
+    """Ancla del plazo de pago del cliente: cuándo entró en REGISTRO.
+
+    Regla CEO 2026-11-04: el plazo corre desde `phase_durations_json.REGISTRO
+    .start`, no desde el embarque. Fallback para legados sin esa fase: ETD/ETA
+    reales y, al final, created_at. Devuelve (fecha, origen); el origen se
+    expone en la API para poder auditar de dónde salió cada vencimiento.
+    """
+    for source, value in (
+        ("REGISTRO.start",           row.get("registro_start")),
+        ("ART05.shipment_date",      row.get("shipment_date_artifact")),
+        ("expediente.shipment_date", row.get("shipment_date")),
+        ("ART05.eta",                row.get("eta_artifact")),
+        ("expediente.eta",           row.get("eta")),
+        ("expediente.created_at",    row.get("created_at_date")),
+    ):
+        if value:
+            return value, source
+    return None, None
+
+
 def _resolve_devengo_estado(
     *,
     commission_rate: Decimal | None,
-    shipment_date,
-    eta,
-    created_at_date=None,
+    anchor,
     credit_days_cliente: int | None,
     credit_days_mwt: int | None,
     balance: Decimal,
     total_paid: Decimal,
     today: date,
 ) -> tuple[str, date | None]:
-    """Estado de devengo segun Â§3.3 del SPEC.
+    """Estado de devengo segun §3.3 del SPEC.
+
+    `anchor` es la fecha desde la que corre el plazo del cliente (ver
+    `_anchor_plazo_cliente`).
 
     Returns:
         (estado, fecha_devengo_esperada)
@@ -93,10 +115,9 @@ def _resolve_devengo_estado(
     cd_cli = int(credit_days_cliente or 90)
     cd_mwt = int(credit_days_mwt or 90)
 
-    # Jerarquía de fecha base (real > eta > estimada con la creación)
-    base = shipment_date or eta
-    if base is None and created_at_date is not None:
-        base = created_at_date
+    # El plazo del cliente corre desde el ancla (REGISTRO.start, regla CEO
+    # 2026-11-04); sin ancla no hay fecha proyectable.
+    base = anchor
     if base is None:
         return ("PROYECTADA", None)
 
@@ -123,7 +144,7 @@ def _next_month_business_window(d: date | None, n_days: int = 10) -> tuple[date 
     calcula el rango de los primeros N dias habiles del mes SIGUIENTE.
 
     Args:
-        d:       fecha base (fecha_facturada = shipment_date + credit_days_cli).
+        d:       fecha base (fecha_facturada = REGISTRO.start + credit_days_cli).
         n_days:  cuantos dias habiles (default 10).
 
     Returns:
@@ -193,6 +214,7 @@ def _fetch_expedientes() -> list[dict]:
                 e.shipment_date                                   AS shipment_date,
                 e.eta                                             AS eta,
                 MAX(e.created_at)::date                           AS created_at_date,
+                NULLIF(e.phase_durations_json -> 'REGISTRO' ->> 'start', '')::date AS registro_start,
                 a05.shipment_date_artifact                        AS shipment_date_artifact,
                 a05.eta_artifact                                  AS eta_artifact,
                 e.credit_days_mwt                                 AS credit_days_mwt,
@@ -330,11 +352,14 @@ def _build_item(row: dict, today: date) -> dict:
     if balance_computed < 0:
         balance_computed = Decimal("0.00")
 
+    # Ancla del plazo del cliente: inicio de REGISTRO (regla CEO 2026-11-04).
+    # Es la misma fecha que usa el estado de devengo, para que la tabla del
+    # calendario y el gráfico "comisión esperada por mes" no se contradigan.
+    anchor, anchor_source = _anchor_plazo_cliente(row)
+
     estado, _fecha_devengo_credito = _resolve_devengo_estado(
         commission_rate=_dec(commission_rate) if commission_rate is not None else None,
-        shipment_date=(row.get("shipment_date_artifact") or row["shipment_date"]),
-        eta=(row.get("eta_artifact") or row["eta"]),
-        created_at_date=row.get("created_at_date"),
+        anchor=anchor,
         credit_days_cliente=cd_cli,
         credit_days_mwt=cd_mwt,
         balance=balance_computed,
@@ -352,16 +377,7 @@ def _build_item(row: dict, today: date) -> dict:
         fecha_devengo + timedelta(days=cd_cli) if fecha_devengo else None
     )
 
-    base = (row.get("shipment_date_artifact")
-            or row["shipment_date"]
-            or row.get("eta_artifact")
-            or row["eta"])
-    if base is None and row.get("created_at_date"):
-        base = row["created_at_date"] + timedelta(days=cd_cli)
-
-    fecha_facturada = None
-    if base is not None:
-        fecha_facturada = base + timedelta(days=cd_cli)
+    fecha_facturada = anchor + timedelta(days=cd_cli) if anchor else None
     fpa_inicio, fpa_fin, mes_pago_label = _next_month_business_window(
         fecha_facturada, n_days=10
     )
@@ -395,6 +411,8 @@ def _build_item(row: dict, today: date) -> dict:
                                   else ("expediente" if row["shipment_date"] else None)),
         "fecha_devengo_esperada": fecha_devengo.isoformat() if fecha_devengo else None,
         "fecha_devengo_calculada": _fecha_devengo_credito.isoformat() if _fecha_devengo_credito else None,
+        "fecha_ancla":            anchor.isoformat() if anchor else None,
+        "fecha_ancla_source":     anchor_source,
         "fecha_pago_aprox":       fecha_pago_aprox.isoformat() if fecha_pago_aprox else None,
         "devengo_estado":        estado,
         "lines_count":           row["lines_count"],
