@@ -327,6 +327,12 @@ def _build_item(row: dict, today: date) -> dict:
     # (expedientes.linea.commission_pct o reglas por marca/familia), se usa esa suma.
     comm_client = _dec(row.get("commission_client") or 0)
 
+    # El "pagado" se deriva de finance.payment (pagos CONFIRMADOS IN); el campo
+    # denormalizado del expediente queda como fallback.
+    paid_payments = _dec(row.get("paid_from_payments"))
+    paid_legacy   = _dec(row.get("total_paid"))
+    paid_total    = paid_payments if paid_payments > 0 else paid_legacy
+
     # Regla CEO: la comisión MWT se calcula SIEMPRE sobre el Total Cliente.
     # Si el expediente lo opera Muito Work Limitada, la comisión se muestra en 0:
     # en ese caso el beneficio de MWT es el arbitraje (Δ), no una comisión.
@@ -348,19 +354,21 @@ def _build_item(row: dict, today: date) -> dict:
     else:
         commission_amount = None
 
+    # Base de la comisión = lo REALMENTE cobrado cuando ya hay pagos
+    # confirmados; si no hay cobro, se proyecta sobre el total del pedido.
+    # Evidencia Payoneer (event_log): 110022220 cobró 229.73 = 7% de 3,281.80
+    # (no de las líneas, 2,128.50); 12543 cobró 1,155.83 = 10% de 11,558.30;
+    # IyC 001 cobró 8,324.15 = 10% de 83,241.45.
+    if (commission_amount is not None and not is_mwt_operated
+            and paid_total > 0 and total_client > 0):
+        commission_amount = (commission_amount * (paid_total / total_client)).quantize(Decimal("0.01"))
+
     margen_pct = None
     if total_client > 0:
         margen_pct = (delta_total / total_client).quantize(Decimal("0.0001"))
 
     cd_cli = int(row["credit_days_cliente"] or row.get("cliente_dias_credito") or 90)
     cd_mwt = int(row["credit_days_mwt"]) if row.get("credit_days_mwt") is not None else None
-
-    # Sprint 2026-09 · el "pagado" se deriva de finance.payment (pagos
-    # CONFIRMADOS IN); el campo denormalizado del expediente queda como
-    # fallback. Así, registrar un pago dispara el devengo automáticamente.
-    paid_payments = _dec(row.get("paid_from_payments"))
-    paid_legacy   = _dec(row.get("total_paid"))
-    paid_total    = paid_payments if paid_payments > 0 else paid_legacy
 
     # Ancla del plazo del cliente: inicio de REGISTRO (regla CEO 2026-11-04).
     # Es la misma fecha que usa el estado de devengo, para que la tabla del
