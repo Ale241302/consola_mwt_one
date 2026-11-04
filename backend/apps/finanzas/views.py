@@ -1275,7 +1275,15 @@ def arbitraje(request):
         pr = pagos.get(eid, {})
         compra_real = pr.get("pago")
         venta_real = pr.get("cobro")
-        desfase_real = (venta_real - compra_real).days if (venta_real and compra_real) else None
+        if venta_real and compra_real:
+            desfase_real = (venta_real - compra_real).days
+        elif compra_real and not venta_real:
+            # MWT ya pagó al proveedor y el cliente aún no paga: la financiación
+            # está EN CURSO. Es un dato real (días desde el pago), no un vacío.
+            desfase_real = (today - compra_real).days
+        else:
+            desfase_real = None
+        desfase_en_curso = bool(compra_real and not venta_real)
         results.append({
             "expediente_id": eid,
             "display_id": it["display_id"],
@@ -1296,6 +1304,7 @@ def arbitraje(request):
             "compra_real": compra_real.isoformat() if compra_real else None,
             "venta_real":  venta_real.isoformat() if venta_real else None,
             "desfase_real_dias": desfase_real,
+            "desfase_en_curso": desfase_en_curso,
         })
 
     results.sort(key=lambda x: (x["desfase_dias"] is None, -(x["desfase_dias"] or 0)))

@@ -269,7 +269,9 @@ export default function ComisionesFlujo({ lang = "es" }) {
                         display: "inline-block", padding: "2px 9px", borderRadius: 999,
                         fontSize: 11, fontWeight: 700, color: "#B45309", background: "rgba(180,83,9,0.10)",
                       }}>
-                        {r.desfase_real_dias}d {es ? "financia MWT" : "MWT finances"}
+                        {r.desfase_real_dias}d {r.desfase_en_curso
+                          ? (es ? "financiando (aún no cobra)" : "financing (not collected yet)")
+                          : (es ? "financia MWT" : "MWT finances")}
                       </span>
                     ) : (
                       <span style={{
