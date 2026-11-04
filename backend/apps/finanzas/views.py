@@ -93,7 +93,6 @@ def _resolve_devengo_estado(
     anchor,
     credit_days_cliente: int | None,
     credit_days_mwt: int | None,
-    balance: Decimal,
     total_paid: Decimal,
     today: date,
 ) -> tuple[str, date | None]:
@@ -108,8 +107,11 @@ def _resolve_devengo_estado(
     if commission_rate is None:
         return ("SIN_TASA", None)
 
-    # Si el expediente ya esta pagado completamente, asumimos DEVENGADA.
-    if total_paid > 0 and balance == 0:
+    # Regla CEO 2026-11-04 · si el cliente ya pagó (existe al menos un pago IN
+    # confirmado) la comisión cuenta como RECIBIDA, aunque quede un residuo de
+    # centavos por diferencia bancaria. Antes se exigía balance == 0 y esas
+    # filas salían "Vencidas" con fecha de recibida y días de atraso a la vez.
+    if total_paid > 0:
         return ("DEVENGADA", None)
 
     cd_cli = int(credit_days_cliente or 90)
@@ -343,15 +345,6 @@ def _build_item(row: dict, today: date) -> dict:
     paid_legacy   = _dec(row.get("total_paid"))
     paid_total    = paid_payments if paid_payments > 0 else paid_legacy
 
-    invoiced = _dec(row.get("total_invoiced"))
-    if invoiced <= 0:
-        invoiced = _dec(row.get("balance")) + paid_legacy
-    if invoiced <= 0:
-        invoiced = total_client
-    balance_computed = invoiced - paid_total
-    if balance_computed < 0:
-        balance_computed = Decimal("0.00")
-
     # Ancla del plazo del cliente: inicio de REGISTRO (regla CEO 2026-11-04).
     # Es la misma fecha que usa el estado de devengo, para que la tabla del
     # calendario y el gráfico "comisión esperada por mes" no se contradigan.
@@ -362,7 +355,6 @@ def _build_item(row: dict, today: date) -> dict:
         anchor=anchor,
         credit_days_cliente=cd_cli,
         credit_days_mwt=cd_mwt,
-        balance=balance_computed,
         total_paid=paid_total,
         today=today,
     )
