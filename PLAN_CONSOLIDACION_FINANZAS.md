@@ -415,6 +415,33 @@ Total devengable tras el cambio: **$56,968.61**.
 
 ---
 
+### Flujo = comisiones, no mercancía (2026-11-04)
+
+El panel mezclaba cobros de mercancía con pagos al proveedor, y por eso no cuadraba con
+el total de comisiones. Ahora es solo comisiones por cobrar (commit `c6d7ddd`):
+
+- Entradas = comisión pendiente en la ventana (excluye lo ya cobrado).
+- Salidas = 0: cobrar una comisión no tiene pago asociado.
+- Neto = entradas.
+
+Cuadre con el encabezado: **56,968.61 = 27,593.98 (ya cobradas) + 27,954.93 (flujo 90 d)
++ 1,419.70 (proyectadas fuera de la ventana)**.
+
+### Pagos al proveedor registrados desde el correo
+
+Correo de Alvaro del 23-oct-2026 (Bianca Arruda / Marluvas) + comprobante Promerica
+**747829221** del 22-oct-2026:
+
+| PF | Expediente | Monto | Pago |
+|---|---|---|---|
+| 2455-2026 | EXP-2026-0007 | USD 26,924.66 | PAY-2026-00033 |
+| 2488-2026 | EXP-505244-21 | USD 9,413.01 | PAY-2026-00034 |
+
+Ambos `direction=OUT`, `counterparty_type=PROVEEDOR`, `CONFIRMADO_HUMANO`. El arbitraje
+ahora muestra la fecha real de compra en esas dos filas.
+
+---
+
 ## Orden recomendado
 
 `F1 → F2 → F3 → F4 → F5`, porque las fechas y montos de F2/F3 dependen de que las
