@@ -327,8 +327,17 @@ def _build_item(row: dict, today: date) -> dict:
     # Regla CEO: la comisión MWT se calcula SIEMPRE sobre el Total Cliente.
     # Si el expediente lo opera Muito Work Limitada, la comisión se muestra en 0:
     # en ese caso el beneficio de MWT es el arbitraje (Δ), no una comisión.
+    # Precedencia de la tasa:
+    #   1) override explícito del expediente (excepción negociada),
+    #   2) reglas por línea/marca/familia,
+    #   3) tasa del cliente.
+    # Evidencia 2026-11-04 (event_log): SONEPAR 110021558 cobró USD 2,813.86 =
+    # 7% de 40,198.05 en Payoneer el 20/07/2026; con la precedencia anterior el
+    # override quedaba ignorado y se calculaba 10% ($4,019.80).
     if is_mwt_operated:
         commission_amount = Decimal("0.00")
+    elif row.get("commission_rate_source") == "expediente.commission_pct":
+        commission_amount = (total_client * _dec(commission_rate)).quantize(Decimal("0.01"))
     elif comm_client and comm_client != 0:
         commission_amount = comm_client.quantize(Decimal("0.01"))
     elif commission_rate is not None:
