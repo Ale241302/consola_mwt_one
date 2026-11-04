@@ -36,6 +36,7 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 
+from django.core.cache import cache
 from django.db import connection
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -67,6 +68,30 @@ def _resolve_display_id(codigo: str | None, proforma_codigo: str | None) -> str:
     if not raw.upper().startswith("PF"):
         return f"PF {raw}"
     return raw
+
+
+def _fx_usd_crc() -> Decimal:
+    """USD→CRC para mostrar el flujo también en colones.
+
+    Reutiliza la misma cadena del módulo commercial (AwesomeAPI → open.er-api
+    → 505). Antes el neto CRC solo sumaba pagos emitidos en CRC, y como las
+    comisiones son USD quedaba siempre en 0.
+    """
+    try:
+        from apps.commercial.views import UsdCrcExchangeRateView
+        payload = cache.get(UsdCrcExchangeRateView.CACHE_KEY)
+        if payload and payload.get("rate"):
+            return _dec(payload["rate"])
+        for fetch in (UsdCrcExchangeRateView._fetch_awesomeapi, UsdCrcExchangeRateView._fetch_erapi):
+            try:
+                payload = fetch()
+                cache.set(UsdCrcExchangeRateView.CACHE_KEY, payload, timeout=3600)
+                return _dec(payload["rate"])
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    return Decimal("505")
 
 
 def _anchor_plazo_cliente(row: dict) -> tuple[date | None, str | None]:
@@ -1144,13 +1169,17 @@ def flujo(request):
         series.append(b)
 
     neto_usd = tot["entradas_usd"] - tot["salidas_usd"]
-    neto_crc = tot["entradas_crc"] - tot["salidas_crc"]
+    # El neto CRC es la conversión del neto USD: las comisiones se cobran en
+    # USD, así que sumar solo pagos en CRC dejaba el neto en 0 para siempre.
+    fx_crc = _fx_usd_crc()
+    neto_crc = neto_usd * fx_crc
     saldo_usd = saldo.get("USD", Decimal("0"))
     saldo_crc = saldo.get("CRC", Decimal("0"))
     return Response({
         "today": today.isoformat(),
         "dias": dias,
         "monedas": ["USD", "CRC"],
+        "fx_usd_crc": str(fx_crc),
         "saldo_inicial": {"USD": str(saldo_usd), "CRC": str(saldo_crc)},
         "semanas": series,
         "totales": {

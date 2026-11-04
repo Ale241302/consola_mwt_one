@@ -212,9 +212,10 @@ export default function ComisionesFlujo({ lang = "es" }) {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid var(--border-subtle, #EEF2F6)", borderRadius: 10, padding: "8px 12px" }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309", background: "rgba(180,83,9,0.10)", padding: "2px 9px", borderRadius: 999 }}>
-                {es ? "A financiar" : "To finance"}
+                {es ? "A financiar (proyección)" : "To finance (projected)"}
               </span>
-              <span className="tabular-nums" style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}>
+              <span className="tabular-nums" style={{ fontWeight: 800, color: "var(--brand-primary, #013A57)" }}
+                    title={es ? "Proyección con el desfase planificado (plazo cliente − plazo MWT), no el desfase realizado" : "Projection using planned gap, not realized"}>
                 {money(arb?.resumen?.monto_requiere_financiacion)}
               </span>
             </div>
