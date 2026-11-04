@@ -251,6 +251,39 @@ aparte; la factura interna cuadra al centavo.
 
 ---
 
+### Fase 2 — Auditoría de las 45 comisiones (2026-11-04)
+
+**Cuadre del total.** $57,537.28 = Recibidas $28,953.37 + En tránsito $16,014.69 +
+Proyectado $1,396.13 + Vencidas $11,173.09. Cada fila se reconstruye desde su tasa y
+su pago; **no hay montos quemados** y ninguna fila `COMISION` quedó sin tasa.
+
+**Hallazgos**
+
+| # | Hallazgo | Impacto |
+|---|---|---|
+| 1 | **"Margen total" no era margen**: sumaba `total_client` completo en los 31 expedientes operados por el cliente | $664,579.26 (77.38%) → **$126,424.52 (14.72%)** |
+| 2 | `get_oc_codigos()` del serializer por fila hacía `int(storage_url)` | excepción silenciosa → OC vacía en el detalle |
+| 3 | SONEPAR: `commission_pct = 0.07` en 2 expedientes, **ignorado** porque las 27 líneas traen 0.10 | comisión calculada al 10%; el 7% es dato muerto |
+| 4 | 5 expedientes MWT con pagos > suma de líneas (factura incluye costos/flete) | no afecta la comisión (MWT no genera comisión) |
+| 5 | 21 expedientes con `total_paid = 0` pese a tener pagos confirmados | el calendario ya no depende de ese campo; el listado sí muestra balance viejo |
+
+**Cambios aplicados (commit `5e0f509`)**
+
+- `overview()`: margen = arbitraje (solo MWT-operados) + comisiones (solo
+  cliente-operados). Se exponen `margen_arbitraje_usd` ($68,887.24),
+  `margen_comisiones_usd` ($57,537.28) y `margen_base_usd` ($858,796.70) para que el
+  número sea auditable.
+- `ExpedienteListSerializer.get_oc_codigos()`: `int(bool(storage_url))`, igual que el
+  batch del listado.
+
+**Pendiente de decisión del CEO**
+
+- El 7% de SONEPAR: si es una excepción negociada, hoy **no se aplica** (habría que
+  hacer que el override gane; movería −$1,269.79). Si es basura, se pone en NULL.
+- Sincronizar `total_paid` en los 21 expedientes (opcional: no mueve comisiones).
+
+---
+
 ## Orden recomendado
 
 `F1 → F2 → F3 → F4 → F5`, porque las fechas y montos de F2/F3 dependen de que las
