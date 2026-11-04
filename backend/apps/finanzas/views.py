@@ -527,24 +527,19 @@ def overview(request):
         amt_str = it["commission_amount"]
         es_mwt = str(it.get("operating_company_id") or "") == str(MWT_OPERATING_CLIENT_ID)
 
-        # Beneficio de MWT por expediente (regla CEO): si lo opera MWT es el
-        # arbitraje (Δ = cliente − MWT); si lo opera el cliente es la comisión.
-        # Antes se sumaba el `total_client` completo en los operados por el
-        # cliente, y el KPI "margen" salía ~6x inflado (incluía facturación
-        # bruta, no margen).
+        # Margen = ARBITRAJE únicamente (los operados por MWT). Las comisiones
+        # ya tienen su propia tarjeta: sumarlas aquí las mostraba dos veces.
+        # El % se calcula sobre la facturación de los operados por MWT.
         if es_mwt:
             tot_margen += _dec(it["delta_total"])
             tot_arbitraje += _dec(it["delta_total"])
+            sum_client_for_pct += _dec(it["total_client"])
         else:
-            tot_margen += _dec(amt_str or 0)
             tot_comision_margen += _dec(amt_str or 0)
 
-        # El denominador solo incluye expedientes cuyo beneficio es conocido:
-        # "sin tasa" significa desconocido, no 0%, y no debe diluir el margen.
         if amt_str is None:
             sin_tasa += 1
             continue
-        sum_client_for_pct += _dec(it["total_client"])
 
         amt = _dec(amt_str)
         estado = it["devengo_estado"]
