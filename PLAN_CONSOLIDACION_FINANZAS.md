@@ -284,6 +284,43 @@ su pago; **no hay montos quemados** y ninguna fila `COMISION` quedó sin tasa.
 
 ---
 
+### Fase 3 — Flujo 90 días (2026-11-04)
+
+**Antes:** entradas $285,033 / salidas $0. Sumaba la factura completa y exigía fecha
+futura para las salidas (ancla `shipment_date + credit_days_mwt` ya pasada ⇒ 0).
+
+**Ahora** (`flujo()`, commit `b3464f1`): entradas = saldo por cobrar del cliente
+(facturado − pagado confirmado); salidas = saldo pendiente al proveedor, solo en los
+operados por MWT; **misma ventana en ambos lados** y lo vencido entra como pendiente
+inmediato en el bucket de hoy.
+
+Resultado: **entradas $428,224.83 / salidas $129,891.82 / neto $298,333.01**.
+
+### Fase 4 — Landed cost con IVA (2026-11-04)
+
+Caso `TRF-20260911-V76P` (GT-POD → GT-UMMIE, 200 pares SKU 701809):
+
+| | Backend | UI (antes) |
+|---|---|---|
+| FOB | 3,052.00 | 3,052.00 |
+| DAI | 751.63 | 751.63 |
+| IVA | 691.50 (informativo) | **dentro del landed** |
+| Landed total | **3,803.66** | 4,495.13 |
+| Promedio/unidad | 19.0183 | 22.4757 |
+
+El backend ya excluía el IVA; el panel del frontend lo volvía a sumar en `destTotal`.
+Corregido en `TransferLiquidationPanel.jsx` con `isCapitalizable()`, la misma regla que
+`liquidation.py`. El IVA sigue visible como línea de costo en la sección 2.
+
+### Fase 5 — Columna OC (2026-11-04)
+
+El calendario ahora muestra el **PO real del cliente** (resolución
+`build_expediente_ref_batches`, igual que el listado) y el código `EXP-…` queda en el
+tooltip. Antes salía el código interno (`EXP-110022927`) o el `PO-AAAA-NNNNN`
+autogenerado. Las 31 filas tienen OC.
+
+---
+
 ## Orden recomendado
 
 `F1 → F2 → F3 → F4 → F5`, porque las fechas y montos de F2/F3 dependen de que las
