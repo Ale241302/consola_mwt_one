@@ -22,8 +22,8 @@ import {
 } from "../../lib/phaseDisplay.js";
 
 const LABELS = {
-  es: { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION_DESPACHO: "Preparación de despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" },
-  en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION_DESPACHO: "Dispatch preparation", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
+  es: { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION_DESPACHO: "Preparación y despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" },
+  en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION_DESPACHO: "Preparation and dispatch", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
 };
 const DAY_MS = 86400000;
 
@@ -155,14 +155,19 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
 
   // Abre el modal precargando: rango manual guardado → fechas del event_log
   // (inicio = entrada a la fase; fin = entrada a la siguiente, u hoy).
+  // CERRADO no emite evento de entrada: su fecha inicio por defecto es la de
+  // REGISTRO, porque el cierre describe el ciclo de vida completo del
+  // expediente (regla CEO 2026-11-05).
+  const registroStart = (phaseInfo.REGISTRO?.override?.start) || phaseInfo.REGISTRO?.entry || "";
   const openModal = useCallback((s) => {
     const info = phaseInfo[s] || {};
     const ov = info.override;
-    setMStart((ov && ov.start) || info.entry || "");
+    const defaultStart = s === "CERRADO" && !info.entry ? registroStart : "";
+    setMStart((ov && ov.start) || info.entry || defaultStart || "");
     setMEnd((ov && ov.end) || info.exit || "");
     setError("");
     setModal(s);
-  }, [phaseInfo]);
+  }, [phaseInfo, registroStart]);
 
   // Días equivalentes del rango del modal (en vivo).
   const modalDays = useMemo(() => {
@@ -255,7 +260,11 @@ export default function PhaseDurationsBar({ expedienteId, currentStatus, lang = 
                       ? `Automático: entró el ${mInfo.entry}${mInfo.exit ? ` · salió el ${mInfo.exit}` : " · aún en esta fase"}`
                       : `Automatic: entered ${mInfo.entry}${mInfo.exit ? ` · left ${mInfo.exit}` : " · still in this phase"}`)
                   : (canEdit
-                      ? (lang === "es" ? "Sin registro automático — fija el rango manualmente." : "No automatic record — set the range manually.")
+                      ? (modal === "CERRADO" && registroStart
+                          ? (lang === "es"
+                              ? `Cierre del ciclo de vida — inicio por defecto: fecha de Registro (${registroStart}).`
+                              : `Lifecycle close — default start: registry date (${registroStart}).`)
+                          : (lang === "es" ? "Sin registro automático — fija el rango manualmente." : "No automatic record — set the range manually."))
                       : (lang === "es" ? "Sin registro de fechas para esta fase." : "No date record for this phase."))}
               </div>
             </div>

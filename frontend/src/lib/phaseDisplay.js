@@ -6,7 +6,7 @@
 //   REGISTRO → PRODUCCION → PREPARACION → DESPACHO → TRANSITO → EN_DESTINO → CERRADO
 //
 // A pedido de operaciones, PREPARACION y DESPACHO se muestran como una
-// sola fase visual: "Preparación de despacho". Este módulo centraliza
+// sola fase visual: "Preparación y despacho". Este módulo centraliza
 // el mapeo técnico↔visual y el merge/expand de duraciones.
 // =====================================================================
 
@@ -112,7 +112,7 @@ export function expandPhaseDuration(displayKey, value) {
 /**
  * Dado el estado técnico actual, determina la siguiente fase a transicionar:
  * - Si es REGISTRO -> PRODUCCION
- * - Si es PRODUCCION -> PREPARACION (visual: PREPARACION_DESPACHO "Preparación de despacho")
+ * - Si es PRODUCCION -> PREPARACION (visual: PREPARACION_DESPACHO "Preparación y despacho")
  * - Si es PREPARACION o DESPACHO (fases fusionadas) -> TRANSITO
  * - Si es TRANSITO -> EN_DESTINO
  * - Si es EN_DESTINO -> CERRADO

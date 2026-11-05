@@ -95,20 +95,24 @@ def _fx_usd_crc() -> Decimal:
 
 
 def _anchor_plazo_cliente(row: dict) -> tuple[date | None, str | None]:
-    """Ancla del plazo de pago del cliente: cuándo entró en REGISTRO.
+    """Ancla del plazo de pago del cliente: inicio de la fase TRÁNSITO.
 
-    Regla CEO 2026-11-04: el plazo corre desde `phase_durations_json.REGISTRO
-    .start`, no desde el embarque. Fallback para legados sin esa fase: ETD/ETA
-    reales y, al final, created_at. Devuelve (fecha, origen); el origen se
-    expone en la API para poder auditar de dónde salió cada vencimiento.
+    Regla CEO 2026-11-05: el plazo corre desde `phase_durations_json.TRANSITO
+    .start` — la fecha en que la mercadería entra en tránsito, que es cuando
+    el pedido queda despachado. Vence/esperada = ancla + plazo del cliente
+    (p. ej. 90 días) y los días de retraso se cuentan contra esa fecha.
+
+    Fallback para legados sin la fase TRÁNSITO: la fecha real de embarque
+    (ART05 / expediente). NO se cae a REGISTRO ni a ETA: un pedido que aún no
+    salió no tiene plazo corriendo ni comisión exigible.
+
+    Devuelve (fecha, origen); el origen se expone en la API para poder
+    auditar de dónde salió cada vencimiento.
     """
     for source, value in (
-        ("REGISTRO.start",           row.get("registro_start")),
+        ("TRANSITO.start",           row.get("transito_start")),
         ("ART05.shipment_date",      row.get("shipment_date_artifact")),
         ("expediente.shipment_date", row.get("shipment_date")),
-        ("ART05.eta",                row.get("eta_artifact")),
-        ("expediente.eta",           row.get("eta")),
-        ("expediente.created_at",    row.get("created_at_date")),
     ):
         if value:
             return value, source
@@ -127,7 +131,11 @@ def _resolve_devengo_estado(
     """Estado de devengo segun §3.3 del SPEC.
 
     `anchor` es la fecha desde la que corre el plazo del cliente (ver
-    `_anchor_plazo_cliente`).
+    `_anchor_plazo_cliente`: inicio de TRÁNSITO).
+
+    Regla CEO 2026-11-05: la fecha de vencimiento es ancla + plazo del
+    cliente, sin ventana de fin de mes. Si ya venció sin pago → VENCIDA (los
+    días de retraso = hoy − fecha). Si todavía no vence → DEVENGABLE.
 
     Returns:
         (estado, fecha_devengo_esperada)
@@ -135,38 +143,26 @@ def _resolve_devengo_estado(
     if commission_rate is None:
         return ("SIN_TASA", None)
 
+    cd_cli = int(credit_days_cliente or 90)
+
+    # El plazo del cliente corre desde el ancla (inicio de TRÁNSITO); sin
+    # ancla no hay fecha proyectable.
+    fecha_esperada = anchor + timedelta(days=cd_cli) if anchor else None
+
     # Regla CEO 2026-11-04 · si el cliente ya pagó (existe al menos un pago IN
     # confirmado) la comisión cuenta como RECIBIDA, aunque quede un residuo de
     # centavos por diferencia bancaria. Antes se exigía balance == 0 y esas
     # filas salían "Vencidas" con fecha de recibida y días de atraso a la vez.
     if total_paid > 0:
-        return ("DEVENGADA", None)
+        return ("DEVENGADA", fecha_esperada)
 
-    cd_cli = int(credit_days_cliente or 90)
-    cd_mwt = int(credit_days_mwt or 90)
-
-    # El plazo del cliente corre desde el ancla (REGISTRO.start, regla CEO
-    # 2026-11-04); sin ancla no hay fecha proyectable.
-    base = anchor
-    if base is None:
+    if fecha_esperada is None:
         return ("PROYECTADA", None)
 
-    # Cadencia REAL de las FE: el cliente paga a fin de su plazo de crédito;
-    # MWT factura la comisión a comienzos del mes SIGUIENTE y la cobra en la
-    # ventana 10–20 de ese mes. Se usa el cierre (día 20) como fecha de cobro.
-    fecha_pago_cliente_a_marluvas = base + timedelta(days=cd_cli)
-    if fecha_pago_cliente_a_marluvas.month == 12:
-        _ini_mes = date(fecha_pago_cliente_a_marluvas.year + 1, 1, 1)
-    else:
-        _ini_mes = date(fecha_pago_cliente_a_marluvas.year,
-                        fecha_pago_cliente_a_marluvas.month + 1, 1)
-    fecha_devengo = _ini_mes.replace(day=20)
-
-    if fecha_devengo <= today:
-        return ("VENCIDA", fecha_devengo)
-    if fecha_pago_cliente_a_marluvas <= today:
-        return ("DEVENGABLE", fecha_devengo)
-    return ("PROYECTADA", fecha_devengo)
+    # Vence/esperada = inicio de tránsito + plazo. Vencida → días de retraso.
+    if fecha_esperada <= today:
+        return ("VENCIDA", fecha_esperada)
+    return ("DEVENGABLE", fecha_esperada)
 
 
 def _next_month_business_window(d: date | None, n_days: int = 10) -> tuple[date | None, date | None, str | None]:
@@ -249,6 +245,7 @@ def _fetch_expedientes() -> list[dict]:
                 e.eta                                             AS eta,
                 MAX(e.created_at)::date                           AS created_at_date,
                 NULLIF(e.phase_durations_json -> 'REGISTRO' ->> 'start', '')::date AS registro_start,
+                NULLIF(e.phase_durations_json -> 'TRANSITO' ->> 'start', '')::date AS transito_start,
                 a05.shipment_date_artifact                        AS shipment_date_artifact,
                 a05.eta_artifact                                  AS eta_artifact,
                 e.credit_days_mwt                                 AS credit_days_mwt,
@@ -396,9 +393,10 @@ def _build_item(row: dict, today: date) -> dict:
     cd_cli = int(row["credit_days_cliente"] or row.get("cliente_dias_credito") or 90)
     cd_mwt = int(row["credit_days_mwt"]) if row.get("credit_days_mwt") is not None else None
 
-    # Ancla del plazo del cliente: inicio de REGISTRO (regla CEO 2026-11-04).
-    # Es la misma fecha que usa el estado de devengo, para que la tabla del
-    # calendario y el gráfico "comisión esperada por mes" no se contradigan.
+    # Ancla del plazo del cliente: inicio de la fase TRÁNSITO (regla CEO
+    # 2026-11-05). Es la misma fecha que usa el estado de devengo, para que la
+    # tabla del calendario y el gráfico "comisión esperada por mes" no se
+    # contradigan.
     anchor, anchor_source = _anchor_plazo_cliente(row)
 
     estado, _fecha_devengo_credito = _resolve_devengo_estado(
@@ -411,8 +409,8 @@ def _build_item(row: dict, today: date) -> dict:
     )
 
     # Un pedido que todavía no despacha no tiene comisión exigible: no puede
-    # estar VENCIDA aunque la proyección (REGISTRO + plazo) ya haya pasado.
-    # Se queda en PROYECTADA hasta DESPACHO.
+    # estar VENCIDA aunque la proyección (ancla + plazo) ya haya pasado.
+    # Se queda en PROYECTADA hasta que entra en TRÁNSITO.
     if estado == "VENCIDA" and (row.get("exp_estado") or "").upper() in (
         "REGISTRO", "PRODUCCION", "PREPARACION",
     ):
@@ -428,11 +426,12 @@ def _build_item(row: dict, today: date) -> dict:
         fecha_devengo + timedelta(days=cd_cli) if fecha_devengo else None
     )
 
+    # Vence/esperada = inicio de TRÁNSITO + plazo (regla CEO 2026-11-05).
     fecha_facturada = anchor + timedelta(days=cd_cli) if anchor else None
     fpa_inicio, fpa_fin, mes_pago_label = _next_month_business_window(
         fecha_facturada, n_days=10
     )
-    # El mes de la comisión usa el MISMO ancla que el resto (REGISTRO.start +
+    # El mes de la comisión usa el MISMO ancla que el resto (TRANSITO.start +
     # plazo del cliente). `fecha_pago_aprox` (cierre de PREPARACION + plazo) es
     # otra métrica y no debe mover la comisión a otro mes.
     vc_ini, vc_fin, vc_mes = _ventana_10_20(fecha_facturada)
@@ -1730,12 +1729,14 @@ def comisiones_calendario(request):
         # Fechas y estado con el MISMO criterio que los KPIs (devengo), para
         # que el calendario cuadre: DEVENGADA↔Recibida · DEVENGABLE↔En tránsito
         # · VENCIDA↔Vencida · PROYECTADA↔Por recibir.
+        # Vence/esperada = inicio de TRÁNSITO + plazo del cliente (regla CEO
+        # 2026-11-05). Sin tránsito no hay fecha: el pedido aún no despachó.
         def _d(x):
             try:
                 return date.fromisoformat(str(x)[:10]) if x else None
             except Exception:
                 return None
-        f_esp = _d(it.get("fecha_devengo_calculada")) or _d(it.get("fecha_devengo_esperada"))
+        f_esp = _d(it.get("fecha_devengo_calculada"))
 
         if est == "DEVENGADA":
             estado = "RECIBIDA"

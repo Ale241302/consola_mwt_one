@@ -148,8 +148,8 @@ export default function ComisionesCalendario({ lang }) {
         </div>
         <div style={{ fontSize: 12, color: "var(--text-secondary, #475569)", marginTop: 2 }}>
           {es
-            ? "Solo comisiones de expedientes reales. Los montos son reales (Total Cliente × %). Fechas: cadencia real de las FE (el cliente paga a su plazo, MWT factura a comienzos del mes siguiente y cobra en la ventana 10–20)."
-            : "Real expedientes only. Amounts are real. Dates follow the real FE cadence (invoice early next month, collected in the 10–20 window)."}
+            ? "Solo comisiones de expedientes reales. Los montos son reales (Total Cliente × %). «Vence / esperada» = fecha inicio del tránsito + plazo de pago del cliente (p. ej. 90 d); los días muestran el retraso (atraso) o lo que falta para vencer."
+            : "Real expedientes only. Amounts are real. Due/expected = transit start date + client payment term (e.g. 90 d); days show the delay (late) or days remaining."}
         </div>
       </div>
 
@@ -266,9 +266,9 @@ export default function ComisionesCalendario({ lang }) {
                   <th>{es ? "Periodo" : "Period"}</th>
                   <th style={{ textAlign: "right" }}>{es ? "Total Cliente" : "Client total"}</th>
                   <th style={{ textAlign: "right" }}>{es ? "Monto USD" : "Amount"}</th>
-                  <th>{es ? "Vence / esperada" : "Due / expected"}</th>
+                  <th title={es ? "Fecha inicio del estado Tránsito + plazo de pago del cliente" : "Transit phase start + client payment term"}>{es ? "Vence / esperada" : "Due / expected"}</th>
                   <th>{es ? "Recibida" : "Received"}</th>
-                  <th style={{ textAlign: "right" }}>{es ? "Días" : "Days"}</th>
+                  <th style={{ textAlign: "right" }} title={es ? "Días de retraso sobre la fecha vence/esperada; en negativo = atraso" : "Days vs. due date; negative = late"}>{es ? "Días" : "Days"}</th>
                 </tr>
               </thead>
               <tbody>

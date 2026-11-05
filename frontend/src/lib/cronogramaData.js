@@ -28,8 +28,8 @@ export const STAGES = ["REGISTRO", "PRODUCCION", "PREPARACION", "DESPACHO", "TRA
 
 // Fases VISUALES (6): PREPARACION + DESPACHO se muestran como una sola.
 export const DISPLAY_STAGE_LABELS = {
-  es: { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION_DESPACHO: "Preparación de despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" },
-  en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION_DESPACHO: "Dispatch preparation", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
+  es: { REGISTRO: "Registro", PRODUCCION: "Producción", PREPARACION_DESPACHO: "Preparación y despacho", TRANSITO: "Tránsito", EN_DESTINO: "En destino", CERRADO: "Cerrado" },
+  en: { REGISTRO: "Registry", PRODUCCION: "Production", PREPARACION_DESPACHO: "Preparation and dispatch", TRANSITO: "Transit", EN_DESTINO: "At destination", CERRADO: "Closed" },
 };
 export const STAGE_LABELS = DISPLAY_STAGE_LABELS; // backward-compat para consumidores actuales
 

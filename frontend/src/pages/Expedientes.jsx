@@ -39,7 +39,7 @@ import {
 // Sprint 2026-08-07 · Ola 1 F2: PHASE_BASELINE es configuración de baseline
 // visual, no datos de negocio. MOCK_EXPEDIENTES/MOCK_OCS se eliminan para
 // no confundir con datos reales cuando el backend falla.
-// Sprint 2026-07-30 · Fases visuales: Preparación + Despacho → Preparación de despacho.
+// Sprint 2026-07-30 · Fases visuales: Preparación + Despacho → Preparación y despacho.
 import { DISPLAY_STAGES, displayStage, displayStageIndex } from "../lib/phaseDisplay.js";
 import { expedientesApi, clientesApi, marcasApi } from "../lib/api.js";
 import { readCache, writeCache } from "../lib/swrCache.js";

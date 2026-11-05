@@ -152,7 +152,7 @@ export function StateTimeline({ currentStatus, lang='es', dates={},
     }
   });
 
-  // Barra de progreso temporal de Tránsito (entre Preparación de despacho
+  // Barra de progreso temporal de Tránsito (entre Preparación y despacho
   // y Tránsito). Solo visible cuando el estado actual es TRANSITO.
   const transitIdx = order.indexOf('TRANSITO');
   const showTransitProgress = currentStatus === 'TRANSITO' && transitProgress != null && transitIdx >= 0;

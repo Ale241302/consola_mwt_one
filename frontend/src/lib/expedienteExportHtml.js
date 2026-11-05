@@ -82,8 +82,8 @@ function fieldVisibleTo(field, recipient) {
 const ESTADO_LABEL = {
   REGISTRO: "Registro",
   PRODUCCION: "Producción",
-  PREPARACION: "Preparación de despacho",
-  DESPACHO: "Preparación de despacho",
+  PREPARACION: "Preparación y despacho",
+  DESPACHO: "Preparación y despacho",
   TRANSITO: "En tránsito",
   EN_DESTINO: "En destino",
   CERRADO: "Cerrado",

@@ -89,14 +89,14 @@ function mapApiExpedienteToPortalExp(r) {
 const CLIENT_STATUS_MAP = {
   REGISTRO:  { es:'Confirmado',      en:'Confirmed',        step: 0 },
   PRODUCCION:{ es:'En fabricación',  en:'Manufacturing',    step: 1 },
-  PREPARACION:{es:'Preparación de despacho', en:'Dispatch preparation', step: 2 },
-  DESPACHO:  { es:'Preparación de despacho', en:'Dispatch preparation', step: 2 },
+  PREPARACION:{es:'Preparación y despacho', en:'Preparation and dispatch', step: 2 },
+  DESPACHO:  { es:'Preparación y despacho', en:'Preparation and dispatch', step: 2 },
   TRANSITO:  { es:'En tránsito',     en:'In transit',       step: 3 },
   EN_DESTINO:{ es:'En aduana',       en:'In customs',       step: 4 },
   CERRADO:   { es:'Listo',           en:'Ready',            step: 5 },
 };
-const CLIENT_STEPS_ES = ['Confirmado','En fabricación','Preparación de despacho','En tránsito','En aduana','Listo'];
-const CLIENT_STEPS_EN = ['Confirmed','Manufacturing','Dispatch preparation','In transit','In customs','Ready'];
+const CLIENT_STEPS_ES = ['Confirmado','En fabricación','Preparación y despacho','En tránsito','En aduana','Listo'];
+const CLIENT_STEPS_EN = ['Confirmed','Manufacturing','Preparation and dispatch','In transit','In customs','Ready'];
 
 // ── Client-friendly status pill ─────
 function ClientStatusPill({ status, lang }) {
@@ -773,7 +773,7 @@ function PortalOrders({ lang, ocs, expedientes = [], onOpenOC, isClient = false,
   const STAGE_LABEL = {
     REGISTRO: lang==='es' ? 'Registro' : 'Registration',
     PRODUCCION: lang==='es' ? 'Producción' : 'Production',
-    PREPARACION_DESPACHO: lang==='es' ? 'Preparación de despacho' : 'Dispatch prep',
+    PREPARACION_DESPACHO: lang==='es' ? 'Preparación y despacho' : 'Preparation and dispatch',
     TRANSITO: lang==='es' ? 'Tránsito' : 'In transit',
     EN_DESTINO: lang==='es' ? 'En destino' : 'At destination',
     CERRADO: lang==='es' ? 'Cerrado' : 'Closed',

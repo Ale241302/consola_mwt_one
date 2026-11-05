@@ -668,8 +668,8 @@ def check_auto_close_en_destino(exp) -> bool:
                 payload={
                     "from": previous_state,
                     "to": "CERRADO",
-                    "label": "Auto-cierre 120d tras preparación de despacho",
-                    "note": "Cierre automático a los 120 días desde fin de preparación de despacho / entrada a destino",
+                    "label": "Auto-cierre 120d tras preparación y despacho",
+                    "note": "Cierre automático a los 120 días desde fin de preparación y despacho / entrada a destino",
                     "auto_closed": True,
                 },
                 emitted_by_role="system",
