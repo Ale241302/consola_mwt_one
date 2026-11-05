@@ -218,8 +218,6 @@ def _build_cliente_list_batches(rows):
                         ON e.id = l.expediente_id
                        AND (
                          (e.is_active = TRUE AND e.estado NOT IN ('CERRADO','CANCELADO'))
-                         OR
-                         (e.is_active = FALSE AND l.sap IS NOT NULL AND l.sap <> '')
                        )
                        AND (e.forma_pago = 'CREDITO' OR e.forma_pago IS NULL)
                 LEFT JOIN productos.producto p ON p.id = l.producto_id
