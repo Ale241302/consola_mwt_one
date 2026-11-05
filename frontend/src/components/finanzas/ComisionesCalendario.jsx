@@ -32,7 +32,7 @@ function fdate(s) {
 
 const ESTADOS = {
   RECIBIDA:    { label: "Recibida",    color: "#0E8A6D", bg: "rgba(14,138,109,0.10)" },
-  EN_TRANSITO: { label: "En tránsito", color: "#1D6FB8", bg: "rgba(29,111,184,0.10)" },
+  EN_TRANSITO: { label: "Por vencer",  color: "#1D6FB8", bg: "rgba(29,111,184,0.10)" },
   POR_RECIBIR: { label: "Proyectado",  color: "#6B7280", bg: "rgba(107,114,128,0.10)" },
   VENCIDA:     { label: "Vencida",     color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
 };
@@ -166,7 +166,7 @@ export default function ComisionesCalendario({ lang }) {
             <Tile title={es ? "Recibidas" : "Received"} n={resumen?.recibidas?.n || 0}
                   monto={resumen?.recibidas?.monto_usd} color={ESTADOS.RECIBIDA.color}
                   active={q.estado === "RECIBIDA"} onClick={() => set("estado", q.estado === "RECIBIDA" ? "" : "RECIBIDA")} />
-            <Tile title={es ? "En tránsito" : "In transit"} n={resumen?.en_transito?.n || 0}
+            <Tile title={es ? "Por vencer" : "Due"} n={resumen?.en_transito?.n || 0}
                   monto={resumen?.en_transito?.monto_usd} color={ESTADOS.EN_TRANSITO.color}
                   active={q.estado === "EN_TRANSITO"} onClick={() => set("estado", q.estado === "EN_TRANSITO" ? "" : "EN_TRANSITO")} />
             <Tile title={es ? "Proyectado (est.)" : "Projected (est.)"} n={resumen?.por_recibir?.n || 0}
@@ -187,7 +187,7 @@ export default function ComisionesCalendario({ lang }) {
             <span>{es ? "Recibidas" : "Received"} <b className="tabular-nums">${fmt(resumen?.recibidas?.monto_usd)}</b></span>
             <span>+</span>
             <span>
-              {es ? "Pendiente (en tránsito + vencidas)" : "Pending (in transit + overdue)"}{" "}
+              {es ? "Pendiente (por vencer + vencidas)" : "Pending (due + overdue)"}{" "}
               <b className="tabular-nums">${fmt((Number(resumen?.en_transito?.monto_usd || 0) + Number(resumen?.vencidas?.monto_usd || 0)).toFixed(2))}</b>
             </span>
             <span>+</span>
