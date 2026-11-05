@@ -171,10 +171,6 @@ class Cliente(models.Model):
                              OR
                              -- (a2) REGISTRO pero ya con SAP = compromiso real con fábrica → cuenta.
                              (e.is_active = TRUE AND e.estado = 'REGISTRO' AND l.sap IS NOT NULL AND l.sap <> '')
-                             OR
-                             -- (b) Expediente soft-deleted: SOLO las líneas con SAP siguen
-                             -- consumiendo crédito (compromiso con fábrica). Sin SAP → libera.
-                             (e.is_active = FALSE AND l.sap IS NOT NULL AND l.sap <> '')
                            )
                            -- Sprint 2026-05-06 · CONTADO no afecta crédito.
                            -- IS NULL = retro-compat con expedientes pre-fix (asumimos CREDITO).
@@ -235,10 +231,6 @@ class Cliente(models.Model):
                              OR
                              -- (a2) REGISTRO pero ya con SAP = compromiso real con fábrica → cuenta.
                              (e.is_active = TRUE AND e.estado = 'REGISTRO' AND l.sap IS NOT NULL AND l.sap <> '')
-                             OR
-                             -- (b) Expediente soft-deleted: SOLO las líneas con SAP siguen
-                             -- consumiendo crédito (compromiso con fábrica). Sin SAP → libera.
-                             (e.is_active = FALSE AND l.sap IS NOT NULL AND l.sap <> '')
                            )
                            -- Sprint 2026-05-06 · CONTADO no afecta crédito.
                            -- IS NULL = retro-compat con expedientes pre-fix (asumimos CREDITO).
