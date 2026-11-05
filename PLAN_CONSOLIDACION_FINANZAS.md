@@ -496,6 +496,15 @@ CANCELADO/CANCELADA de todos los cálculos de Finanzas (commit `2dccb35`).
 Proyectadas 7 / $4,086.45 · Vencidas 3 / $8,688.60. **Total devengable $56,591.91**
 en 34 filas; 2467 ya no aparece en el calendario.
 
+Posteriormente se ejecutó el `destroy` existente: expediente `is_active=FALSE` y OC
+COMTEK 002-2026 inactiva. El detalle directo responde 404 y no aparece en Expedientes,
+Dashboard, Finanzas o Cliente 360. Las dos tareas pendientes (una AUTO y una MANUAL)
+quedaron CANCELADA con motivo documentado. Se eliminó la excepción que mantenía el
+crédito reservado para líneas con SAP en expedientes borrados: ahora eliminar libera
+crédito **con o sin SAP** en modelo, pool y batch (`3c84234`, `ff9fd44`, `ba9b1c6`).
+El crédito atribuible a 2467 quedó en 0; los $144.12 restantes de COMTEK corresponden
+a 2415, no a esta PF eliminada.
+
 ---
 
 ## Orden recomendado
