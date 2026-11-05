@@ -1605,8 +1605,8 @@ export default function ScreenExpedientes() {
                         {lang === 'es' ? 'Liberación de crédito · ' : 'Credit release · '}
                       </strong>
                       {lang === 'es'
-                        ? <>las líneas <strong>sin SAP</strong> liberan crédito al cliente. Las líneas <strong>con SAP</strong> mantienen el crédito reservado (compromiso con fábrica).</>
-                        : <>lines <strong>without SAP</strong> release credit. Lines <strong>with SAP</strong> keep credit reserved (factory commitment).</>}
+                        ? <>todas las líneas liberan el crédito del cliente, <strong>con o sin SAP</strong>.</>
+                        : <>all lines release the client's credit, <strong>with or without SAP</strong>.</>}
                     </div>
                     {error && (
                       <div className="caption" style={{
