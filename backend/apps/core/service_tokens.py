@@ -151,3 +151,74 @@ def renew_due(
     else:
         log.debug("service_token renew_due: nada por renovar")
     return renewed
+
+
+# Orden de severidad: un token vencido manda sobre uno que solo está por vencer.
+_STATUS_ORDER = {"OK": 0, "WARN": 1, "CRITICAL": 2, "EXPIRED": 3}
+
+
+def _status_for_days(days: float) -> str:
+    if days <= 0:
+        return "EXPIRED"
+    if days <= 7:
+        return "CRITICAL"
+    if days <= RENEW_AHEAD_DAYS:
+        return "WARN"
+    return "OK"
+
+
+def token_health() -> dict:
+    """Resumen de vigencia de los ServiceToken vivos (para `system-health`).
+
+    No expone hashes ni secretos: sólo nombre, si se auto-renueva, vencimiento
+    y días restantes.
+
+    La severidad global se calcula sobre los tokens VIVOS y la lista sólo los
+    incluye: la tabla acumula credenciales históricas ya vencidas y no debe
+    teñir el health para siempre. Los vencidos se resumen en `expired`; si no
+    queda ninguno vivo, el estado global sí es EXPIRED (no hay credencial que
+    sirva).
+    """
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT name, auto_renew, expires_at,
+                   EXTRACT(EPOCH FROM (expires_at - now())) / 86400.0 AS days
+              FROM core.service_token
+             WHERE is_active = TRUE AND revoked_at IS NULL
+             ORDER BY expires_at
+            """
+        )
+        rows = cur.fetchall() or []
+
+    tokens: list[dict] = []
+    expired = 0
+    for name, auto_renew, expires_at, days in rows:
+        days_f = float(days or 0)
+        if days_f <= 0:
+            expired += 1
+            continue
+        tokens.append({
+            "name": name,
+            "auto_renew": bool(auto_renew),
+            "status": _status_for_days(days_f),
+            "days_remaining": int(days_f),
+            "expires_at": _to_iso(expires_at),
+        })
+
+    if tokens:
+        worst = max(tokens, key=lambda t: _STATUS_ORDER[t["status"]])["status"]
+        min_days = min(t["days_remaining"] for t in tokens)
+    elif expired:
+        worst = "EXPIRED"
+        min_days = None
+    else:
+        worst = "NONE"
+        min_days = None
+
+    return {
+        "status": worst,
+        "min_days_remaining": min_days,
+        "expired": expired,
+        "tokens": tokens,
+    }

@@ -189,3 +189,83 @@ def test_endpoint_403_si_no_es_renovable():
 def test_endpoint_401_sin_token():
     resp = APIClient().post("/api/auth/service-token/renew/")
     assert resp.status_code in (401, 403)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# system-health · vigencia visible
+# ─────────────────────────────────────────────────────────────────────
+def _admin_client():
+    from apps.core.jwt_auth import MwtUser
+
+    user = MwtUser(
+        user_id=str(uuid.uuid4()),
+        email="qa-admin@mwt.test",
+        full_name="QA Admin",
+        role="admin",
+        permissions={"modules": ["*"]},
+        is_active=True,
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+def _client_b2b_client():
+    from apps.core.jwt_auth import MwtUser
+
+    user = MwtUser(
+        user_id=str(uuid.uuid4()),
+        email="qa-client@mwt.test",
+        full_name="QA Client",
+        role="client_b2b",
+        permissions={"modules": ["expedientes"]},
+        is_active=True,
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+def test_token_health_clasifica_por_dias():
+    from apps.core.service_tokens import token_health
+
+    _insert_token("qa-h-ok", expires_in_days=100)
+    _insert_token("qa-h-warn", expires_in_days=15)
+    _insert_token("qa-h-crit", expires_in_days=3)
+    _insert_token("qa-h-exp", expires_in_days=-2)
+
+    health = token_health()
+    by_name = {t["name"]: t for t in health["tokens"]}
+
+    assert by_name["qa-h-ok"]["status"] == "OK"
+    assert by_name["qa-h-warn"]["status"] == "WARN"
+    assert by_name["qa-h-crit"]["status"] == "CRITICAL"
+    # Los vencidos no se listan: sólo se cuentan, para no teñir el health.
+    assert "qa-h-exp" not in by_name
+    assert health["status"] == "CRITICAL"
+    assert health["expired"] >= 1
+    assert health["min_days_remaining"] <= 3
+    assert "token_hash" not in by_name["qa-h-ok"]
+
+
+def test_system_health_expone_vigencia_para_admin():
+    _insert_token("qa-h-http", expires_in_days=3)
+
+    resp = _admin_client().get("/api/auth/system-health/")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    names = {t["name"] for t in body["service_tokens"]["tokens"]}
+    assert "qa-h-http" in names
+    assert any(a["code"] == "SERVICE_TOKEN_EXPIRING" for a in body.get("alerts", []))
+    # El health global no se degrada por un token por vencer (contrato previo).
+    assert "ok" in body and "db" in body
+
+
+def test_system_health_oculta_vigencia_para_cliente_b2b():
+    _insert_token("qa-h-secret", expires_in_days=3)
+
+    resp = _client_b2b_client().get("/api/auth/system-health/")
+
+    assert resp.status_code == 200
+    assert "service_tokens" not in resp.json()

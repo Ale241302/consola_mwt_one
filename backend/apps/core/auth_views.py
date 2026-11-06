@@ -1283,12 +1283,59 @@ class McpDiagView(APIView):
                     return _finish(cur, row)
         return None
 
+_INFRA_ROLES = {"admin", "superadmin", "ceo"}
+
+
+def _service_token_block(user) -> dict:
+    """Bloque `service_tokens` de system-health, o `{}` si el rol no aplica.
+
+    Expone la vigencia de las credenciales de infraestructura MCP sin filtrar
+    hashes ni secretos. Se omite por completo para roles no privilegiados.
+    """
+    is_service = isinstance(user, ServiceTokenUser)
+    role = (getattr(user, "role", "") or "").lower()
+    if not (is_service or role in _INFRA_ROLES):
+        return {}
+
+    from .service_tokens import token_health
+
+    try:
+        health = token_health()
+    except Exception as exc:  # noqa: BLE001 - el health no debe caerse por esto
+        log.warning("system-health: no se pudo leer la vigencia de ServiceToken: %s", exc)
+        return {"service_tokens": {"status": "UNKNOWN", "tokens": []}}
+
+    block = {"service_tokens": health}
+    alerts = [
+        {
+            "code": "SERVICE_TOKEN_EXPIRING",
+            "name": t["name"],
+            "status": t["status"],
+            "days_remaining": t["days_remaining"],
+        }
+        for t in health["tokens"]
+        if t["status"] == "CRITICAL"
+    ]
+    if health["status"] == "EXPIRED":
+        alerts.append({
+            "code": "SERVICE_TOKEN_EXPIRED",
+            "detail": "No queda ningún ServiceToken vivo: el MCP no puede autenticarse.",
+        })
+    if alerts:
+        block["alerts"] = alerts
+    return block
+
+
 class SystemHealthView(APIView):
     """GET /api/auth/system-health/ — estado del backend (Ola 3.7 · D1).
 
     Verifica sin tocar datos de negocio: conexión a la DB (SELECT 1), estado de
-    Redis (PING), y latencia del endpoint. Autenticado con ServiceToken o JWT;
-    NO expone PII ni datos de negocio.
+    Redis (PING), latencia del endpoint y vigencia de los ServiceToken.
+    Autenticado con ServiceToken o JWT; NO expone PII ni datos de negocio.
+
+    `service_tokens` (nombre + días restantes) sólo se devuelve a roles de
+    infraestructura (admin/superadmin/ceo o ServiceToken): a un cliente B2B
+    no le corresponde ver la vigencia de las credenciales del MCP.
     """
 
     authentication_classes = [MwtJWTAuthentication, MwtServiceTokenAuthentication]
@@ -1326,4 +1373,5 @@ class SystemHealthView(APIView):
             "redis": redis_ok,
             "latency_ms": int((time.monotonic() - t0) * 1000),
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **_service_token_block(request.user),
         })
