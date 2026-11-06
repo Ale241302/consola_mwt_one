@@ -12,7 +12,7 @@
 import React, { useMemo, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  STAGE_COLORS, DISPLAY_STAGE_COLORS, DISPLAY_STAGE_LABELS, addDays, today, fmtShort,
+  STAGE_COLORS, DISPLAY_STAGE_COLORS, DISPLAY_STAGE_LABELS, GANTT_STAGES, addDays, today, fmtShort,
 } from "../../lib/cronogramaData.js";
 import { displayStage } from "../../lib/phaseDisplay.js";
 
@@ -321,9 +321,9 @@ export default function GanttChart({ rows = [], lang = "es" }) {
 
       {/* Leyenda */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 10, alignItems: "center" }}>
-        {Object.entries(DISPLAY_STAGE_COLORS).map(([s, c]) => (
+        {GANTT_STAGES.map((s) => (
           <span key={s} className="caption" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--text-secondary, #475569)" }}>
-            <i style={{ width: 10, height: 10, borderRadius: 3, background: c, display: "inline-block" }}/>
+            <i style={{ width: 10, height: 10, borderRadius: 3, background: DISPLAY_STAGE_COLORS[s], display: "inline-block" }}/>
             {(DISPLAY_STAGE_LABELS[lang] || DISPLAY_STAGE_LABELS.es)[s]}
           </span>
         ))}

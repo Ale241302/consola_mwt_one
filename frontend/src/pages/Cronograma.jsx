@@ -247,7 +247,9 @@ export default function Cronograma() {
         // vista: admin ve el número SAP (vacío si no hay); cliente nada.
         (!isClient && it.sap) ? it.sap : null,
         `${fInt(it.volumen)} prs`,
-        it.operadoPorMwt ? "MWT" : (lang === "es" ? "Cliente" : "Client"),
+        // Nombre del cliente (antes decía literalmente "Cliente").
+        it.cliente || (lang === "es" ? "Cliente" : "Client"),
+        it.operadoPorMwt ? "MWT" : null,
         it.modo || (lang === "es" ? "Aéreo (sup.)" : "Air (assumed)"),
       ].filter(Boolean).join(" · "),
       bars: spanA ? [{

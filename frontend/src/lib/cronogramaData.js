@@ -18,6 +18,10 @@ import { DISPLAY_STAGES, displayStage } from "./phaseDisplay.js";
 
 export { DISPLAY_STAGES, displayStage };
 
+// Fases que dibuja el Gantt del Cronograma. CERRADO queda fuera (regla CEO
+// 2026-11-05): no aporta una barra operativa y duplicaba la línea completa.
+export const GANTT_STAGES = DISPLAY_STAGES.filter((s) => s !== "CERRADO");
+
 const API_BASE =
   (import.meta && import.meta.env && import.meta.env.VITE_API_BASE) || "/api";
 const DAY = 86400000;
@@ -344,13 +348,26 @@ export function computeSegments(item, avgs) {
       cur = nb;
     }
   }
+  // CERRADO no se grafica en el Cronograma: si existe, la barra de En
+  // destino se extiende hasta el cierre real para no dejar un hueco.
+  const cerrado = real.find((sg) => sg.s === "CERRADO");
+  if (cerrado) {
+    const dest = real.find((sg) => sg.s === "EN_DESTINO");
+    if (dest && dest.b && cerrado.a && cerrado.a > dest.b) dest.b = cerrado.a;
+  }
   return { real: mergeDisplaySegments(real), est: mergeDisplaySegments(est) };
 }
 
 /**
  * Fusiona segmentos consecutivos que pertenezcan a la misma fase visual
  * (p. ej. PREPARACION + DESPACHO → PREPARACION_DESPACHO).
+ *
+ * CERRADO no se grafica en el Cronograma (regla CEO 2026-11-05): el cierre
+ * describe el ciclo de vida completo del expediente y, como barra, duplicaba
+ * toda la línea. Su rango se pliega en EN_DESTINO (ver computeSegments).
  */
+const GANTT_HIDDEN_STAGES = new Set(["CERRADO"]);
+
 function mergeDisplaySegments(segs) {
   if (!segs || !segs.length) return segs;
   const out = [];
@@ -367,7 +384,7 @@ function mergeDisplaySegments(segs) {
     }
     out.push({ ...sg, s: ds });
   });
-  return out;
+  return out.filter((sg) => !GANTT_HIDDEN_STAGES.has(sg.s));
 }
 
 /** Duración conocida de una fase del item: override ?? transición cerrada. */
