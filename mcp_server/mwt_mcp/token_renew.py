@@ -30,6 +30,11 @@ RENEW_PATH = "/auth/service-token/renew/"
 DEFAULT_INTERVAL_SECONDS = 12 * 3600
 # Espera inicial para no competir con el arranque del backend/contenedor.
 STARTUP_DELAY_SECONDS = 10
+# Reintento con backoff si el backend aún no responde (p. ej. se está
+# recreando justo cuando arranca el MCP). Un fallo transitorio NO debe
+# dejar el token sin renovar 12 h.
+RETRY_BASE_SECONDS = 30
+RETRY_MAX_SECONDS = 30 * 60
 
 
 def renew_once(
@@ -73,11 +78,24 @@ def renew_once(
     return False
 
 
+def _next_delay(ok: bool, retry: int, interval: int) -> tuple[int, float]:
+    """Calcula (nuevo_backoff, segundos a dormir) tras un intento.
+
+    Éxito → vuelve a la cadencia normal (12 h). Fallo → backoff exponencial
+    con techo, para recuperarse de un reinicio del backend en minutos, no en
+    medio día.
+    """
+    if ok:
+        return RETRY_BASE_SECONDS, float(interval)
+    return min(retry * 2, RETRY_MAX_SECONDS), float(retry)
+
+
 def _loop(interval_seconds: int) -> None:
     time.sleep(STARTUP_DELAY_SECONDS)
+    retry = RETRY_BASE_SECONDS
     while True:
-        renew_once()
-        time.sleep(interval_seconds)
+        retry, delay = _next_delay(renew_once(), retry, interval_seconds)
+        time.sleep(delay)
 
 
 def start_renewer(*, interval_seconds: int = DEFAULT_INTERVAL_SECONDS):

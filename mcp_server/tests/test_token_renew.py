@@ -69,3 +69,18 @@ def test_start_renewer_arranca_hilo_daemon():
     assert result is thread
     thread.start.assert_called_once()
     assert thread_cls.call_args.kwargs["daemon"] is True
+
+
+def test_backoff_crece_y_se_capa():
+    """Un fallo transitorio reintenta en minutos, no en 12 h."""
+    retry = token_renew.RETRY_BASE_SECONDS
+    for _ in range(12):
+        retry, delay = token_renew._next_delay(False, retry, 12 * 3600)
+        assert delay <= token_renew.RETRY_MAX_SECONDS
+    assert retry == token_renew.RETRY_MAX_SECONDS
+
+
+def test_tras_exito_vuelve_a_la_cadencia_normal():
+    retry, delay = token_renew._next_delay(True, 1200, 12 * 3600)
+    assert retry == token_renew.RETRY_BASE_SECONDS
+    assert delay == 12 * 3600
