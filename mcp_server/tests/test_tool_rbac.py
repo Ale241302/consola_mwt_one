@@ -117,33 +117,35 @@ def test_todas_las_tools_estan_mapeadas():
 # RbacFastMCP.list_tools — fail-closed
 # ─────────────────────────────────────────────────────────────────────── #
 @pytest.mark.asyncio
-async def test_list_tools_fail_closed_sin_jwt():
-    """Identidad propagada pero backend no emite JWT -> lista VACÍA (fail-closed)."""
-    from mcp.types import Tool
+async def test_list_tools_fail_closed_sin_jwt_devuelve_error():
+    """Identidad propagada pero backend no emite JWT -> error explícito.
 
+    Antes devolvía [] y el conector mostraba "no tiene herramientas", que
+    ocultaba que el ServiceToken estaba vencido.
+    """
     from mwt_mcp.tool_rbac import RbacFastMCP
 
     mcp = RbacFastMCP("test")
-    # Registramos 2 tools de prueba.
+
     def _a() -> str:
         return "a"
 
-    def _b() -> str:
-        return "b"
-
     mcp.add_tool(_a, name="cliente_crear")
-    mcp.add_tool(_b, name="cliente_obtener")
 
     from mwt_mcp.jwt_minter import IdentityMintingError
 
     with mock.patch("mwt_mcp.tool_rbac.get_identity_user",
-                    side_effect=IdentityMintingError("no JWT")):
-        tools = await mcp.list_tools()
-    assert tools == []
+                    side_effect=IdentityMintingError("Token expirado")):
+        with pytest.raises(RuntimeError) as excinfo:
+            await mcp.list_tools()
+
+    msg = str(excinfo.value)
+    assert "MCP_AUTH_FAILED" in msg
+    assert "Token expirado" in msg
 
 
 @pytest.mark.asyncio
-async def test_list_tools_error_inesperado_fail_closed():
+async def test_list_tools_error_inesperado_devuelve_error():
     from mwt_mcp.tool_rbac import RbacFastMCP
 
     mcp = RbacFastMCP("test")
@@ -151,8 +153,10 @@ async def test_list_tools_error_inesperado_fail_closed():
 
     with mock.patch("mwt_mcp.tool_rbac.get_identity_user",
                     side_effect=RuntimeError("boom")):
-        tools = await mcp.list_tools()
-    assert tools == []
+        with pytest.raises(RuntimeError) as excinfo:
+            await mcp.list_tools()
+
+    assert "MCP_AUTH_UNAVAILABLE" in str(excinfo.value)
 
 
 @pytest.mark.asyncio

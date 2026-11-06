@@ -4,7 +4,7 @@ from django.urls import path
 from .auth_views import (
     LoginView, LogoutView, MeView, RefreshView,
     PasswordResetConfirmView, McpTokenView, McpAuditView, McpDiagView,
-    SystemHealthView,
+    ServiceTokenRenewView, SystemHealthView,
 )
 
 
@@ -14,6 +14,8 @@ urlpatterns = [
     path("refresh/", RefreshView.as_view(), name="auth-refresh"),
     path("me/",      MeView.as_view(),      name="auth-me"),
     path("mcp-token/", McpTokenView.as_view(), name="auth-mcp-token"),
+    path("service-token/renew/", ServiceTokenRenewView.as_view(),
+         name="auth-service-token-renew"),
     path("mcp-audit/", McpAuditView.as_view(), name="auth-mcp-audit"),
     path("mcp-diag/",  McpDiagView.as_view(),  name="auth-mcp-diag"),
     path("system-health/", SystemHealthView.as_view(), name="auth-system-health"),

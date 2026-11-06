@@ -77,6 +77,15 @@ class Command(BaseCommand):
             help=f"Días de vida (default {DEFAULT_DAYS}, máximo {MAX_DAYS}).",
         )
         parser.add_argument(
+            "--no-auto-renew",
+            action="store_true",
+            help=(
+                "Emite un token de vigencia fija (no se renueva solo). "
+                "Por defecto auto_renew=TRUE: Celery y el propio MCP corren la "
+                "vigencia antes de que venza."
+            ),
+        )
+        parser.add_argument(
             "--created-by",
             default=None,
             help="UUID del usuario que crea el token (opcional, para auditoría).",
@@ -103,6 +112,7 @@ class Command(BaseCommand):
         client_ids = _parse_uuid_list(opts.get("client_ids"))
         created_by = _parse_uuid_list(opts.get("created_by") or "")
         created_by_uuid = created_by[0] if created_by else None
+        auto_renew = not bool(opts.get("no_auto_renew"))
 
         # Token opaco de 64 caracteres hexadecimales (256 bits).
         token = secrets.token_hex(32)
@@ -115,10 +125,11 @@ class Command(BaseCommand):
                 cur.execute(
                     """
                     INSERT INTO core.service_token
-                        (id, name, token_hash, role_slug, is_active, expires_at, created_by_id, created_at, updated_at)
-                    VALUES (%s, %s, %s, 'service', TRUE, %s, %s, NOW(), NOW())
+                        (id, name, token_hash, role_slug, is_active, expires_at,
+                         auto_renew, created_by_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, 'service', TRUE, %s, %s, %s, NOW(), NOW())
                     """,
-                    [token_id, name, token_hash, expires_at, created_by_uuid],
+                    [token_id, name, token_hash, expires_at, auto_renew, created_by_uuid],
                 )
                 for scope in scopes:
                     if client_ids:
@@ -151,6 +162,9 @@ class Command(BaseCommand):
         self.stdout.write(f"  scopes     : {', '.join(scopes)}")
         self.stdout.write(f"  client_ids : {', '.join(client_ids) if client_ids else '(todos)'}")
         self.stdout.write(f"  expires_at : {expires_at.isoformat()}")
+        self.stdout.write(
+            f"  auto_renew : {'sí (se corre solo antes de vencer)' if auto_renew else 'no (vigencia fija)'}"
+        )
         self.stdout.write("")
         self.stdout.write("  TOKEN (guardalo como MWT_MCP_SERVICE_TOKEN en el .env del MCP):")
         self.stdout.write("")

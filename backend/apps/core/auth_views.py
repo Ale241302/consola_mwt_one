@@ -1017,6 +1017,65 @@ class McpTokenView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class ServiceTokenRenewView(APIView):
+    """
+    POST /api/auth/service-token/renew/
+
+    Corre la vigencia del ServiceToken que autentica la request. Pensado para
+    que el propio consumidor (MCP server) se auto-mantenga: llama al arrancar y
+    cada 12 h, así que el token nunca llega a vencer por olvido.
+
+    No emite un secreto nuevo: sólo extiende `expires_at`. Eso evita
+    redistribuir el token a los contenedores y reiniciarlos.
+
+    Auto-curación: si el token ya venció, se acepta dentro de `GRACE_DAYS`
+    (el contenedor estuvo apagado un tiempo). Fuera de esa ventana hay que
+    emitir uno nuevo con `manage.py mint_mcp_token`.
+
+    Requiere un token con `auto_renew = TRUE`. El apagado real es
+    `revoked_at` / `is_active = FALSE`, no el vencimiento.
+    """
+
+    authentication_classes = [MwtServiceTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "mcp_renew"
+
+    def post(self, request):
+        from .service_tokens import renew_token
+
+        user = request.user
+        if not isinstance(user, ServiceTokenUser):
+            return Response(
+                {"detail": "Este endpoint sólo acepta ServiceToken."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        result = renew_token(user.token_id)
+        if not result["renewed"]:
+            return Response(
+                {
+                    "detail": "El ServiceToken no es renovable.",
+                    "code": result["reason"],
+                    "hint": (
+                        "Emití uno nuevo con `manage.py mint_mcp_token` "
+                        "(los tokens revocados o con auto_renew=false no se renuevan)."
+                    ),
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return Response(
+            {
+                "renewed": True,
+                "token_id": user.token_id,
+                "name": user.full_name,
+                "expires_at": result["expires_at"],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 # =========================================================================== #
 # Ola 3.6 · Auditoría durable del MCP (Eje A3) y diagnóstico de scope (Eje D5)
 # =========================================================================== #

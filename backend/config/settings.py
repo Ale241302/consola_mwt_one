@@ -262,6 +262,9 @@ REST_FRAMEWORK = {
         # backend autoriza a cada usuario igual, así que se sube el techo
         # (ajustable por env sin redeploy de código).
         "mcp-token": os.environ.get("MWT_MCP_TOKEN_RATE", "600/minute"),
+        # Renovación de vigencia del ServiceToken (el MCP llama al arrancar y
+        # cada 12 h). Tráfico mínimo; el techo sólo evita bucles accidentales.
+        "mcp_renew": os.environ.get("MWT_MCP_RENEW_RATE", "60/hour"),
         "mcp_audit": "120/minute",
         "mcp_diag": "10/minute",
         "mcp_health": "30/minute",
@@ -405,6 +408,14 @@ CELERY_BEAT_SCHEDULE = {
         "task":     "core.mcp_poll_inbox",
         "schedule": 120.0,
         "options":  {"queue": "default", "expires": 300},
+    },
+    # Vigencia deslizante de ServiceToken: renueva a diario todo token
+    # auto-renovable que venza en <30 días. Es la red que evita que el MCP
+    # se quede sin credencial (antes: "el conector no tiene herramientas").
+    "renew_service_tokens": {
+        "task":     "core.renew_service_tokens",
+        "schedule": _crontab(hour=3, minute=10),
+        "options":  {"queue": "default", "expires": 3600},
     },
     # Etapa 2 · agenda de tareas: genera/actualiza las tareas automáticas
     # de todos los expedientes (consulta producción 15d, reconfirmar 10d,

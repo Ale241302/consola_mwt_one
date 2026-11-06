@@ -12,7 +12,10 @@ Reglas:
   - Con identidad: se filtran por (module, action) del mapa TOOL_MODULES.
   - Los roles admin/superadmin (o modules=["*"]) ven todas.
   - Fail-closed: si hay identidad pero el backend no emite JWT (usuario
-    inactivo/borrado) → lista de tools VACÍA (el usuario no puede usar nada).
+    inactivo/borrado, ServiceToken vencido/revocado) la sesión NO ve tools.
+    El listado devuelve un ERROR explícito (MCP_AUTH_FAILED), no una lista
+    vacía: una lista vacía se ve en el cliente como "el conector no tiene
+    herramientas" y esconde la causa real.
 """
 from __future__ import annotations
 
@@ -418,13 +421,25 @@ class RbacFastMCP(FastMCP):
             user = get_identity_user()
         except IdentityMintingError as exc:
             # Fail-closed: identidad propagada pero sin JWT válido. El usuario
-            # (inactivo/borrado) no debe ver ninguna tool.
-            log.warning("list_tools fail-closed: %s", exc)
-            return []
+            # (inactivo/borrado) o el ServiceToken (vencido/revocado) no debe
+            # ver ni usar tools. Se lanza un error explícito en vez de
+            # devolver []: la lista vacía se mostraba como "el conector no
+            # tiene herramientas disponibles" y ocultaba la causa real.
+            log.error("list_tools fail-closed: %s", exc)
+            raise RuntimeError(
+                "MCP_AUTH_FAILED: no se pudo emitir una sesión MCP contra el "
+                "backend. La credencial de servicio o la identidad del usuario "
+                f"fueron rechazadas. Detalle: {exc}. Revisá la vigencia del "
+                "ServiceToken (POST /api/auth/service-token/renew/) y que el "
+                "usuario siga activo con acceso MCP."
+            ) from exc
         except Exception as exc:  # noqa: BLE001
-            # Error inesperado al resolver identidad → fail-closed (vacío).
-            log.warning("list_tools: no se pudo resolver identidad: %s", exc)
-            return []
+            # Error inesperado al resolver identidad → fail-closed con error.
+            log.exception("list_tools: no se pudo resolver identidad")
+            raise RuntimeError(
+                "MCP_AUTH_UNAVAILABLE: no se pudo validar tu identidad contra "
+                f"el backend. Detalle: {exc}"
+            ) from exc
 
         if user is None:
             return tools

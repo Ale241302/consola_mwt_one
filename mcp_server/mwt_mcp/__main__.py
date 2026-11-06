@@ -23,6 +23,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from .asgi_middleware import IdentityPropagationMiddleware
 from .config import settings
 from .server import mcp
+from .token_renew import start_renewer
 
 
 def _resolve_domain(argv: list[str] | None) -> str | None:
@@ -45,6 +46,9 @@ def _server_for_domain() -> FastMCP:
 
 def _run(server: FastMCP) -> None:
     """Levanta el servidor (http o stdio)."""
+    # Mantiene viva la credencial del MCP: sin esto, a los 90 días el token
+    # vence, list_tools falla cerrado y el conector aparece vacío.
+    start_renewer()
     transport = settings.transport
     if transport in ("http", "streamable-http", "streamable_http"):
         server.settings.host = settings.host
