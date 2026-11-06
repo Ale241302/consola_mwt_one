@@ -46,15 +46,19 @@
 
 ### Finanzas (calendario de comisiones)
 
-Totales actuales: **$57,537.28** = Recibidas $28,953.37 (16) + En tránsito
-$16,014.69 (7) + Proyectado $1,396.13 (2) + Vencidas $11,173.09 (6).
+Totales actuales (2026-11-05): **$56,591.91** = Recibidas $27,802.17 (17) +
+Por vencer $24,611.15 (10) + Proyectado $4,178.59 (7) + Vencidas $0.00 (0).
 
-Reglas vigentes (Sprint 2026-11-04):
+Reglas vigentes (Sprint 2026-11-05):
 
-- Ancla del plazo = `phase_durations_json.REGISTRO.start` (fallback ETD/ETA/created_at).
-- Vencimiento = ancla + `credit_days_cliente` → **día 20 del mes siguiente**.
-- Estado: hay pago IN confirmado → `RECIBIDA` (sin días). Si no, vencido → `VENCIDA`;
-  plazo del cliente vencido → `EN_TRANSITO`; si no → `PROYECTADA`.
+- Ancla del plazo = `phase_durations_json.TRANSITO.start` (inicio del estado
+  Tránsito). Fallback solo para legados sin esa fase: ETD real (ART05 /
+  `expediente.shipment_date`). No se cae a REGISTRO ni a ETA.
+- Vencimiento ("Vence / esperada") = ancla + `credit_days_cliente`, sin ventana
+  de fin de mes. Días de retraso = vencimiento − hoy.
+- Estado: hay pago IN confirmado → `RECIBIDA` (sin días). Si no, vencimiento
+  pasado → `VENCIDA`; si no → `EN_TRANSITO` (chip "Por vencer"); sin tránsito
+  aún → `PROYECTADA`. `SIN_TASA` se reporta aparte, nunca se estima.
 - "Recibida" = fecha del pago confirmado del cliente (no la FE de comisión de Marluvas).
 
 ### Dashboard
