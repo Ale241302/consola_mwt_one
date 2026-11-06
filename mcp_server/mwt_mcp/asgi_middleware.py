@@ -170,6 +170,7 @@ class IdentityPropagationMiddleware:
                 f"[mwt-mcp] IdentityPropagationMiddleware: email={identity.email!r} "
                 f"user_id={identity.user_id!r} name={identity.name!r} "
                 f"roles={identity.roles!r} sub={identity.sub!r} "
+                f"session={identity.session_id!r} "
                 f"tenant={tenant.client_id!r} gateway_ok={tenant.gateway_ok}",
                 file=sys.stderr,
             )
