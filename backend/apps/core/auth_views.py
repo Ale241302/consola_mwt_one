@@ -1079,6 +1079,55 @@ class ServiceTokenRenewView(APIView):
 # =========================================================================== #
 # Ola 3.6 · Auditoría durable del MCP (Eje A3) y diagnóstico de scope (Eje D5)
 # =========================================================================== #
+_AUDIT_ROLES = {"admin", "superadmin", "ceo"}
+
+
+def _resolve_actor_role(email: str) -> tuple[str, bool]:
+    """Rol y estado del actor que consulta la auditoría.
+
+    Mismo criterio que `McpTokenView._fetch_target`: el bridge `core.user_roles`
+    manda; si no hay fila, se usa `core.users.role`.
+    """
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COALESCE(r.slug, u.role, '') AS role_slug, u.is_active
+              FROM core.users u
+              LEFT JOIN core.user_roles ur ON ur.user_uuid = u.id
+              LEFT JOIN core.roles      r  ON r.id         = ur.role_uuid
+             WHERE lower(u.email_plain) = %s
+               AND u.deleted_at IS NULL
+             ORDER BY ur.granted_at ASC NULLS LAST
+             LIMIT 1
+            """,
+            [email],
+        )
+        row = cur.fetchone()
+    if not row:
+        return "", False
+    return (row[0] or "").lower(), bool(row[1])
+
+
+def _parse_bound(value, *, end: bool):
+    """Convierte 'YYYY-MM-DD' o ISO-8601 a datetime aware, o None."""
+    from datetime import datetime, time, timezone as _tz
+
+    from django.utils.dateparse import parse_date, parse_datetime
+
+    if value in (None, ""):
+        return None
+    raw = str(value).strip()
+    dt = parse_datetime(raw)
+    if dt is None:
+        d = parse_date(raw)
+        if d is None:
+            raise ValueError(f"fecha inválida: {raw}")
+        dt = datetime.combine(d, time.max if end else time.min)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_tz.utc)
+    return dt
+
+
 class McpAuditView(APIView):
     """POST /api/auth/mcp-audit/
 
@@ -1132,6 +1181,9 @@ class McpAuditView(APIView):
             http_status=http_status,
             duration_ms=duration_ms,
             idempotency_key=data.get("idempotency_key"),
+            actor_email=data.get("actor_email"),
+            actor_role=data.get("actor_role"),
+            session_id=data.get("session_id"),
         )
         if saved:
             return Response({"saved": True, "event": event, "tool": tool})
@@ -1140,6 +1192,64 @@ class McpAuditView(APIView):
             {"saved": False, "detail": "auditoría no persistida (best-effort)"},
             status=200,
         )
+
+    def get(self, request):
+        """Consulta la auditoría. Solo admin/superadmin/ceo.
+
+        El caller firma con el ServiceToken y declara a la persona en
+        `X-Audit-Actor`; acá se resuelve su rol en la DB y se rechaza si no es
+        de infraestructura. Sin ese header no hay forma de atribuir la consulta
+        y se deniega (fail-closed).
+
+        Query params: desde, hasta, email, tool, event, sesion,
+        solo_fallos, limit (máx 500), offset.
+        """
+        from .services import audit_query
+
+        actor = (request.META.get("HTTP_X_AUDIT_ACTOR") or "").strip().lower()
+        if not actor:
+            return Response(
+                {"detail": "Falta el header X-Audit-Actor (email de quien consulta)."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        role, active = _resolve_actor_role(actor)
+        if not active or role not in _AUDIT_ROLES:
+            return Response(
+                {"detail": "La auditoría del MCP es solo para admin/superadmin/ceo."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        q = request.query_params
+        try:
+            desde = _parse_bound(q.get("desde"), end=False)
+            hasta = _parse_bound(q.get("hasta"), end=True)
+            limit = int(q.get("limit") or 50)
+            offset = int(q.get("offset") or 0)
+        except (TypeError, ValueError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            result = audit_query(
+                desde=desde,
+                hasta=hasta,
+                actor_email=q.get("email") or None,
+                tool=q.get("tool") or None,
+                event=q.get("event") or None,
+                session_id=q.get("sesion") or q.get("session_id") or None,
+                solo_fallos=str(q.get("solo_fallos") or "").lower()
+                in ("1", "true", "yes", "si", "sí"),
+                limit=limit,
+                offset=offset,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mcp-audit query falló: %s", exc)
+            return Response(
+                {"detail": f"No se pudo consultar la auditoría: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        result["consultado_por"] = actor
+        return Response(result)
 
 
 class McpDiagView(APIView):

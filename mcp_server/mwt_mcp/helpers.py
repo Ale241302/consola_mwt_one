@@ -115,15 +115,45 @@ def _log_mcp_audit(tool: str, args, result, duration_ms: float, identity: dict |
         pass
     # Ola 3.6 · persistencia durable best-effort (Eje A3). No debe retrasar ni
     # romper la tool; el backend redacta PII de nuevo por su cuenta.
-    _persist_mcp_audit(event, tool, args, ok, status, duration_ms)
+    actor, role, session = _current_actor()
+    _persist_mcp_audit(
+        event, tool, args, ok, status, duration_ms,
+        actor_email=actor, actor_role=role, session_id=session,
+    )
 
 
-def _persist_mcp_audit(event: str, tool: str, args, ok: bool, status, duration_ms: float) -> None:
+def _current_actor() -> tuple[str | None, str | None, str | None]:
+    """(email, rol, sesión MCP) del request en curso, o (None, None, None).
+
+    Se lee del contextvar que llena el middleware ASGI. Sin identidad
+    propagada (stdio / ServiceToken puro) no hay actor humano que registrar.
+    """
+    try:
+        from .identity import current_identity
+
+        ident = current_identity()
+        return ident.email, ident.roles, ident.session_id
+    except Exception:  # noqa: BLE001
+        return None, None, None
+
+
+def _persist_mcp_audit(
+    event: str,
+    tool: str,
+    args,
+    ok: bool,
+    status,
+    duration_ms: float,
+    *,
+    actor_email: str | None = None,
+    actor_role: str | None = None,
+    session_id: str | None = None,
+) -> None:
     """POST best-effort a /api/auth/mcp-audit/ (durable, Eje A3).
 
-    Se usa el token de servicio (no de usuario) para firmar: la auditoría
-    documenta QUÉ hizo el servidor MCP, no el actor final (que viaja en
-    identity). Timeout corto y nunca rompe la tool.
+    Se usa el token de servicio para firmar y se envía aparte el ACTOR real
+    (`actor_email`) y la sesión MCP: `identity_sub` documenta qué credencial
+    firmó, no qué persona ejecutó la tool. Timeout corto y nunca rompe la tool.
     """
 
     def _send():
@@ -139,6 +169,12 @@ def _persist_mcp_audit(event: str, tool: str, args, ok: bool, status, duration_m
                 "http_status": status,
                 "duration_ms": int(duration_ms or 0),
             }
+            if actor_email:
+                body["actor_email"] = actor_email
+            if actor_role:
+                body["actor_role"] = str(actor_role)[:64]
+            if session_id:
+                body["session_id"] = session_id
             url = f"{_settings.api_base}/auth/mcp-audit/"
             with httpx.Client(timeout=3.0) as c:
                 c.post(url, json=body, headers=_svc_hdr())

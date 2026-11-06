@@ -135,11 +135,17 @@ def audit_write(
     http_status: int | None = None,
     duration_ms: int | None = None,
     idempotency_key: str | None = None,
+    actor_email: str | None = None,
+    actor_role: str | None = None,
+    session_id: str | None = None,
 ) -> bool:
     """Inserta un registro en core.mcp_audit. Best-effort: nunca rompe la request.
 
-    Devuelve True si la inserción fue exitosa. El caller (el endpoint de
-    auditoría del MCP) es el único punto de entrada.
+    `identity_sub` es la credencial que firma (el ServiceToken: `service:mcp-…`);
+    `actor_email` es la persona que ejecutó la tool. Sin lo segundo la tabla
+    responde "qué hizo el MCP", no "qué hizo cada usuario".
+
+    Devuelve True si la inserción fue exitosa.
     """
     import json
 
@@ -151,8 +157,9 @@ def audit_write(
                 """
                 INSERT INTO core.mcp_audit
                     (event, tool, identity_sub, identity_roles, args_sanitized,
-                     ok, http_status, duration_ms, idempotency_key)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     ok, http_status, duration_ms, idempotency_key,
+                     actor_email, actor_role, session_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
                     str(event)[:32],
@@ -164,9 +171,95 @@ def audit_write(
                     int(http_status) if http_status is not None else None,
                     int(duration_ms) if duration_ms is not None else None,
                     str(idempotency_key)[:128] if idempotency_key else None,
+                    str(actor_email).strip().lower()[:255] if actor_email else None,
+                    str(actor_role).strip().lower()[:64] if actor_role else None,
+                    str(session_id)[:128] if session_id else None,
                 ],
             )
         return True
     except Exception as exc:  # noqa: BLE001 - nunca romper la request por auditoría
         logger.warning("[mcp_audit] write falló: %s", exc)
         return False
+
+
+def audit_query(
+    *,
+    desde=None,
+    hasta=None,
+    actor_email: str | None = None,
+    tool: str | None = None,
+    event: str | None = None,
+    session_id: str | None = None,
+    solo_fallos: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Consulta `core.mcp_audit` con filtros. Solo lectura.
+
+    Devuelve `{total, limit, offset, rows}`. `total` es el conteo del mismo
+    filtro sin paginar, para que el agente sepa si quedan páginas.
+    """
+    limit = max(1, min(int(limit or 50), 500))
+    offset = max(0, int(offset or 0))
+
+    where = ["1=1"]
+    params: list[Any] = []
+    if desde is not None:
+        where.append("at_created >= %s")
+        params.append(desde)
+    if hasta is not None:
+        where.append("at_created <= %s")
+        params.append(hasta)
+    if actor_email:
+        where.append("lower(actor_email) = %s")
+        params.append(actor_email.strip().lower())
+    if tool:
+        where.append("tool = %s")
+        params.append(tool.strip()[:64])
+    if event:
+        where.append("event = %s")
+        params.append(event.strip()[:32])
+    if session_id:
+        where.append("session_id = %s")
+        params.append(session_id.strip()[:128])
+    if solo_fallos:
+        where.append("ok = FALSE")
+
+    clause = " AND ".join(where)
+
+    with connection.cursor() as cur:
+        cur.execute(f"SELECT count(*) FROM core.mcp_audit WHERE {clause}", params)
+        total = int(cur.fetchone()[0])
+
+        cur.execute(
+            f"""
+            SELECT id, at_created, event, tool, actor_email, actor_role,
+                   session_id, ok, http_status, duration_ms, args_sanitized,
+                   identity_sub, idempotency_key
+              FROM core.mcp_audit
+             WHERE {clause}
+             ORDER BY at_created DESC, id DESC
+             LIMIT %s OFFSET %s
+            """,
+            [*params, limit, offset],
+        )
+        rows = cur.fetchall() or []
+
+    out = []
+    for r in rows:
+        out.append({
+            "id": r[0],
+            "at": r[1].isoformat() if r[1] else None,
+            "event": r[2],
+            "tool": r[3],
+            "actor_email": r[4],
+            "actor_role": r[5],
+            "session_id": r[6],
+            "ok": bool(r[7]),
+            "http_status": r[8],
+            "duration_ms": r[9],
+            "args": r[10],
+            "signed_by": r[11],
+            "idempotency_key": r[12],
+        })
+    return {"total": total, "limit": limit, "offset": offset, "rows": out}

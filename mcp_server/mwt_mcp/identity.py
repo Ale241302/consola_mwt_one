@@ -108,6 +108,10 @@ class Identity:
         self.device_id: str | None = (h.get("x-mwt-device-id") or "").strip() or None
         # Microsoft Entra ID (M365 Copilot MCP): Authorization: Bearer <entra>.
         self.entra_token: str | None = (h.get("x-mwt-entra-token") or "").strip() or None
+        # Sesión MCP del cliente (header `mcp-session-id` que pone el transporte
+        # streamable-http). Permite agrupar todas las tool-calls de una misma
+        # conversación en la auditoría. En stdio no existe → None.
+        self.session_id: str | None = (h.get("mcp-session-id") or "").strip() or None
 
     @property
     def is_present(self) -> bool:

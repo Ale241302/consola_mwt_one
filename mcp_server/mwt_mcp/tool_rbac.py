@@ -61,6 +61,8 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # a "roles.view" para que SOLO roles con acceso a la matriz de roles (admin/
     # superadmin) la vean en el listado; un client_b2b no la tiene.
     "mwt_diag_scope": ("roles", "view"),
+    # Auditoría de acciones MCP: mismo criterio que el diagnóstico de scope.
+    "mwt_auditoria_listar": ("roles", "view"),
     # ── Clientes ───────────────────────────────────────────────────────────
     "cliente_listar": ("clientes", "view"),
     "cliente_obtener": ("clientes", "view"),

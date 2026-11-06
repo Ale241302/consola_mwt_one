@@ -160,16 +160,17 @@ SENSITIVE_READ_TOOLS = {
 }
 
 
-def _safe_role_read(call, tool: str):
+def _safe_role_read(call, tool: str, args: dict | None = None):
     """Igual que `_safe_role` pero registra el read en la auditoría durable.
 
-    Se invoca desde las tools de SENSITIVE_READ_TOOLS. El registro es
-    best-effort (thread daemon) y nunca altera la respuesta."""
+    `args` (opcional) son los identificadores consultados: sin ellos la
+    auditoría dice "alguien vio un expediente" pero no cuál.
+    El registro es best-effort (thread daemon) y nunca altera la respuesta."""
     import time as _time
 
     t0 = _time.monotonic()
     data = _safe_role(call)
-    _log_mcp_audit(tool, {}, data, int((_time.monotonic() - t0) * 1000),
+    _log_mcp_audit(tool, args or {}, data, int((_time.monotonic() - t0) * 1000),
                    event="read")
     return data
 
@@ -252,7 +253,13 @@ def _log_mcp_audit(tool: str, args, result, duration_ms: float, identity: dict |
     except Exception:  # noqa: BLE001 - nunca romper la tool por un log fallido
         pass
     # Ola 3.6 · persistencia durable best-effort (Eje A3).
-    _persist_mcp_audit(event, tool, args, ok, status, duration_ms)
+    from .helpers import _current_actor
+
+    actor, role, session = _current_actor()
+    _persist_mcp_audit(
+        event, tool, args, ok, status, duration_ms,
+        actor_email=actor, actor_role=role, session_id=session,
+    )
 
 
 def write_tool(func):
@@ -1082,6 +1089,72 @@ def mwt_audit_write_registry() -> Any:
     }
 
 
+@mcp.tool()
+def mwt_auditoria_listar(
+    desde: str | None = None,
+    hasta: str | None = None,
+    email: str | None = None,
+    tool: str | None = None,
+    event: str | None = None,
+    sesion: str | None = None,
+    solo_fallos: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+) -> Any:
+    """(CEO/Admin) Consulta la auditoría de acciones del MCP: quién hizo qué y cuándo.
+
+    Devuelve una fila por tool-call registrada: `at`, `tool`, `event`
+    (`write` | `read`), `actor_email`, `actor_role`, `session_id`, `ok`,
+    `http_status`, `duration_ms`, `args` saneados y quién firmó (`signed_by`).
+
+    Filtros: `desde`/`hasta` (YYYY-MM-DD o ISO-8601), `email` (actor),
+    `tool` (nombre exacto), `event`, `sesion` (agrupa una conversación),
+    `solo_fallos`. Sin fechas, asume los últimos 7 días.
+
+    Paginación: `limit` (máx 500) + `offset`; la respuesta trae `total` para
+    saber si quedan páginas.
+
+    Solo roles superadmin/admin/ceo. Antes de esta tool, la auditoría solo se
+    podía leer por SQL: no había forma de sacarla desde el agente."""
+    from datetime import datetime, timedelta, timezone as _tz
+
+    try:
+        caller = get_identity_user() or {}
+    except Exception as exc:  # noqa: BLE001 - identidad rota: fail-closed
+        return {"error": True, "detail": f"No se pudo resolver tu identidad: {exc}"}
+
+    role = (caller.get("role") or caller.get("role_slug") or "").lower()
+    if role not in ("superadmin", "admin", "ceo"):
+        return {"error": True, "detail": "mwt_auditoria_listar es CEO/Admin."}
+
+    actor_email = (caller.get("email") or "").strip().lower()
+    if not actor_email:
+        return {
+            "error": True,
+            "detail": "Sin email de usuario en la identidad propagada: la auditoría "
+                      "no se puede atribuir (solo aplica a sesiones con OAuth).",
+        }
+
+    if event and event not in ("read", "write", "auth"):
+        return {"error": True, "detail": "event debe ser read | write | auth."}
+
+    if not desde and not hasta:
+        desde = (datetime.now(_tz.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    params = _params(
+        desde=desde, hasta=hasta, email=email, tool=tool, event=event,
+        sesion=sesion, limit=limit, offset=offset,
+    )
+    if solo_fallos:
+        params["solo_fallos"] = "true"
+
+    return _safe(
+        lambda: api.get_service(
+            "auth/mcp-audit/", params, {"X-Audit-Actor": actor_email}
+        )
+    )
+
+
 # =========================================================================== #
 # A) CLIENTES
 # =========================================================================== #
@@ -1120,7 +1193,7 @@ def cliente_listar(
 def cliente_obtener(cliente_id: str, campos: str | None = None) -> Any:
     """Obtiene el detalle completo de un cliente por su id (UUID).
     `campos`: lista separada por comas para proyectar solo esos atributos."""
-    return _project(campos, _safe_role_read(lambda: api.get(f"clientes/{cliente_id}/"), "cliente_obtener"))
+    return _project(campos, _safe_role_read(lambda: api.get(f"clientes/{cliente_id}/"), "cliente_obtener", {"cliente_id": cliente_id}))
 
 
 @mcp.tool()
@@ -1554,7 +1627,7 @@ def expediente_obtener(expediente_id: str, campos: str | None = None) -> Any:
         return {"error": True, "detail": "Expediente no encontrado para el identificador dado.",
                 "hint": "Pasa `expediente_codigo` (EXP-…) o la `referencia_cliente` (OC/SAP)."}
     expediente_id = resolved
-    data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/"), "expediente_obtener")
+    data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/"), "expediente_obtener", {"expediente_id": expediente_id})
     # Ola 3.8 · adjunta el resumen de envío (ART-05 AWB/BL) cuando existe.
     if isinstance(data, dict) and not data.get("error"):
         try:
@@ -1643,7 +1716,7 @@ def expediente_lineas(expediente_id: str, campos: str | None = None) -> Any:
         return {"error": True, "detail": "Expediente no encontrado para el identificador dado.",
                 "hint": "Pasa `expediente_codigo` (EXP-…) o la `referencia_cliente` (OC/SAP)."}
     expediente_id = resolved
-    data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas")
+    data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas", {"expediente_id": expediente_id})
     # Ola 3.8 · adjunta producto_nombre/marca_nombre legibles por línea.
     data = enrich_lineas(data)
     # Una sola línea no debe colapsar en un objeto: quien suma cantidades o
@@ -2599,7 +2672,7 @@ def factura_payload(expediente_id: str) -> Any:
     rid, err = _exp_or_error(expediente_id)
     if err:
         return err
-    return _safe_role_read(lambda: api.get(f"expedientes/{rid}/factura-payload/"), "factura_payload")
+    return _safe_role_read(lambda: api.get(f"expedientes/{rid}/factura-payload/"), "factura_payload", {"expediente_id": rid})
 
 
 # --- Estados SAP / pipeline -------------------------------------------------
@@ -3032,7 +3105,7 @@ def transferencia_listar(origen: str | None = None, destino: str | None = None, 
 def transferencia_obtener(transferencia_id: str, campos: str | None = None) -> Any:
     """Detalle de un movimiento (acepta UUID o código TRF-...), con líneas, eventos,
     documentos y cost_lines. `campos`: lista separada por comas para proyectar."""
-    return _project(campos, _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/"), "transferencia_obtener"))
+    return _project(campos, _safe_role_read(lambda: api.get(f"transferencias/{transferencia_id}/"), "transferencia_obtener", {"transferencia_id": transferencia_id}))
 
 
 @mcp.tool()
@@ -3313,7 +3386,7 @@ def pago_listar(expediente_id: str | None = None, estado: str | None = None, tra
 def pago_obtener(pago_id: str, campos: str | None = None) -> Any:
     """Detalle de un pago, incluyendo aplicaciones, evidencia y veredicto IA.
     `campos`: lista separada por comas para proyectar solo esos atributos."""
-    return _project(campos, _safe_role_read(lambda: api.get(f"finance/payments/{pago_id}/"), "pago_obtener"))
+    return _project(campos, _safe_role_read(lambda: api.get(f"finance/payments/{pago_id}/"), "pago_obtener", {"pago_id": pago_id}))
 
 
 @mcp.tool()

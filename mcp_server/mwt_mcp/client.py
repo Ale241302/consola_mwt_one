@@ -94,6 +94,27 @@ def post_service(path: str, body: dict | list | None = None) -> Any:
         return _handle(r)
 
 
+def get_service(
+    path: str,
+    params: dict | None = None,
+    headers: dict | None = None,
+) -> Any:
+    """GET firmado con el ServiceToken estático, con headers extra opcionales.
+
+    Igual que `post_service` pero para lecturas administrativas (p. ej.
+    `auth/mcp-audit/`), donde el endpoint exige el token de servicio y además
+    el actor real en un header propio (`X-Audit-Actor`)."""
+    from .jwt_minter import _service_auth_header
+
+    with httpx.Client(timeout=settings.http_timeout) as c:
+        r = c.get(
+            _url(path),
+            params=_clean(params),
+            headers={**_service_auth_header(), **(headers or {})},
+        )
+        return _handle(r)
+
+
 def patch(path: str, body: dict | None = None) -> Any:
     with httpx.Client(timeout=settings.http_timeout) as c:
         r = c.patch(_url(path), json=_clean(body), headers=_auth_headers())

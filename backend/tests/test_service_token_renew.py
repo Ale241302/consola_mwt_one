@@ -269,3 +269,19 @@ def test_system_health_oculta_vigencia_para_cliente_b2b():
 
     assert resp.status_code == 200
     assert "service_tokens" not in resp.json()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# GET /api/auth/mcp-audit/ · consulta de auditoría
+# ─────────────────────────────────────────────────────────────────────
+def test_auditoria_get_exige_declarar_actor():
+    """Sin X-Audit-Actor no hay forma de atribuir la consulta → fail-closed."""
+    _, token = _insert_token("qa-audit-get", expires_in_days=30)
+
+    resp = APIClient().get(
+        "/api/auth/mcp-audit/",
+        HTTP_AUTHORIZATION=f"ServiceToken {token}",
+    )
+
+    assert resp.status_code == 403
+    assert "X-Audit-Actor" in resp.json()["detail"]
