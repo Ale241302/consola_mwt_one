@@ -202,7 +202,9 @@ export default function GanttChart({ rows = [], lang = "es" }) {
             const isParent = r.depth === 0;
             const hasKids = r.children && r.children.length > 0;
             const open = expanded.has(r.key);
-            const rowH = isParent ? 38 : 30;
+            // Las filas de expediente llevan una segunda línea (cliente · MWT),
+            // así que necesitan más alto que las de fase.
+            const rowH = isParent ? (r.sub2 ? 48 : 38) : 30;
             const barH = r.summary ? 5 : (isParent ? 12 : 11);
             return (
               <div key={r.key}
@@ -229,14 +231,21 @@ export default function GanttChart({ rows = [], lang = "es" }) {
                   ) : <span style={{ width: 20, flex: "none" }}/>}
                   <span onClick={r.onLabelClick}
                         onMouseDown={(e) => e.stopPropagation()}
-                        title={r.labelTip || r.label}
-                        style={{ minWidth: 0, cursor: r.onLabelClick ? "pointer" : "default" }}>
-                    <span style={{ fontSize: isParent ? 12.5 : 11.5, fontWeight: isParent ? 800 : 600, color: r.onLabelClick ? "var(--brand-primary, #013A57)" : "var(--text-secondary, #36556B)", whiteSpace: "nowrap", textDecoration: r.onLabelClick ? "underline dotted" : "none", textUnderlineOffset: 3 }}>
-                      {r.label}
+                        title={r.sub2 ? `${r.label} · ${r.sub2}` : (r.labelTip || r.label)}
+                        style={{ minWidth: 0, display: "block", overflow: "hidden", cursor: r.onLabelClick ? "pointer" : "default" }}>
+                    <span style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+                      <span style={{ fontSize: isParent ? 12.5 : 11.5, fontWeight: isParent ? 800 : 600, color: r.onLabelClick ? "var(--brand-primary, #013A57)" : "var(--text-secondary, #36556B)", whiteSpace: "nowrap", textDecoration: r.onLabelClick ? "underline dotted" : "none", textUnderlineOffset: 3 }}>
+                        {r.label}
+                      </span>
+                      {r.sub && (
+                        <span className="caption" style={{ fontSize: 10.5, color: "var(--text-tertiary, #94A3B8)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {r.sub}
+                        </span>
+                      )}
                     </span>
-                    {r.sub && (
-                      <span className="caption" style={{ marginLeft: 6, fontSize: 10.5, color: "var(--text-tertiary, #94A3B8)", whiteSpace: "nowrap" }}>
-                        {r.sub}
+                    {r.sub2 && (
+                      <span className="caption" style={{ display: "block", fontSize: 10.5, lineHeight: 1.35, color: "var(--text-tertiary, #94A3B8)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {r.sub2}
                       </span>
                     )}
                   </span>

@@ -247,10 +247,13 @@ export default function Cronograma() {
         // vista: admin ve el número SAP (vacío si no hay); cliente nada.
         (!isClient && it.sap) ? it.sap : null,
         `${fInt(it.volumen)} prs`,
-        // Nombre del cliente (antes decía literalmente "Cliente").
+        it.modo || (lang === "es" ? "Aéreo (sup.)" : "Air (assumed)"),
+      ].filter(Boolean).join(" · "),
+      // Segunda línea bajo el código: cliente real y, si aplica, el operador
+      // MWT. En la columna angosta el nombre quedaba cortado al lado del SAP.
+      sub2: [
         it.cliente || (lang === "es" ? "Cliente" : "Client"),
         it.operadoPorMwt ? "MWT" : null,
-        it.modo || (lang === "es" ? "Aéreo (sup.)" : "Air (assumed)"),
       ].filter(Boolean).join(" · "),
       bars: spanA ? [{
         s: it.estado,
