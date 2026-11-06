@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import json
+import uuid
 from typing import Any, Awaitable, Callable
 
 from .config import settings
@@ -154,6 +155,17 @@ class IdentityPropagationMiddleware:
                     effective_headers["x-mwt-client-ip"] = client_ip
             if entra_token:
                 effective_headers["x-mwt-entra-token"] = entra_token
+
+            # ── Sesión MCP (agrupación de tool-calls en la auditoría) ──────
+            # Las tools se ejecutan en el contexto del `initialize` (los
+            # contextvars quedan congelados por sesión), donde el header
+            # `mcp-session-id` todavía no existe porque lo emite la respuesta.
+            # Generamos un id estable en ese momento para poder agrupar todas
+            # las llamadas de la conversación.
+            sid = (headers.get("mcp-session-id") or "").strip()
+            if not sid:
+                sid = uuid.uuid4().hex
+            effective_headers["mcp-session-id"] = sid
 
             set_identity(effective_headers)
             set_tenant(Tenant(
