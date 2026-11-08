@@ -1257,35 +1257,49 @@ export default function ScreenExpedientes() {
                     <div className="caption">—</div>
                   </div>
                 );
-                const ratio = ps.avg / ps.baseline;
+                // Sprint 2026-11-08 · el número que manda es el de CADA
+                // modo (✈ Aéreo / 🚢 Marítimo). El total ponderado de la
+                // API mezclaba ambos y los expedientes sin método de
+                // envío, y no representaba ninguna operación real (ej.
+                // "En destino 80d" cuando aéreo son 91d y marítimo 60d).
+                const modes = real?.modes || null;
+                const aereo = modes?.Aereo?.avg ?? null;
+                const maritimo = modes?.Maritimo?.avg ?? null;
+                const hasSplit = aereo != null || maritimo != null;
+                const shown = hasSplit ? Math.max(aereo ?? 0, maritimo ?? 0) : ps.avg;
+                const ratio = ps.baseline > 0 ? shown / ps.baseline : 1;
                 const signal = ratio < 1.1 ? 'green' : ratio < 1.35 ? 'amber' : 'red';
                 const color = signal === 'green' ? 'var(--success)' : signal === 'amber' ? 'var(--warning)' : 'var(--critical)';
+                const modeVal = (v, icon) => (
+                  <span style={{display:'inline-flex', alignItems:'baseline', gap:3}}>
+                    <span style={{fontSize:12, lineHeight:1}} aria-hidden="true">{icon}</span>
+                    <span style={{font:'800 22px/1 var(--font-display)', color, fontVariantNumeric:'tabular-nums'}}>
+                      {v.toFixed(0)}
+                    </span>
+                    <span className="caption">{lang==='es'?'d':'d'}</span>
+                  </span>
+                );
                 return (
                   <div key={s}>
                     <div className="micro" style={{marginBottom:8, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{tr(lang,s)}</div>
-                    <div style={{display:'flex',alignItems:'baseline',gap:4}}>
-                      <span style={{font:'800 22px/1 var(--font-display)', color, fontVariantNumeric:'tabular-nums'}}>{ps.avg.toFixed(0)}</span>
-                      <span className="caption">{lang==='es'?'d':'d'}</span>
-                    </div>
+                    {hasSplit ? (
+                      <div style={{display:'flex', alignItems:'baseline', gap:12}}>
+                        {aereo != null && modeVal(aereo, '✈')}
+                        {maritimo != null && modeVal(maritimo, '🚢')}
+                      </div>
+                    ) : (
+                      <div style={{display:'flex',alignItems:'baseline',gap:4}}>
+                        <span style={{font:'800 22px/1 var(--font-display)', color, fontVariantNumeric:'tabular-nums'}}>{ps.avg.toFixed(0)}</span>
+                        <span className="caption">{lang==='es'?'d':'d'}</span>
+                      </div>
+                    )}
                     <div style={{height: 4, background:'var(--border)', borderRadius:2, marginTop:8, overflow:'hidden'}}>
                       <div style={{height:'100%', width: Math.min(100, ratio*60) + '%', background: color}}/>
                     </div>
                     <div className="caption" style={{marginTop:4, color:'var(--text-tertiary)'}}>
-                      {lang==='es'?'hist.':'avg'} {Number(ps.baseline).toFixed(0)}d · {(ratio*100-100).toFixed(0)}%
+                      {lang==='es'?'hist.':'avg'} {Number(ps.baseline).toFixed(0)}d
                       {ps.n ? ` · ${ps.n} exp.` : ''}
                     </div>
-                    {/* Sprint 2026-11-08 · desglose por modo: el número
-                        grande es el total (todos los modos) y aquí se ve
-                        cuánto pesa Aéreo y cuánto Marítimo. Antes la card
-                        mezclaba ambos sin decirlo y descartaba los
-                        expedientes sin método de envío. */}
-                    {real?.modes && (real.modes.Aereo || real.modes.Maritimo) && (
-                      <div className="caption" style={{marginTop:2, color:'var(--text-tertiary)'}}>
-                        {real.modes.Aereo && <>✈ {real.modes.Aereo.avg.toFixed(0)}d</>}
-                        {real.modes.Aereo && real.modes.Maritimo && ' · '}
-                        {real.modes.Maritimo && <>🚢 {real.modes.Maritimo.avg.toFixed(0)}d</>}
-                      </div>
-                    )}
                   </div>
                 );
               })}
