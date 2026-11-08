@@ -18,11 +18,12 @@ const ESTADOS = [
   ["CERRADO", "Cerrado"],
 ];
 
-function Kpi({ label, value, tone }) {
+function Kpi({ label, value, tone, sub }) {
   return (
     <div className="card card-pad-lg">
       <div className="micro" style={{ color: "var(--text-tertiary)", marginBottom: 6 }}>{label}</div>
       <div className="tabular-nums" style={{ font: "800 26px/1.1 var(--font-display)", color: tone || "var(--text-primary)" }}>{value}</div>
+      {sub && <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>{sub}</div>}
     </div>
   );
 }
@@ -32,6 +33,7 @@ export default function ClientHome({ lang = "es" }) {
   const navigate = useNavigate();
   const [me, setMe] = useState(null);
   const [exps, setExps] = useState([]);
+  const [cobros, setCobros] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -40,8 +42,12 @@ export default function ClientHome({ lang = "es" }) {
       const m = await portalApi.me().catch(() => null);
       setMe(m || null);
       const cid = (m?.empresas || [])[0]?.id || null;
-      const e = await portalApi.misExpedientes(cid).catch(() => []);
+      const [e, c] = await Promise.all([
+        portalApi.misExpedientes(cid).catch(() => []),
+        portalApi.misCobros(cid).catch(() => []),
+      ]);
       setExps(Array.isArray(e) ? e : (e?.results || []));
+      setCobros(Array.isArray(c) ? c : (c?.results || []));
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -51,6 +57,30 @@ export default function ClientHome({ lang = "es" }) {
   const activos = exps.length;
   const credito = me?.empresas?.[0]?.credito_limit_usd || me?.credito_limit_usd;
   const usado = me?.empresas?.[0]?.credito_usado || me?.credito_usado;
+
+  // Cobranza del cliente: qué debe pagar y cuándo (lo que más consulta).
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const pendientes = (cobros || [])
+    .filter((c) => Number(c.monto_pendiente) > 0)
+    .map((c) => {
+      const fv = c.fecha_vencimiento ? new Date(c.fecha_vencimiento) : null;
+      return {
+        ...c,
+        _monto: Number(c.monto_pendiente) || 0,
+        _dias: fv ? Math.round((fv - hoy) / 86400000) : null,
+      };
+    })
+    .sort((a, b) => (a._dias == null ? 1 : b._dias == null ? -1 : a._dias - b._dias));
+  const saldo = pendientes.reduce((s, c) => s + c._monto, 0);
+  const vencido = pendientes.filter((c) => c._dias != null && c._dias < 0)
+    .reduce((s, c) => s + c._monto, 0);
+  const proximo = pendientes[0] || null;
+  const fmtMonto = (v, moneda = "USD") => new Intl.NumberFormat("es-CR", {
+    style: "currency", currency: moneda, maximumFractionDigits: 0,
+  }).format(Number(v) || 0);
+
+  const porEstado = ESTADOS.map(([k, label]) => [k, label, count(k)])
+    .filter(([, , n]) => n > 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 24 }} data-section="client-home">
@@ -64,7 +94,59 @@ export default function ClientHome({ lang = "es" }) {
           <Kpi label={es ? "En tránsito" : "In transit"} value={count("TRANSITO")} />
           <Kpi label={es ? "En destino" : "At destination"} value={count("EN_DESTINO")} />
           <Kpi label={es ? "Entregados" : "Delivered"} value={count("CERRADO")} tone="var(--success-fg, #166534)" />
+          <Kpi label={es ? "Saldo por pagar" : "Balance due"} value={fmtMonto(saldo)}
+               tone={vencido > 0 ? "var(--critical)" : "var(--text-primary)"}
+               sub={vencido > 0 ? `${fmtMonto(vencido)} ${es ? "vencido" : "overdue"}` : null} />
           {credito != null && <Kpi label={es ? "Crédito usado" : "Credit used"} value={`${Math.round((Number(usado || 0) / Number(credito || 1)) * 100)}%`} sub={`de ${Number(credito).toLocaleString("en-US")}`} />}
+        </div>
+
+        {/* Próximo pago + pedidos por estado (lo que antes no se veía) */}
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
+          <div className="card card-pad-lg">
+            <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 800, letterSpacing: ".04em", marginBottom: 10 }}>
+              {es ? "PRÓXIMO PAGO" : "NEXT PAYMENT"}
+            </div>
+            {!proximo ? (
+              <div style={{ color: "var(--text-tertiary)", fontSize: 13 }}>{es ? "Sin pagos pendientes." : "No pending payments."}</div>
+            ) : (
+              <>
+                <div className="tabular-nums" style={{ font: "800 26px/1.1 var(--font-display)" }}>
+                  {fmtMonto(proximo._monto, proximo.moneda || "USD")}
+                </div>
+                <div className="micro" style={{ color: proximo._dias < 0 ? "var(--critical)" : "var(--text-secondary)", marginTop: 4 }}>
+                  {proximo.fecha_vencimiento
+                    ? `${es ? "vence" : "due"} ${fmtDate(proximo.fecha_vencimiento, lang)}`
+                    : (es ? "sin fecha de vencimiento" : "no due date")}
+                  {proximo._dias != null && ` · ${proximo._dias < 0
+                    ? `${Math.abs(proximo._dias)}d ${es ? "vencido" : "overdue"}`
+                    : `${es ? "en" : "in"} ${proximo._dias}d`}`}
+                </div>
+                {pendientes.length > 1 && (
+                  <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>
+                    {es ? `+ ${pendientes.length - 1} cuotas más · total ${fmtMonto(saldo)}`
+                        : `+ ${pendientes.length - 1} more · total ${fmtMonto(saldo)}`}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="card card-pad-lg">
+            <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 800, letterSpacing: ".04em", marginBottom: 10 }}>
+              {es ? "MIS PEDIDOS POR ESTADO" : "MY ORDERS BY STATE"}
+            </div>
+            {porEstado.length === 0 ? (
+              <div style={{ color: "var(--text-tertiary)", fontSize: 13 }}>—</div>
+            ) : porEstado.map(([k, label, n]) => (
+              <div key={k} style={{ display: "grid", gridTemplateColumns: "110px 34px 1fr", gap: 10, alignItems: "center", padding: "4px 0" }}>
+                <div style={{ fontSize: 12.5 }}>{es ? label : k}</div>
+                <div className="tabular-nums" style={{ fontWeight: 800, textAlign: "right" }}>{n}</div>
+                <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${Math.round((n / activos) * 100)}%`, background: "var(--brand-accent)" }} />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Embarques (lo más importante para el cliente) */}

@@ -176,7 +176,8 @@ export default function ScreenDashboard() {
       {isAdmin
         ? <CeoHome lang={lang} onOpenExpediente={onOpenExpediente}
                    onGoFinanzas={() => navigate("/finanzas")}
-                   onGoCorreo={() => navigate("/correo")} />
+                   onGoCorreo={() => navigate("/correo")}
+                   onGoExpedientes={() => navigate("/expedientes")} />
         : <ClientHome lang={lang} />}
 
       {/* Footer informativo */}
