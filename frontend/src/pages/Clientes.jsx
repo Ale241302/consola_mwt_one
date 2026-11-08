@@ -357,7 +357,19 @@ export default function ScreenClientes() {
                   </div>
                   <div className="caption" style={{marginTop: 4, display:'flex', justifyContent:'space-between'}}>
                     <span>{fmtMoney(c.credito_used)} / {fmtMoney(c.credito_limit)}</span>
-                    <span style={{color:'var(--text-tertiary)'}}>{c.credito_dias}d</span>
+                    {/* Sprint 2026-11-08 · el plazo de pago es obligatorio a
+                        nivel comercial: si el cliente no lo tiene, se marca
+                        en rojo para que se complete en su ficha. */}
+                    {Number(c.credito_dias) > 0 ? (
+                      <span style={{color:'var(--text-tertiary)'}}>{c.credito_dias}d</span>
+                    ) : (
+                      <span
+                        style={{color:'var(--critical)', fontWeight:700}}
+                        title={lang==='es' ? 'Sin plazo de pago definido' : 'No payment term defined'}
+                      >
+                        {lang==='es' ? 'sin plazo' : 'no term'}
+                      </span>
+                    )}
                   </div>
                 </div>
 
