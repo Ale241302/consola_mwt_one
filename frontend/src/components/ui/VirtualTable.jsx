@@ -89,6 +89,18 @@ export default function VirtualTable({
   const renderRowFinal = renderRow || renderRowDefault;
   const colSpan = columns.length || 99;
 
+  // El hook SIEMPRE se llama (regla de hooks): virtualizar o no es una
+  // decisión de render, no de cantidad de hooks. Si se llamara sólo en la
+  // rama virtualizada, pasar de 20 a 100 filas cambiaría el orden de hooks y
+  // React lanzaría el error #310.
+  const virt = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => estimateRowHeight,
+    overscan: 10,
+    enabled: virtualize,
+  });
+
   if (!virtualize) {
     return (
       <table className={`mwt-table ${className}`}>
@@ -108,12 +120,6 @@ export default function VirtualTable({
     );
   }
 
-  const virt = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => estimateRowHeight,
-    overscan: 10,
-  });
   const items = virt.getVirtualItems();
   const padTop = items.length ? items[0].start : 0;
   const padBottom = items.length ? virt.getTotalSize() - items[items.length - 1].end : 0;
