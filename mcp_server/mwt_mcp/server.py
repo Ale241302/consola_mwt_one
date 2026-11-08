@@ -780,6 +780,36 @@ def _base_credit_days(value: Any) -> int:
     return n if n > 0 else BASE_CREDIT_DAYS
 
 
+def _skus_sin_precio_en_motor(client_id: str, skus: list[str]) -> list[str]:
+    """SKUs del pedido SIN precio en el MOTOR para ese cliente.
+
+    El motor de precios vive en `pricing.marluvas_client_sku_pricing` y se
+    consulta por `portal/products/sku_pricing_matrix/`. Un SKU sin fila
+    activa devuelve `ok=false, reason="no_active_pricing_row"`: el expediente
+    nace con precio 0 y el wizard no puede cotizar.
+
+    Devuelve la lista de SKUs sin precio (vacía = todo bien). Fail-safe: si
+    la consulta falla, devuelve [] para NO bloquear por un error de red.
+    """
+    skus_limpios = sorted({str(s).strip() for s in (skus or []) if str(s or "").strip()})
+    if not client_id or not skus_limpios:
+        return []
+    try:
+        data = api.get(
+            "portal/products/sku_pricing_matrix/",
+            {"skus": ",".join(skus_limpios)},
+        )
+    except Exception:  # noqa: BLE001 - fail-safe
+        return []
+    results = (data or {}).get("results") or {}
+    sin_precio = []
+    for sku in skus_limpios:
+        row = results.get(sku) or {}
+        if not row.get("ok"):
+            sin_precio.append(sku)
+    return sin_precio
+
+
 def _as_rows(data: Any) -> list:
     if isinstance(data, list):
         return data
@@ -1845,6 +1875,7 @@ def expediente_crear(
     moneda: str | None = None,
     idempotence_token: str | None = None,
     file_path: str | None = None,
+    permitir_sin_precio: bool = False,
 ) -> Any:
     """Crea un expediente desde una OC (orquestador atómico, comando C1).
 
@@ -1862,6 +1893,11 @@ def expediente_crear(
     - `file_path`: RUTA LOCAL del PDF/XLSX de la OC. **Pásalo SIEMPRE**: create-from-oc
       siempre crea el documento OC, pero solo guarda el binario en MinIO si recibe el archivo;
       sin `file_path` el documento queda con storage_url=null ("sin archivo almacenado").
+    - **PRECIO EN EL MOTOR (regla)**: cada SKU del pedido debe tener su precio cargado
+      para ese cliente en el motor de precios (`pricing.marluvas_client_sku_pricing`,
+      que se edita en Consola → Marcas → <marca> → <cliente> → Precios). Si falta,
+      la tool NO crea el expediente y devuelve `skus_sin_precio` con la instrucción.
+      Solo con `permitir_sin_precio=True` se crea igual (el expediente nacerá en $0).
     """
     g = _wguard()
     if g:
@@ -1883,6 +1919,30 @@ def expediente_crear(
     _real = [l for l in _lines if str(l.get("sku") or l.get("sku_text") or "").strip().upper() not in ("", "PENDING", "PENDIENTE", "TBD", "NONE")]
     if not _real:
         return {"error": True, "detail": "ocr_payload.lines vacío o dummy (PENDING/sin SKU). Parsea la matriz de tallas de la proforma/OC y envía una línea por SKU×talla REAL (ej. size='39', NUNCA 'UNICA' ni 'PENDING') antes de crear el expediente."}
+    # Sprint 2026-11-08 · PRECIO EN EL MOTOR — regla dura.
+    # Un producto para un cliente DEBE tener su precio cargado en el motor
+    # (Marca → Cliente → Precios). Sin esa fila el expediente nace con
+    # precio 0 y ni el portal ni el wizard pueden cotizar. Se valida ANTES
+    # de crear para no generar expedientes sin precio.
+    if not permitir_sin_precio:
+        _skus_pedido = [str(l.get("sku") or "").strip() for l in _real]
+        _sin_precio = _skus_sin_precio_en_motor(str(client_id), _skus_pedido)
+        if _sin_precio:
+            return {
+                "error": True,
+                "detail": (
+                    "Hay SKUs sin precio en el MOTOR para este cliente: "
+                    + ", ".join(_sin_precio)
+                ),
+                "skus_sin_precio": _sin_precio,
+                "hint": (
+                    "Cargá el precio del producto para el cliente en el motor de "
+                    "precios (Consola → Marcas → <marca> → <cliente> → Precios, o "
+                    "POST /api/commercial/marluvas/save-simulation/) antes de crear "
+                    "el expediente. Si de verdad querés crearlo sin precio, pasá "
+                    "permitir_sin_precio=True."
+                ),
+            }
     # Ola 2 · 2.16 · validación estructural previa (Pydantic) si está disponible.
     _verr = validate_lines(_lines)
     if _verr:
