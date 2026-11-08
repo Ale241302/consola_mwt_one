@@ -34,6 +34,8 @@ import { shouldVirtualize } from "../../lib/virtualTableLogic.js";
  * @param {(row:any)=>React.ReactNode} [props.renderRow] render de fila custom
  * @param {React.ReactNode} [props.loadingSkeleton] nodo skeleton cuando rows vacías
  * @param {number} [props.threshold] filas mínimas para virtualizar (default 60)
+ * @param {boolean} [props.virtualize] false desactiva la virtualización y la
+ *   tabla crece con la página (sin scroll interno). Default: true.
  * @param {number} [props.estimateRowHeight] px estimados por fila (default 44)
  * @param {number} [props.maxHeight] alto del viewport virtual (default 640)
  * @param {string} [props.className]
@@ -47,13 +49,14 @@ export default function VirtualTable({
   renderRow,
   loadingSkeleton,
   threshold,
+  virtualize: virtualizeAllowed = true,
   estimateRowHeight = 44,
   maxHeight = 640,
   className = "",
   emptyLabel = "Sin datos",
 }) {
   const printing = useIsPrinting();
-  const virtualize = shouldVirtualize(rows.length, threshold, printing);
+  const virtualize = virtualizeAllowed && shouldVirtualize(rows.length, threshold, printing);
   const scrollRef = useRef(null);
 
   // thead custom (modo complejo) o auto-armado desde columns.

@@ -148,6 +148,15 @@ def enrich_ids(payload: Any) -> Any:
 # --------------------------------------------------------------------------- #
 # Presentación de códigos de expediente según rol (Ola 3.7 · Calidad)
 # --------------------------------------------------------------------------- #
+def _as_days(value: Any) -> int:
+    """Días de crédito como entero > 0; 0 para null/0/inválido."""
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
 def present_expediente_codigos(row: dict, role: str) -> dict:
     """Normaliza los códigos de un expediente según el rol.
 
@@ -179,6 +188,13 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
     partes.extend(saps)
 
     out = dict(row)
+    # Sprint 2026-11-08 · plazo de pago: un expediente sin `credit_days`
+    # (NULL/0) opera al plazo BASE de 90 días, no a contado. Se expone
+    # `credit_days` ya resuelto (propio → del cliente → 90) para que ningún
+    # agente lea 0 y asuma contado.
+    _own = _as_days(row.get("credit_days"))
+    _cli = _as_days(row.get("credit_days_cliente"))
+    out["credit_days"] = _own or _cli or 90
     if partes:
         out["codigos_presentacion"] = " · ".join(partes)
     # Ola 3.8 · El código interno EXP- es un número que SOLO usa el sistema;

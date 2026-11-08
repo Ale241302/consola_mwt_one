@@ -64,6 +64,20 @@ import { runExpedienteExport } from "../lib/expedienteExport.js";
 import { loadClientStats } from "../lib/cronogramaData.js";
 
 // ── Mapeo backend → UI ──────── (Sprint 2026-05-03 v4)
+// Sprint 2026-11-08 · Plazo de pago presentable. `credit_days` puede venir
+// null/0 cuando el expediente no fijó plazo; el plazo BASE del negocio es
+// 90 días (mismo criterio que el detalle del expediente y el backend, que
+// hace COALESCE(credit_days_cliente, credit_days, 90)). Mostrar "0d"
+// contradecía el detalle ("90d") y se leía como contado.
+const BASE_CREDIT_DAYS = 90;
+function creditTerm(r) {
+  const own = Number(r?.credit_days || 0);
+  if (own > 0) return own;
+  const cli = Number(r?.credit_days_cliente || 0);
+  if (cli > 0) return cli;
+  return BASE_CREDIT_DAYS;
+}
+
 function mapExpedienteFromApi(r) {
   return {
     // id legible para navegacion y React keys (codigo si existe, sino UUID).
@@ -95,6 +109,8 @@ function mapExpedienteFromApi(r) {
     brand:  '', brand_id:  r.brand_id  || null,
     status: r.estado || 'REGISTRO',
     credit_days:  Number(r.credit_days) || 0,
+    // Plazo presentable de la columna DÍAS CRÉDITO (nunca 0d).
+    credit_days_term: creditTerm(r),
     credit_band:  r.credit_band || 'GREEN',
     is_blocked:   !!r.is_blocked,
     block_reason: r.block_reason || null,
@@ -974,8 +990,8 @@ export default function ScreenExpedientes() {
                       )}
                       <td className="td-num">
                         <div className="flex ai-center gap-2" style={{justifyContent:'flex-end'}}>
-                          <CreditDot band={e.credit_days>75?'RED':e.credit_days>60?'AMBER':'GREEN'}/>
-                          <span className="tabular">{e.credit_days}d</span>
+                          <CreditDot band={e.credit_days_term>75?'RED':e.credit_days_term>60?'AMBER':'GREEN'}/>
+                          <span className="tabular">{e.credit_days_term}d</span>
                         </div>
                       </td>
                     </>}
@@ -999,8 +1015,8 @@ export default function ScreenExpedientes() {
                       {isAdmin && (
                         <td className="td-num">
                           <div className="flex ai-center gap-2" style={{justifyContent:'flex-end'}}>
-                            <CreditDot band={e.credit_days>75?'RED':e.credit_days>60?'AMBER':'GREEN'}/>
-                            <span className="tabular">{e.credit_days}d</span>
+                            <CreditDot band={e.credit_days_term>75?'RED':e.credit_days_term>60?'AMBER':'GREEN'}/>
+                            <span className="tabular">{e.credit_days_term}d</span>
                           </div>
                         </td>
                       )}
@@ -1475,7 +1491,10 @@ export default function ScreenExpedientes() {
           renderRow={renderMasterRow}
           loadingSkeleton={loading && displayRows.length === 0 ? <TableSkeletonRows rows={8} /> : null}
           emptyLabel={null}
-          maxHeight="64vh"
+          // Sprint 2026-11-08 · sin scroll interno: la tabla crece con la
+          // página (antes 64vh obligaba a scrollear dentro de la tabla con
+          // el mouse encima). 100 filas por página se renderizan bien.
+          virtualize={false}
           estimateRowHeight={46}
         />
       </div>

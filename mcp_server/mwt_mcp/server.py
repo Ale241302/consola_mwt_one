@@ -764,6 +764,22 @@ def _norm_num(s: str | None) -> str:
     return re.sub(r"^(po|oc)(?=\d)", "", s)
 
 
+# Sprint 2026-11-08 · plazo de pago BASE del negocio (días de crédito).
+# Un expediente con `credit_days` NULL/0 no es "contado": es un plazo no
+# definido que opera a 90 días (misma regla que el detalle del expediente y
+# el reloj de crédito del portal).
+BASE_CREDIT_DAYS = 90
+
+
+def _base_credit_days(value: Any) -> int:
+    """Días de crédito normalizados: 0/None/ inválido → BASE_CREDIT_DAYS."""
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError):
+        return BASE_CREDIT_DAYS
+    return n if n > 0 else BASE_CREDIT_DAYS
+
+
 def _as_rows(data: Any) -> list:
     if isinstance(data, list):
         return data
@@ -1840,6 +1856,8 @@ def expediente_crear(
       el backend exige las líneas DENTRO de ocr_payload).
       Los precios se re-derivan server-side del motor de pricing.
     - `forma_pago`: CREDITO o CONTADO. `credit_days_mwt`/`credit_days_cliente`: plazos duales.
+      Si se omiten o vienen en 0 se aplica el plazo BASE del negocio (90 días):
+      0/null NUNCA significa "contado" (eso es `forma_pago="CONTADO"`).
     - `mode` (COMISION/FULL), `freight_mode` (SEA/AIR), `dispatch_mode` (FCL/LCL/CONSOLIDADO): solo admin.
     - `file_path`: RUTA LOCAL del PDF/XLSX de la OC. **Pásalo SIEMPRE**: create-from-oc
       siempre crea el documento OC, pero solo guarda el binario en MinIO si recibe el archivo;
@@ -1855,6 +1873,11 @@ def expediente_crear(
     # Red de seguridad: NUNCA escribir "SIN-PO" (mejor omitir → el backend genera OC-AUTO).
     if po_number and re.sub(r"[^a-z0-9]", "", str(po_number).lower()) in ("sinpo", "sin", "none", "null", "na", "sn"):
         po_number = None
+    # Sprint 2026-11-08 · plazo de pago: 0/None = "no definido" → se aplica el
+    # plazo BASE (90 días). Sin esto el expediente quedaba con credit_days NULL
+    # y el portal lo mostraba como "0d", que se lee como contado.
+    credit_days_mwt = _base_credit_days(credit_days_mwt)
+    credit_days_cliente = _base_credit_days(credit_days_cliente)
     # Exigir líneas REALES (no el dummy PENDING). Si todas son dummy/vacías, no crear.
     _lines = (ocr_payload or {}).get("lines") or []
     _real = [l for l in _lines if str(l.get("sku") or l.get("sku_text") or "").strip().upper() not in ("", "PENDING", "PENDIENTE", "TBD", "NONE")]
