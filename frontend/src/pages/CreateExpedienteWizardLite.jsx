@@ -2790,8 +2790,10 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
           y se actualiza paymentDays. Visible solo cuando hay líneas con
           totalValue > 0 (necesario para calcular ahorro). */}
       {/* Sprint 2026-05-24 · Bloque PROPUESTA MWT (solo ADMIN cuando hay operador intermedio).
-          Se renderiza ANTES del bloque cliente. Estado independiente: paymentDaysMwt. */}
-      {client && totalValue > 0 && operatedByMwt && isAdmin && (
+          Se renderiza ANTES del bloque cliente. Estado independiente: paymentDaysMwt.
+          Sprint 2026-11-08 · sin exigir precios: el plazo/banda MWT debe poder
+          fijarse aunque el motor no tenga fila de pricing para el SKU. */}
+      {client && operatedByMwt && isAdmin && (
         <div style={{ marginTop: 14 }}>
           <div className="micro" style={{
             color: "var(--text-primary)", letterSpacing: 1, fontWeight: 700,
@@ -2823,12 +2825,14 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                 </div>
                 <select
                   className="input"
-                  value={mwtDiasEff || ""}
+                  value={Number(paymentDaysMwt) || mwtDiasEff || 90}
                   onChange={(e) => setPaymentDaysMwt(Number(e.target.value))}
                   style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border)", fontSize: 13, fontWeight: 700 }}
-                  disabled={!daysMwtBand.length}
                 >
-                  {daysMwtBand.map((d) => (
+                  {/* Sprint 2026-11-08 · sin fila de pricing (plazos vacíos)
+                      el selector igual ofrece los plazos del catálogo, para
+                      que el plazo MWT nunca quede sin poder fijarse. */}
+                  {(daysMwtBand.length ? daysMwtBand : mwtDayOptions).map((d) => (
                     <option key={d} value={d}>{d} {lang === "es" ? "días" : "days"}</option>
                   ))}
                 </select>
@@ -2937,8 +2941,12 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
       )}
 
       {/* Bloque PROPUESTA original (cliente final). Cuando hay operador,
-          el label cambia a "CLIENTE: ..." para diferenciarlo del MWT de arriba. */}
-      {client && totalValue > 0 && (
+          el label cambia a "CLIENTE: ..." para diferenciarlo del MWT de arriba.
+          Sprint 2026-11-08 · se muestra SIEMPRE que haya cliente: los plazos
+          deben verse aunque el motor no tenga precios para los SKUs (antes
+          `totalValue > 0` escondía toda la sección y no había forma de ver
+          ni elegir 8/30/60/90/120). */}
+      {client && (
         <div style={{ marginTop: 14 }}>
           <div className="micro" style={{
             color: "var(--text-primary)", letterSpacing: 1, fontWeight: 700,
@@ -3054,7 +3062,7 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                   <div className="tabular-nums" style={{
                     fontSize: 13, fontWeight: 700, color: "var(--text-primary)",
                   }}>
-                    {fmt(tierTotal)}
+                    {totalValue > 0 ? fmt(tierTotal) : "—"}
                   </div>
                   <div style={{
                     fontSize: 10,
@@ -3063,11 +3071,13 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
                       : (tier.pct > 0 ? "#00875A" : "#B45309"),
                     fontWeight: 600, marginTop: 2,
                   }}>
-                    {tier.isBase
-                      ? (lang === "es" ? "Plazo actual PO" : "Current PO term")
-                      : (tier.pct > 0
-                          ? (lang === "es" ? `Ahorro ${fmt(ahorro)}`   : `Savings ${fmt(ahorro)}`)
-                          : (lang === "es" ? `Recargo ${fmt(Math.abs(ahorro))}` : `Surcharge ${fmt(Math.abs(ahorro))}`))}
+                    {totalValue <= 0
+                      ? (lang === "es" ? "Sin precios del motor" : "No engine prices")
+                      : (tier.isBase
+                          ? (lang === "es" ? "Plazo actual PO" : "Current PO term")
+                          : (tier.pct > 0
+                              ? (lang === "es" ? `Ahorro ${fmt(ahorro)}`   : `Savings ${fmt(ahorro)}`)
+                              : (lang === "es" ? `Recargo ${fmt(Math.abs(ahorro))}` : `Surcharge ${fmt(Math.abs(ahorro))}`)))}
                   </div>
                 </button>
               );
