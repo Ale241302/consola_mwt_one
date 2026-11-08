@@ -218,9 +218,14 @@ export default function CreateExpedienteWizardLite() {
   // selClient se limpia momentáneamente (clear+pick) — el usuario ya
   // eligió forma_pago/payment_days y no queremos pisarlos.
   useEffect(() => {
+    // Sprint 2026-11-08 · en EDIT mode el plazo manda el expediente
+    // guardado (lo carga el loader de edit-full); antes este efecto lo
+    // pisaba con el dias_credito del cliente y el paso 3 mostraba un
+    // plazo distinto al que se iba a persistir.
+    if (isEditMode) return;
     if (selClient && Number(selClient.dias_credito) > 0) {
       setPaymentDays(Number(selClient.dias_credito));
-    } else if (!selClient && !isEditMode) {
+    } else if (!selClient) {
       setPaymentDays(0);
       // Sprint Commit 9 · sin cliente seleccionado volvemos a '' para
       // forzar elección explícita en el próximo expediente.
@@ -474,10 +479,12 @@ export default function CreateExpedienteWizardLite() {
         initialOperatorRef.current = data.operating_company_id || null;
 
         // 2. selClient: resolver objeto completo (necesitamos dias_credito, etc.)
+        let cliDiasCredito = 0;
         if (data.client_id) {
           initialClientIdRef.current = data.client_id;
           try {
             const cli = await clientesApi.get(data.client_id);
+            cliDiasCredito = Number(cli?.dias_credito) || 0;
             if (!cancel && cli) setSelClient(adaptClient(cli));
           } catch { /* fallthrough */ }
         }
@@ -501,7 +508,11 @@ export default function CreateExpedienteWizardLite() {
         }
 
         // 4. payment terms
-        if (data.payment_days != null) setPaymentDays(Number(data.payment_days));
+        // Sprint 2026-11-08 · si el expediente no trae plazo, heredamos el
+        // default del cliente para que el paso 3 nunca quede sin plazo.
+        const _pd = Number(data.payment_days);
+        if (Number.isFinite(_pd) && _pd > 0) setPaymentDays(_pd);
+        else if (cliDiasCredito > 0) setPaymentDays(cliDiasCredito);
         if (data.forma_pago) setPaymentMethod(data.forma_pago);
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -2394,6 +2405,33 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
     ? (_creditTotals[selectedTier.days] ?? effectiveBaseTotal)
     : (totalValue * (1 - tierPct));
 
+  // ── Plazo de pago: opciones del selector (Sprint 2026-11-08) ─────────
+  // El plazo es un dato comercial del expediente y debe poder fijarse
+  // SIEMPRE en este paso. Antes los únicos controles vivían dentro de los
+  // bloques PROPUESTA, que exigen `totalValue > 0` (y el de MWT exige
+  // además operador): un expediente sin snapshot de precios se quedaba sin
+  // ninguna forma de elegir el plazo. Ahora el selector vive en TÉRMINOS DE
+  // PAGO y las opciones son los plazos del motor (o los tiers por defecto),
+  // más el valor vigente y el plazo por defecto del cliente.
+  const _dayOptions = (extra = []) => {
+    const set = new Set();
+    [...(effectiveTiers || []).map((t) => Number(t.days)), ...extra]
+      .forEach((d) => {
+        const n = Number(d);
+        if (Number.isFinite(n) && n > 0) set.add(n);
+      });
+    return [...set].sort((a, b) => a - b);
+  };
+  const _clienteDays = Number(paymentDaysCliente) || Number(paymentDays) || 0;
+  const clienteDayOptions = _dayOptions([
+    _clienteDays,
+    Number(client?.dias_credito) || 0,
+  ]);
+  const mwtDayOptions = _dayOptions([
+    ...(daysMwtBand.length ? daysMwtBand : []),
+    Number(paymentDaysMwt) || 0,
+  ]);
+
   return (
     <div className="card card-pad-lg">
       <h2 className="heading-md" style={{ marginBottom: 14 }}>
@@ -2599,53 +2637,88 @@ function Step3Resumen({ lang, client, operatingMode = 'client', operatingCompany
               }}>
                 {lang === "es" ? "Plazo de pago" : "Payment terms"}
               </div>
-              {/* Sprint 2026-05-24 (fix v4) · cuando hay operador intermedio
-                  mostrar AMBOS plazos separados (cliente y MWT) para que el
-                  ADMIN vea claramente que son independientes. Cuando no hay
-                  operador, mostrar solo el plazo unico. */}
+              {/* Sprint 2026-11-08 · el plazo se ELIGE aquí, siempre.
+                  Antes era texto de sólo lectura y el único control
+                  vivía en los bloques PROPUESTA (que requieren precios
+                  y/u operador MWT), así que un expediente sin snapshot
+                  se quedaba sin selector de días de plazo. */}
               {operatedByMwt ? (
-                <div style={{ padding: "8px 0", display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
+                <div style={{ padding: "4px 0", display: "flex", flexDirection: "column", gap: 6 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{
                       display: "inline-block", minWidth: 60,
                       fontSize: 10, color: "var(--text-tertiary)", fontWeight: 600,
                       textTransform: "uppercase", letterSpacing: 0.5,
                     }}>
                       {lang === "es" ? "Cliente:" : "Client:"}
-                    </span>{" "}
-                    {Number(paymentDaysCliente || paymentDays || 0)} {lang === "es" ? "días" : "days"}
-                  </div>
-                  <div className="tabular-nums" style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
+                    </span>
+                    <select
+                      className="input"
+                      value={_clienteDays || ""}
+                      onChange={(e) => {
+                        // El plazo del cliente también es el `payment_days`
+                        // legacy que persiste el PATCH de edit-full.
+                        const v = Number(e.target.value);
+                        setPaymentDaysCliente(v);
+                        setPaymentDays(v);
+                      }}
+                      style={{ fontWeight: 700, maxWidth: 150 }}
+                    >
+                      {!_clienteDays && <option value="" disabled>—</option>}
+                      {clienteDayOptions.map((d) => (
+                        <option key={d} value={d}>{d} {lang === "es" ? "días" : "days"}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{
                       display: "inline-block", minWidth: 60,
                       fontSize: 10, color: "var(--text-tertiary)", fontWeight: 600,
                       textTransform: "uppercase", letterSpacing: 0.5,
                     }}>
-                      {lang === "es" ? "MWT:" : "MWT:"}
-                    </span>{" "}
-                    {Number(paymentDaysMwt || 90)} {lang === "es" ? "días" : "days"}
-                    <span style={{ marginLeft: 6, fontSize: 10, color: "var(--brand-accent, #75CBB3)", fontWeight: 600 }}>
+                      MWT:
+                    </span>
+                    <select
+                      className="input"
+                      value={Number(paymentDaysMwt) || ""}
+                      onChange={(e) => setPaymentDaysMwt(Number(e.target.value))}
+                      style={{ fontWeight: 700, maxWidth: 150 }}
+                    >
+                      {!Number(paymentDaysMwt) && <option value="" disabled>—</option>}
+                      {mwtDayOptions.map((d) => (
+                        <option key={d} value={d}>{d} {lang === "es" ? "días" : "days"}</option>
+                      ))}
+                    </select>
+                    <span style={{ fontSize: 10, color: "var(--brand-accent, #75CBB3)", fontWeight: 600 }}>
                       · {lang === "es" ? "independiente" : "independent"}
                     </span>
-                  </div>
+                  </label>
                 </div>
               ) : (
-                <div className="tabular-nums" style={{
-                  fontSize: 16, fontWeight: 700, color: "var(--text-primary)", padding: "8px 0",
-                }}>
-                  {Number(paymentDays || 0)} {lang === "es" ? "días" : "days"}
+                <>
+                  <select
+                    className="input"
+                    value={Number(paymentDays) || ""}
+                    onChange={(e) => setPaymentDays(Number(e.target.value))}
+                    style={{ fontWeight: 700 }}
+                  >
+                    {!Number(paymentDays) && <option value="" disabled>—</option>}
+                    {clienteDayOptions.map((d) => (
+                      <option key={d} value={d}>{d} {lang === "es" ? "días" : "days"}</option>
+                    ))}
+                  </select>
                   {Number(client?.dias_credito || 0) > 0
                    && Number(paymentDays || 0) !== Number(client.dias_credito || 0) && (
-                    <span style={{
-                      marginLeft: 8, fontSize: 11, fontWeight: 500,
+                    <div style={{
+                      marginTop: 4, fontSize: 11, fontWeight: 500,
                       color: "var(--text-tertiary)",
                     }}>
-                      · {lang === "es"
-                          ? `cliente: ${Number(client.dias_credito)}d default`
-                          : `client: ${Number(client.dias_credito)}d default`}
-                    </span>
+                      {lang === "es"
+                          ? `default del cliente: ${Number(client.dias_credito)}d`
+                          : `client default: ${Number(client.dias_credito)}d`}
+                    </div>
                   )}
-                </div>
+                </>
               )}
             </div>
             <div>
