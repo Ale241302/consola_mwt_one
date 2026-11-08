@@ -387,6 +387,12 @@ export default function ScreenExpedientes() {
   // por fase, calculado del historial completo (EventLog + overrides
   // manuales), ponderado entre métodos de envío. Antes la card usaba el
   // time_in_phase local (casi siempre 0) — "no estaba conectada a nada".
+  //
+  // Sprint 2026-11-08 · La card mostraba SÓLO el promedio ponderado de
+  // Aéreo + Marítimo (bucket `named`) y descartaba `_ALL`, que además
+  // incluye los expedientes sin método de envío. Ahora el número grande es
+  // el TOTAL de todos los modos (`_ALL` cuando existe) y debajo se muestra
+  // el desglose Aéreo / Marítimo, para que no se pierda ninguno.
   const [opStats, setOpStats] = useState(null);
   useEffect(() => {
     let alive = true;
@@ -400,7 +406,8 @@ export default function ScreenExpedientes() {
       .then((list) => {
         if (!alive) return;
         const all = (list || []).filter(Boolean);
-        const mergeKeys = (pred) => {
+        // mergeBuckets(pred) → { fase: {sum, n} } ponderado por n.
+        const mergeBuckets = (pred) => {
           const acc = {};
           all.forEach((buckets) => {
             Object.keys(buckets).filter(pred).forEach((k) => {
@@ -415,14 +422,29 @@ export default function ScreenExpedientes() {
           });
           return acc;
         };
-        // Buckets con nombre (Aereo/Maritimo…) primero; los "_*" (p.ej.
-        // _ALL, expedientes sin método) solo rellenan fases faltantes.
-        const named = mergeKeys((k) => !k.startsWith('_'));
-        const under = mergeKeys((k) => k.startsWith('_'));
+        const toAvg = (a) => (a && a.n > 0 ? { avg: a.sum / a.n, n: a.n } : null);
+        const named    = mergeBuckets((k) => !k.startsWith('_'));
+        const overall  = mergeBuckets((k) => k === '_ALL');
+        const aereo    = mergeBuckets((k) => k === 'Aereo');
+        const maritimo = mergeBuckets((k) => k === 'Maritimo');
+        const fases = new Set([
+          ...Object.keys(overall), ...Object.keys(named),
+          ...Object.keys(aereo), ...Object.keys(maritimo),
+        ]);
         const out = {};
-        const src = { ...under, ...named };
-        Object.entries(src).forEach(([fase, a]) => {
-          if (a.n > 0) out[fase] = { avg: a.sum / a.n, n: a.n };
+        fases.forEach((fase) => {
+          // Total: `_ALL` (todos los modos) o, si no vino, la ponderación
+          // de los buckets con nombre.
+          const total = toAvg(overall[fase]) || toAvg(named[fase]);
+          if (!total) return;
+          out[fase] = {
+            avg: total.avg,
+            n: total.n,
+            modes: {
+              Aereo: toAvg(aereo[fase]),
+              Maritimo: toAvg(maritimo[fase]),
+            },
+          };
         });
         setOpStats(out);
       })
@@ -1252,6 +1274,18 @@ export default function ScreenExpedientes() {
                       {lang==='es'?'hist.':'avg'} {Number(ps.baseline).toFixed(0)}d · {(ratio*100-100).toFixed(0)}%
                       {ps.n ? ` · ${ps.n} exp.` : ''}
                     </div>
+                    {/* Sprint 2026-11-08 · desglose por modo: el número
+                        grande es el total (todos los modos) y aquí se ve
+                        cuánto pesa Aéreo y cuánto Marítimo. Antes la card
+                        mezclaba ambos sin decirlo y descartaba los
+                        expedientes sin método de envío. */}
+                    {real?.modes && (real.modes.Aereo || real.modes.Maritimo) && (
+                      <div className="caption" style={{marginTop:2, color:'var(--text-tertiary)'}}>
+                        {real.modes.Aereo && <>✈ {real.modes.Aereo.avg.toFixed(0)}d</>}
+                        {real.modes.Aereo && real.modes.Maritimo && ' · '}
+                        {real.modes.Maritimo && <>🚢 {real.modes.Maritimo.avg.toFixed(0)}d</>}
+                      </div>
+                    )}
                   </div>
                 );
               })}
