@@ -150,7 +150,7 @@ function ComisionesChart({ datos, detalle, es }) {
               )}
               <text x={i * bw + bw / 2} y={H - 10} textAnchor="middle"
                     fill="var(--text-tertiary)" fontSize="10">
-                {d.mes.slice(2)}
+                {d.mes}
               </text>
             </g>
           );
@@ -175,7 +175,7 @@ function ComisionesChart({ datos, detalle, es }) {
                 <div key={idx} style={{ color: "var(--text-secondary)" }}>
                   {esPremio ? (es ? "Premio" : "Bonus") : (es ? "Comisión" : "Commission")}
                   {esPremio
-                    ? ` · ${activo.mes}`
+                    ? ` · ${f.fe || activo.mes}`
                     : ` · ${f.pf ? `PF ${f.pf}` : (f.fe || "-")}`}
                   {f.oc ? ` · OC ${f.oc}` : ""}
                   {" · "}{dinero(f.monto)}
