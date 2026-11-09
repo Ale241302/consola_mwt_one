@@ -175,7 +175,7 @@ function ComisionesChart({ datos, detalle, es }) {
                 <div key={idx} style={{ color: "var(--text-secondary)" }}>
                   {esPremio ? (es ? "Premio" : "Bonus") : (es ? "Comisión" : "Commission")}
                   {esPremio
-                    ? (f.fe ? ` · ${f.fe}` : "")
+                    ? ` · ${activo.mes}`
                     : ` · ${f.pf ? `PF ${f.pf}` : (f.fe || "-")}`}
                   {f.oc ? ` · OC ${f.oc}` : ""}
                   {" · "}{dinero(f.monto)}
