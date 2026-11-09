@@ -137,3 +137,7 @@ Tabla de Numeracion oficial de Marluvas_260721_091450.pdf
 # la red de seguridad contra un `git add -A`.
 .tmp_*
 
+# Traspaso del harness 2026-11-09: CONFIDENCIAL (datos comerciales reales,
+# scripts de correo, base del dashboard). Vive solo en disco, nunca en git.
+traspaso_harness_2026-11-09/
+

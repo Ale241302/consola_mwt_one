@@ -12,9 +12,11 @@ import pytest
 
 from mwt_mcp.schemas import validate_cambios
 from mwt_mcp.tool_rbac import (
+    _BLOCKED_TOOLS,
     _CLIENT_FORBIDDEN_TOOLS,
     allowed_tool_names,
     is_tool_denied,
+    tool_block_reason,
 )
 
 
@@ -97,3 +99,41 @@ class TestA2RbacCliente:
 
     def test_sin_restriccion_no_deniega(self):
         assert is_tool_denied("expediente_phase_durations_get", None) is False
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Guardarraíl · tools bloqueadas para todos, con motivo y alternativa
+# ─────────────────────────────────────────────────────────────────────
+class TestGuardarrail:
+    def test_envio_backfill_bloqueada_incluso_para_admin(self):
+        # admin con wildcard devuelve None (= sin restricción) y aun así se bloquea
+        assert allowed_tool_names(_user("admin", ["*"], ["*"])) is None
+        assert is_tool_denied("expediente_envio_backfill", None) is True
+
+    def test_envio_backfill_no_aparece_en_ningun_rol(self):
+        for user in (
+            _user("client_b2b", ["expedientes"], ["expedientes.view"]),
+            _user("operador", ["expedientes"], ["expedientes.view"]),
+            _user("ceo", ["expedientes"], ["expedientes.view"]),
+        ):
+            permitidas = allowed_tool_names(user) or set()
+            assert "expediente_envio_backfill" not in permitidas
+
+    def test_la_lista_de_bloqueo_no_esta_vacia(self):
+        assert "expediente_envio_backfill" in _BLOCKED_TOOLS
+
+    def test_motivo_y_alternativa_son_accionables(self):
+        bloqueo = tool_block_reason("expediente_envio_backfill")
+        assert bloqueo is not None
+        assert bloqueo["ajuste"] == "A3"
+        assert "2478B" in bloqueo["motivo"]
+        assert "artefacto_editar" in bloqueo["alternativa"]
+
+    def test_una_tool_normal_no_tiene_bloqueo(self):
+        assert tool_block_reason("expediente_editar") is None
+        assert is_tool_denied("expediente_editar", None) is False
+
+    def test_phase_durations_sigue_disponible_para_operador_porque_a1_cerro(self):
+        permitidas = allowed_tool_names(_user("operador", ["expedientes"], ["expedientes.view"]))
+        assert "expediente_phase_durations_get" in permitidas
+        assert is_tool_denied("expediente_phase_durations_get", permitidas) is False

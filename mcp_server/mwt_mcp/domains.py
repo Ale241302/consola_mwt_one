@@ -61,6 +61,7 @@ LOGISTICA = {
     "expediente_editar", "expediente_eliminar",
     "expediente_edit_full_get", "expediente_edit_full_patch",
     "expediente_resolve_oc_preview",
+    "expediente_preflight_creacion",
     # documentos
     "documento_subir", "documento_registrar_archivo", "documento_listar", "documento_eliminar",
     "documento_descargar", "documento_editar",

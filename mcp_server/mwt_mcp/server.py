@@ -20,6 +20,7 @@ import httpx
 
 from . import client as api
 from . import builder_client
+from . import preflight as _preflight
 from .client import MwtApiError
 from .config import settings
 from .builder_client import _safe as builder_safe
@@ -1852,6 +1853,175 @@ def expediente_resolve_oc_preview(client_id: str, lines: list) -> Any:
     que en modo readonly queda bloqueada (guard estructural @write_tool)."""
     return _safe_role(
         lambda: api.post("expedientes/resolve-oc-preview/", {"client_id": client_id, "lines": lines})
+    )
+
+
+@mcp.tool()
+def expediente_preflight_creacion(
+    client_id: str,
+    lines: list,
+    proforma: str | None = None,
+    po_number: str | None = None,
+    total_proforma: float | None = None,
+) -> Any:
+    """**Corré esto ANTES de `expediente_crear`.** No crea nada; devuelve una
+    lista de bloqueos con solución.
+
+    Valida, en este orden:
+      1. **Cliente** — que exista en mwt.one (D4: sin cliente no se puede cargar).
+      2. **`po_number`** — que quepa en 28 caracteres (C6: con más, HTTP 500).
+      3. **Duplicado** — que la proforma no exista ya (`expediente_buscar`).
+      4. **Líneas** — matching y precio reales vía `resolve-oc-preview`.
+      5. **Total** — que la suma de líneas cuadre con `total_proforma` (A4: el
+         caso 2304, 24.860 contra 14.044,80).
+
+    Devuelve `{ok, puede_crear, bloqueos, avisos, totales, lineas, referencias}`.
+    `ok=true` significa que `expediente_crear` puede ejecutarse con los mismos
+    datos. Si `ok=false`, no insistas: corregí y repetí el preflight.
+    """
+    bloqueos: list[dict] = []
+    avisos: list[dict] = []
+    referencias: dict = {
+        "client_id": client_id,
+        "proforma": proforma,
+        "po_number": po_number,
+    }
+
+    # 1 · cliente existe (D4)
+    try:
+        cliente = api.get(f"clientes/{client_id}/")
+        if not isinstance(cliente, dict) or cliente.get("error"):
+            bloqueos.append({
+                "codigo": "D4",
+                "campo": "client_id",
+                "detalle": f"El cliente {client_id} no existe o no es visible con tu rol.",
+                "accion": "Creá el cliente primero (o pedí que lo creen) y repetí el preflight.",
+            })
+        else:
+            referencias["cliente"] = (
+                cliente.get("razon_social") or cliente.get("nombre_comercial") or cliente_id
+            )
+    except Exception as exc:  # noqa: BLE001
+        bloqueos.append({
+            "codigo": "D4",
+            "campo": "client_id",
+            "detalle": f"No se pudo leer el cliente {client_id}: {exc}",
+            "accion": "Verificá el UUID del cliente; si el error es de permisos, pedí alcance.",
+        })
+
+    # 2 · po_number cabe en el código (C6)
+    bloqueos.extend(_preflight.validar_po_number(po_number))
+
+    # 3 · proforma no duplicada
+    if proforma:
+        try:
+            dup = expediente_buscar(proforma=proforma, client_id=client_id)
+            if isinstance(dup, dict) and dup.get("existe"):
+                bloqueos.append({
+                    "codigo": "DUPLICADO",
+                    "campo": "proforma",
+                    "detalle": f"La proforma {proforma} ya tiene expediente.",
+                    "accion": "No crees otro: usá expediente_editar sobre el existente.",
+                    "matches": dup.get("matches"),
+                })
+        except Exception as exc:  # noqa: BLE001
+            avisos.append({
+                "codigo": "BUSQUEDA",
+                "detalle": f"No se pudo verificar duplicados de {proforma}: {exc}",
+            })
+    else:
+        avisos.append({
+            "codigo": "SIN_PROFORMA",
+            "detalle": "Sin `proforma` no se puede descartar un duplicado. Pasala siempre que la tengas.",
+        })
+
+    # 4 · matching y precio de las líneas
+    preview: dict = {}
+    try:
+        preview = api.post(
+            "expedientes/resolve-oc-preview/",
+            {"client_id": client_id, "lines": lines},
+        ) or {}
+    except Exception as exc:  # noqa: BLE001
+        bloqueos.append({
+            "codigo": "PREVIEW",
+            "campo": "lines",
+            "detalle": f"No se pudieron resolver las líneas: {exc}",
+            "accion": "Revisá el formato de `lines` ({sku, size, qty}) y reintentá.",
+        })
+
+    lineas = _preflight.auditar_lineas(preview.get("lines") or [])
+    resuelto = _preflight.total_de_lineas(preview.get("lines") or [])
+    totales = _preflight.comparar_total(total_proforma, resuelto)
+    totales["lineas"] = resuelto
+    if preview.get("tc") is not None:
+        totales["tc_usd_brl"] = preview.get("tc")
+    if preview.get("banda_id") is not None:
+        totales["banda_id"] = preview.get("banda_id")
+
+    if lineas["total"] == 0:
+        bloqueos.append({
+            "codigo": "SIN_LINEAS",
+            "campo": "lines",
+            "detalle": "No llegó ninguna línea al resolver.",
+            "accion": "Pasá `lines` con al menos una línea {sku, size, qty}.",
+        })
+    if lineas["sin_match"]:
+        bloqueos.append({
+            "codigo": "MATCH",
+            "campo": "lines",
+            "detalle": (
+                f"{lineas['sin_match']} de {lineas['total']} líneas no matchean con "
+                "un producto del catálogo."
+            ),
+            "accion": "Corregí SKU/talla o el alias (client_part_number) del cliente.",
+        })
+    if lineas["sin_precio"]:
+        bloqueos.append({
+            "codigo": "SIN_PRECIO",
+            "campo": "lines",
+            "detalle": (
+                f"{lineas['sin_precio']} de {lineas['total']} líneas quedan en $0: "
+                "el SKU no tiene precio en el motor para este cliente."
+            ),
+            "accion": (
+                "Cargá el precio en el motor (Consola → Marcas → <marca> → "
+                "<cliente> → Precios) o pasá permitir_sin_precio=True si de "
+                "verdad va en $0."
+            ),
+        })
+
+    # 5 · el total cuadra con la proforma (A4)
+    if totales["comparable"] and totales["cuadra"] is False:
+        bloqueos.append({
+            "codigo": "TOTAL",
+            "campo": "total_proforma",
+            "detalle": (
+                f"La proforma declara {totales['declarado']} y el motor resuelve "
+                f"{totales['resuelto']} (diferencia {totales['diferencia']}). "
+                "Crear así infla o deja corto el monto del cliente (caso 2304)."
+            ),
+            "accion": (
+                "Revisá precio, talla y cantidad por línea. Si el precio del "
+                "cliente es distinto al motor, usá price_override=True con "
+                "unit_price_client explícito."
+            ),
+        })
+    elif not totales["comparable"]:
+        avisos.append({
+            "codigo": "SIN_TOTAL",
+            "detalle": (
+                "No se comparó el total: pasá `total_proforma` para validar "
+                "contra la proforma."
+            ),
+        })
+
+    return _preflight.construir_resultado(
+        bloqueos=bloqueos,
+        avisos=avisos,
+        totales=totales,
+        lineas=lineas,
+        referencias=referencias,
     )
 
 

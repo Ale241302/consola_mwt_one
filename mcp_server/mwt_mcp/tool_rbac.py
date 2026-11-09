@@ -70,6 +70,32 @@ _CLIENT_FORBIDDEN_TOOLS = frozenset({
     "expediente_envio_backfill",
 })
 
+# Herramientas bloqueadas para TODOS los roles, con motivo y alternativa.
+#
+# Antes esto vivía solo en prosa (documento de 78 KB que los agentes leen
+# parcialmente, ajuste D7). Una lista de bloqueo devuelve la razón al agente en
+# la misma respuesta, así no reintenta ni busca otra vía.
+# `expediente_phase_durations_get` NO va aquí: A1 (lectura pura) está cerrado y
+# sigue siendo la vía legítima del operador para revisar fechas.
+_BLOCKED_TOOLS: dict[str, dict[str, str]] = {
+    "expediente_envio_backfill": {
+        "ajuste": "A3",
+        "motivo": (
+            "Escribe las fechas de la guía/BL en OTRO expediente del mismo nodo: "
+            "2410 alteró 2478B y 2479, y 2437 alteró 2466."
+        ),
+        "alternativa": (
+            "Usá `artefacto_editar` sobre el expediente_id correcto, o "
+            "`expediente_phase_durations_set` para las fechas por etapa."
+        ),
+    },
+}
+
+
+def tool_block_reason(name: str) -> dict[str, str] | None:
+    """Motivo y alternativa si la tool está bloqueada para todos; si no, None."""
+    return _BLOCKED_TOOLS.get(name)
+
 TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Introspección / salud / utilidades (siempre visibles) ──────────────
     "mwt_whoami": _ALWAYS,
@@ -120,6 +146,7 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "expediente_documentos_completos": ("expedientes", "view"),
     "expediente_buscar_por_producto": ("expedientes", "view"),
     "expediente_resolve_oc_preview": ("expedientes", "create"),
+    "expediente_preflight_creacion": ("expedientes", "view"),
     "expediente_crear": ("expedientes", "create"),
     "expedientes_crear_lote": ("expedientes", "create"),
     "lineas_actualizar_precios": ("expedientes", "update"),
@@ -375,18 +402,24 @@ def allowed_tool_names(user: dict) -> set[str] | None:
     if client_role:
         allowed -= _CLIENT_FORBIDDEN_TOOLS
 
+    # Guardarraíl: nada de la lista de bloqueo aparece, sea cual sea el rol.
+    allowed -= set(_BLOCKED_TOOLS)
+
     return allowed
 
 
 def is_tool_denied(name: str, allowed: set[str] | None) -> bool:
     """True si la llamada a `name` debe rechazarse para este set de tools.
 
+    - Lista de bloqueo (`_BLOCKED_TOOLS`) → denegada para todos, siempre.
     - `allowed is None` → sin restricción (sin identidad o wildcard interno).
     - Escrituras fuera del set → denegadas (contrato original de `call_tool`).
     - A2 · tools de fases/backfill fuera del set → denegadas aunque sean lectura.
 
     El resto de lecturas se deja pasar: el backend las limita por rol y empresa.
     """
+    if name in _BLOCKED_TOOLS:
+        return True
     if allowed is None or name in allowed:
         return False
     requirement = TOOL_MODULES.get(name)
@@ -492,13 +525,15 @@ class RbacFastMCP(FastMCP):
             ) from exc
 
         if user is None:
-            return tools
+            # Sin identidad también se respeta la lista de bloqueo: el guardarraíl
+            # no depende del rol.
+            return [t for t in tools if t.name not in _BLOCKED_TOOLS]
 
         allowed = allowed_tool_names(user)
         if allowed is None:
-            return tools
+            return [t for t in tools if t.name not in _BLOCKED_TOOLS]
 
-        filtered = [t for t in tools if t.name in allowed]
+        filtered = [t for t in tools if t.name in allowed and t.name not in _BLOCKED_TOOLS]
         log.info(
             "list_tools RBAC: %d/%d tools para %s (rol=%s)",
             len(filtered), len(tools),
@@ -540,6 +575,13 @@ class RbacFastMCP(FastMCP):
                 "IDENTITY_UNAVAILABLE: no se pudo resolver tu identidad para esta llamada."
             ) from exc
         if is_tool_denied(name, allowed):
+            bloqueo = tool_block_reason(name)
+            if bloqueo:
+                log.warning("call_tool RBAC: %s bloqueada (%s)", name, bloqueo.get("ajuste"))
+                raise PermissionError(
+                    f"TOOL_BLOQUEADA ({bloqueo.get('ajuste')}): {bloqueo.get('motivo')} "
+                    f"Alternativa: {bloqueo.get('alternativa')}"
+                )
             log.warning("call_tool RBAC: %s denegada por rol", name)
             raise PermissionError(
                 f"TOOL_NOT_ALLOWED: tu rol no permite la herramienta '{name}'."
