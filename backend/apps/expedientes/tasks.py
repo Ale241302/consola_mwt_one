@@ -23,6 +23,7 @@ Registro en CELERY_BEAT_SCHEDULE:
 from __future__ import annotations
 
 import logging
+import hashlib
 import uuid
 from datetime import date, datetime, timezone as _tz
 from typing import List, Optional, Tuple
@@ -235,8 +236,14 @@ def _alertar_tope_sin_pago(bloqueados: List[dict], hoy: date) -> dict:
     if not bloqueados:
         return {"ok": True, "enviados": 0}
 
-    token = f"tope_sin_pago:{hoy.isoformat()}"  # 26 chars (< 64 de la columna)
-    if NotificationLog.objects.filter(idempotence_token=token).exists():
+    # `notifications.notification_log` tiene un índice único por
+    # `idempotence_token` (uq_nlog_idempotence_active), así que el token va por
+    # destinatario y no global. La decisión de "ya se avisó hoy" se toma por
+    # trigger + fecha.
+    prefijo_token = f"tope_sin_pago:{hoy.isoformat()}"
+    if NotificationLog.objects.filter(
+        trigger=TRIGGER_AUTO_CLOSE_BLOCKED, ts__date=hoy
+    ).exclude(status="Skipped").exists():
         log.info("Alerta de tope sin pago ya enviada hoy (%s)", hoy)
         return {"ok": True, "enviados": 0, "omitida": "ya_enviada"}
 
@@ -253,7 +260,7 @@ def _alertar_tope_sin_pago(bloqueados: List[dict], hoy: date) -> dict:
             subject=asunto,
             body_preview=cuerpo[:200],
             status="Skipped",
-            token=token,
+            token=prefijo_token,
             error="no_recipients",
             template_key=TRIGGER_AUTO_CLOSE_BLOCKED,
             trigger=TRIGGER_AUTO_CLOSE_BLOCKED,
@@ -262,6 +269,7 @@ def _alertar_tope_sin_pago(bloqueados: List[dict], hoy: date) -> dict:
 
     enviados = 0
     for user_id, email in destinatarios:
+        token = f"{prefijo_token}:{hashlib.sha1(email.lower().encode()).hexdigest()[:8]}"
         # Campana (visible en la consola sin abrir el correo).
         try:
             ActivityFeed.objects.create(
