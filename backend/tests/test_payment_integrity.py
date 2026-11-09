@@ -88,3 +88,52 @@ class TestC2CodigoRepetido:
 
         assert resultado.payment.codigo != codigo_ocupado
         assert resultado.payment.codigo.startswith("PAY-")
+
+
+@pytest.mark.django_db(transaction=True)
+class TestC2ReferenciaDuplicada:
+    """El único 409 legítimo: dos pagos CONFIRMADOS con la misma referencia."""
+
+    def test_referencia_confirmada_choca_con_payment_uniq_ref_idx(self):
+        from django.db import IntegrityError, connection
+
+        expediente_id = uuid.uuid4()
+        referencia = "REF-DUP-TEST"
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO finance.payment (
+                    id, codigo, expediente_id, monto, moneda, tasa_cambio_a_usd,
+                    fecha, metodo, tipo_pago, referencia, estado, event_id,
+                    is_active, created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, 10, 'USD', 1, CURRENT_DATE,
+                    'TRANSFERENCIA_BANCARIA', 'PARCIAL', %s, 'CONFIRMADO_AI', %s,
+                    TRUE, now(), now()
+                )
+                """,
+                [str(uuid.uuid4()), services._next_codigo(), str(expediente_id),
+                 referencia, str(uuid.uuid4())],
+            )
+
+        with pytest.raises(IntegrityError) as info:
+            PaymentService._insert_payment_with_retry(
+                payment_id=uuid.uuid4(),
+                codigo=services._next_codigo(),
+                expediente_id=expediente_id,
+                client_id=None,
+                validated={
+                    "monto": Decimal("10.00"),
+                    "moneda": "USD",
+                    "fecha": dt.date.today(),
+                    "metodo": "TRANSFERENCIA_BANCARIA",
+                    "tipo_pago": "PARCIAL",
+                    "referencia": referencia,
+                },
+                default_estado="CONFIRMADO_AI",
+                actor_id=None,
+                event_id=uuid.uuid4(),
+                now_utc=dt.datetime.now(dt.timezone.utc),
+            )
+
+        assert constraint_name(info.value) == "payment_uniq_ref_idx"

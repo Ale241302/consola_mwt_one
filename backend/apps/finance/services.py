@@ -27,7 +27,7 @@ from datetime import datetime, timezone as _tz
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
 
 from apps.storage.services import put_object_stream
 
