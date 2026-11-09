@@ -1010,6 +1010,39 @@ def radiografia_ceo(request):
     for t in tareas_rev:
         t["due_date"] = t["due_date"].isoformat() if t.get("due_date") else None
 
+    # Tareas pendientes: no son "bloqueos" (no esperan una decisión), pero son
+    # trabajo abierto y hoy el panel no las mostraba. Hay 91, la más vieja
+    # vencida desde abril de 2026.
+    tareas_pend = _query("""
+        SELECT t.id::text AS tarea_id, t.titulo, t.estado, t.due_date,
+               t.expediente_id::text AS expediente_id, e.codigo AS exp_codigo,
+               cl.razon_social AS cliente
+          FROM tareas.tarea t
+          LEFT JOIN expedientes.expediente e ON e.id = t.expediente_id
+          LEFT JOIN clientes.cliente cl ON cl.id = e.client_id
+         WHERE t.is_active = TRUE AND t.estado = 'PENDIENTE'
+         ORDER BY t.due_date ASC NULLS LAST
+         LIMIT 50
+    """)
+    for t in tareas_pend:
+        t["due_date"] = t["due_date"].isoformat() if t.get("due_date") else None
+
+    # Actividad reciente: qué se movió y por qué vía. `action_source` distingue
+    # creación (C1), transición de fase (C11), sistema, etc.
+    actividad = _query(f"""
+        SELECT ev.id::text AS event_id, ev.event_type, ev.action_source,
+               ev.new_status, ev.created_at,
+               e.codigo AS exp_codigo, {_PROFORMA_SUBSELECT} AS proforma_codigo
+          FROM pipeline.event_log ev
+          LEFT JOIN expedientes.expediente e ON e.id = ev.aggregate_id
+         WHERE ev.is_active = TRUE
+         ORDER BY ev.created_at DESC
+         LIMIT 15
+    """)
+    for a in actividad:
+        a["created_at"] = a["created_at"].isoformat() if a.get("created_at") else None
+        a["exp_codigo"] = _resolve_display_id(a.get("exp_codigo"), a.get("proforma_codigo"))
+
     return Response({
         "today": today.isoformat(),
         "window_days": window_days,
@@ -1017,6 +1050,8 @@ def radiografia_ceo(request):
         "borradores_por_revisar": borradores,
         "proximas_salidas": salidas,
         "sin_fecha": sin_fecha,
+        "tareas_pendientes": tareas_pend,
+        "actividad_reciente": actividad,
         "bloqueos": {
             "cambios_fecha": cambios,
             "tareas_revision": tareas_rev,
@@ -1076,10 +1111,25 @@ def comisiones_por_marca(request):
             m[k] = str(m[k].quantize(Decimal("0.01")))
         results.append(m)
     results.sort(key=lambda x: _dec(x["comision_total"]), reverse=True)
+
+    # Premios (bonos) de Marluvas: viven en finance.comision_historica con
+    # tipo='PREMIO'. No vienen del expediente, así que se suman aparte.
+    prem = _query("""
+        SELECT COALESCE(sum(comision_usd), 0) AS total, count(*) AS n
+          FROM finance.comision_historica
+         WHERE is_active = TRUE AND tipo = 'PREMIO'
+    """)
+    premios_total = _dec(prem[0]["total"]) if prem else Decimal("0")
+    premios_n = int(prem[0]["n"]) if prem else 0
+
     return Response({
         "results": results,
         "today": today.isoformat(),
         "ventana_comision": "días 10–20 del mes siguiente al pago del cliente",
+        "premios": {
+            "total": str(premios_total.quantize(Decimal("0.01"))),
+            "n": premios_n,
+        },
     })
 
 

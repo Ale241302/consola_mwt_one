@@ -120,6 +120,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const [clientes, setClientes] = useState({});
   const [rad, setRad] = useState(null);
   const [com, setCom] = useState([]);
+  const [premios, setPremios] = useState(null);
   const [flujo, setFlujo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -140,6 +141,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     setClientes(map);
     setRad(r || null);
     setCom(comi?.results || (Array.isArray(comi) ? comi : []));
+    setPremios(comi?.premios || null);
     setFlujo(f || null);
     if (!e) setErr(es ? "No se pudieron cargar los expedientes del panel." : "Dashboard data failed to load.");
     setLoading(false);
@@ -165,7 +167,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   // ── Saldo real por pedido ───────────────────────────────────────────
   // `/api/cobros/` está vacío en producción: el saldo sale del expediente
   // (`balance` = facturado - pagado, calculado por el backend).
-  const { conSaldo, saldoReventa, saldoComision, nReventa, saldoPorCliente } = useMemo(() => {
+  const { conSaldo, saldoReventa, saldoComision, nReventa, saldosPorCliente } = useMemo(() => {
     const items = (exps || [])
       .filter((e) => Number(e.balance) > 0)
       .map((e) => ({
@@ -177,18 +179,21 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     const reventa = items.filter((e) => e._reventa);
     const comision = items.filter((e) => !e._reventa);
     const porCliente = {};
-    reventa.forEach((e) => {
+    items.forEach((e) => {
       const cid = e.client_id || "-";
-      porCliente[cid] = (porCliente[cid] || 0) + e._saldo;
+      const d = porCliente[cid] || { cid, reventa: 0, comision: 0 };
+      if (e._reventa) d.reventa += e._saldo;
+      else d.comision += e._saldo;
+      porCliente[cid] = d;
     });
     return {
       conSaldo: items,
       saldoReventa: reventa.reduce((s, e) => s + e._saldo, 0),
       saldoComision: comision.reduce((s, e) => s + e._saldo, 0),
       nReventa: reventa.length,
-      saldoPorCliente: Object.entries(porCliente)
-        .map(([cid, monto]) => ({ cid, monto }))
-        .sort((a, b) => b.monto - a.monto),
+      saldosPorCliente: Object.values(porCliente)
+        .map((d) => ({ ...d, total: d.reventa + d.comision }))
+        .sort((a, b) => b.total - a.total),
     };
   }, [exps]);
 
@@ -197,6 +202,28 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const sinFecha = rad?.sin_fecha || [];
   const cambios = rad?.bloqueos?.cambios_fecha || [];
   const tareasRev = rad?.bloqueos?.tareas_revision || [];
+  const tareasPend = rad?.tareas_pendientes || [];
+  const respuestas = rad?.respuestas_pendientes || [];
+  const actividad = rad?.actividad_reciente || [];
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const tareasVencidas = tareasPend.filter((t) => t.due_date && t.due_date < hoyISO).length;
+  const porRevisar = cambios.length + tareasRev.length + tareasPend.length + respuestas.length;
+
+  // Flujo por mes para que el gráfico se pueda leer con números.
+  const mesesFlujo = useMemo(() => {
+    const acc = {};
+    (flujo?.semanas || []).forEach((s) => {
+      const mes = String(s.semana || "").slice(0, 7);
+      if (!mes) return;
+      const d = acc[mes] || { mes, entradas: 0, salidas: 0 };
+      d.entradas += Number(s.entradas_usd) || 0;
+      d.salidas += Number(s.salidas_usd) || 0;
+      acc[mes] = d;
+    });
+    return Object.values(acc)
+      .map((d) => ({ ...d, neto: d.entradas - d.salidas }))
+      .sort((a, b) => a.mes.localeCompare(b.mes));
+  }, [flujo]);
   const comTotal = com.reduce((s, m) => s + Number(m.comision_total || 0), 0);
   const comProy = com.reduce((s, m) => s + Number(m.comision_proyectada || 0), 0);
   const comFilas = com.filter((m) => {
@@ -247,11 +274,11 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           />
           <Tile
             label={es ? "Por revisar" : "To review"}
-            value={cambios.length + tareasRev.length}
-            cmp={es ? "cambios de fecha y tareas" : "date changes and tasks"}
+            value={porRevisar}
+            cmp={`${tareasPend.length} ${es ? "tareas" : "tasks"} · ${tareasVencidas} ${es ? "vencidas" : "overdue"} · ${respuestas.length} ${es ? "correos" : "emails"}`}
             src={es
-              ? "Radiografía CEO: bloqueos por cambio de fecha más tareas en REQUIERE_REVISION."
-              : "CEO radiography: pending date changes plus tasks awaiting review."}
+              ? "Tareas pendientes (91 en total), tareas que esperan revisión, cambios de fecha en conflicto y correos sin responder. Las tareas vencidas se cuentan contra hoy."
+              : "Pending tasks, review tasks, conflicting date changes and unanswered emails."}
           />
           <Tile
             label={es ? "Salidas y sin fecha" : "Shipments and undated"}
@@ -282,6 +309,28 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                 </span>
               </div>
               <Bars semanas={flujo?.semanas || []} />
+              {mesesFlujo.length > 0 && (
+                <table className="dash-table" style={{ marginTop: 10 }}>
+                  <thead>
+                    <tr>
+                      <th>{es ? "Mes" : "Month"}</th>
+                      <th className="n">{es ? "Entradas" : "In"}</th>
+                      <th className="n">{es ? "Salidas" : "Out"}</th>
+                      <th className="n">{es ? "Neto" : "Net"}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mesesFlujo.map((m) => (
+                      <tr key={m.mes}>
+                        <td>{m.mes}</td>
+                        <td className="n">{dinero(m.entradas)}</td>
+                        <td className="n">{dinero(m.salidas)}</td>
+                        <td className="n" style={{ fontWeight: 700 }}>{dinero(m.neto)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </Section>
 
             <Section
@@ -412,26 +461,44 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
 
             <Section
-              title={es ? "Clientes con saldo" : "Clients with balance"}
-              sub={es ? "Solo reventa: es lo que el cliente le debe a MWT." : "Resale only: what the client owes MWT."}
+              title={es ? "Saldos por cliente" : "Balances by client"}
+              sub={es
+                ? "Deuda actual en USD. A MWT: reventa (el cliente le paga a MWT). A Marluvas: comisión (la factura la cobra Marluvas)."
+                : "Current debt in USD. To MWT: resale. To Marluvas: commission."}
             >
-              {saldoPorCliente.length === 0 ? <div className="dash-sub">-</div> : (
+              {saldosPorCliente.length === 0 ? <div className="dash-sub">-</div> : (
                 <table className="dash-table">
+                  <thead>
+                    <tr>
+                      <th>{es ? "Cliente" : "Client"}</th>
+                      <th className="n">{es ? "A MWT" : "To MWT"}</th>
+                      <th className="n">{es ? "A Marluvas" : "To Marluvas"}</th>
+                      <th className="n">{es ? "Total" : "Total"}</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {saldoPorCliente.slice(0, 6).map((c) => (
+                    {saldosPorCliente.slice(0, 8).map((c) => (
                       <tr key={c.cid}>
                         <td>{clientes[c.cid] || "-"}</td>
-                        <td className="n" style={{ fontWeight: 700 }}>{dinero(c.monto)}</td>
+                        <td className="n">{c.reventa ? dinero(c.reventa) : "-"}</td>
+                        <td className="n" style={{ color: "var(--text-tertiary)" }}>{c.comision ? dinero(c.comision) : "-"}</td>
+                        <td className="n" style={{ fontWeight: 700 }}>{dinero(c.total)}</td>
                       </tr>
                     ))}
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{es ? "Total" : "Total"}</td>
+                      <td className="n" style={{ fontWeight: 700 }}>{dinero(saldoReventa)}</td>
+                      <td className="n" style={{ fontWeight: 700 }}>{dinero(saldoComision)}</td>
+                      <td className="n" style={{ fontWeight: 800 }}>{dinero(saldoReventa + saldoComision)}</td>
+                    </tr>
                   </tbody>
                 </table>
               )}
             </Section>
 
             <Section
-              title={es ? "Comisiones por marca" : "Commissions by brand"}
-              sub={es ? "Proyectada y facturada." : "Projected and invoiced."}
+              title={es ? "Comisiones y premios" : "Commissions and bonuses"}
+              sub={es ? "Comisión por marca y premios pagados por Marluvas. Todo en USD." : "Commission by brand and bonuses paid by Marluvas. All in USD."}
               right={onGoFinanzas ? (
                 <button type="button" className="btn btn-ghost btn-sm" onClick={onGoFinanzas}>
                   {es ? "Finanzas" : "Finance"}
@@ -443,22 +510,38 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                   <thead>
                     <tr>
                       <th>{es ? "Marca" : "Brand"}</th>
+                      <th className="n">{es ? "Devengada" : "Earned"}</th>
+                      <th className="n">{es ? "Pendiente" : "Pending"}</th>
                       <th className="n">{es ? "Proyectada" : "Projected"}</th>
-                      <th className="n">{es ? "Facturada" : "Invoiced"}</th>
+                      <th className="n">{es ? "Total" : "Total"}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {comFilas.map((m) => (
                       <tr key={m.brand_name}>
                         <td style={{ fontWeight: 600 }}>{m.brand_name}</td>
+                        <td className="n">{dinero(m.comision_devengada)}</td>
+                        <td className="n">{dinero(m.comision_pendiente)}</td>
                         <td className="n">{dinero(m.comision_proyectada)}</td>
                         <td className="n" style={{ fontWeight: 700 }}>{dinero(m.comision_total)}</td>
                       </tr>
                     ))}
                     <tr>
-                      <td style={{ fontWeight: 700 }}>{es ? "Total" : "Total"}</td>
-                      <td className="n">{dinero(comProy)}</td>
+                      <td style={{ fontWeight: 700 }}>{es ? "Comisión" : "Commission"}</td>
+                      <td className="n" colSpan={3} />
                       <td className="n" style={{ fontWeight: 800 }}>{dinero(comTotal)}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>{es ? "Premios" : "Bonuses"} {premios?.n ? `(${premios.n})` : ""}</td>
+                      <td className="n" colSpan={3} style={{ color: "var(--text-tertiary)" }}>
+                        {es ? "pagados por Marluvas" : "paid by Marluvas"}
+                      </td>
+                      <td className="n" style={{ fontWeight: 700 }}>{dinero(premios?.total || 0)}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{es ? "Total" : "Total"}</td>
+                      <td className="n" colSpan={3} />
+                      <td className="n" style={{ fontWeight: 800 }}>{dinero(comTotal + Number(premios?.total || 0))}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -466,25 +549,56 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
             </Section>
 
             <Section
-              title={es ? "Bloqueos por revisar" : "Blockers"}
-              sub={es ? "Cambios de fecha y tareas que esperan una decisión." : "Date changes and tasks waiting on a decision."}
-              right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{cambios.length + tareasRev.length}</span>}
+              title={es ? "Por revisar" : "To review"}
+              sub={es ? "Tareas pendientes por vencimiento, cambios de fecha y correos sin responder." : "Pending tasks by due date, date changes and unanswered emails."}
+              right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{porRevisar}</span>}
             >
-              {(cambios.length + tareasRev.length) === 0 ? (
-                <div className="dash-sub" style={{ padding: "10px 2px" }}>{es ? "Sin bloqueos." : "No blockers."}</div>
+              {porRevisar === 0 ? (
+                <div className="dash-sub" style={{ padding: "10px 2px" }}>{es ? "Nada pendiente." : "Nothing pending."}</div>
               ) : (
                 <table className="dash-table">
                   <tbody>
-                    {cambios.slice(0, 5).map((x) => (
-                      <tr key={x.extraccion_id} className="clic" onClick={() => open(x.expediente_id)}>
-                        <td style={{ fontWeight: 600 }}>{x.display_id}</td>
-                        <td style={{ color: "var(--warning-fg, #92400E)" }}>{es ? "Cambio de " : ""}{x.campo}</td>
-                      </tr>
-                    ))}
-                    {tareasRev.slice(0, 5).map((x) => (
-                      <tr key={x.tarea_id} className="clic" onClick={() => open(x.expediente_id)}>
-                        <td style={{ fontWeight: 600 }}>{x.exp_codigo || "-"}</td>
-                        <td style={{ color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.titulo}</td>
+                    {tareasPend.slice(0, 5).map((t) => {
+                      const vencida = t.due_date && t.due_date < hoyISO;
+                      return (
+                        <tr key={t.tarea_id} className="clic" onClick={() => open(t.expediente_id)}>
+                          <td style={{ fontWeight: 600 }}>{t.exp_codigo || "-"}</td>
+                          <td style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.titulo}</td>
+                          <td className="n" style={{ color: vencida ? "var(--critical)" : "var(--text-tertiary)", fontWeight: vencida ? 700 : 400 }}>
+                            {t.due_date ? fmtDate(t.due_date, lang) : "-"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+              <div className="dash-sub" style={{ marginTop: 8 }}>
+                {tareasVencidas} {es ? "tareas vencidas" : "overdue tasks"} · {cambios.length + tareasRev.length} {es ? "bloqueos" : "blockers"} · {respuestas.length} {es ? "correos sin responder" : "unanswered emails"}
+              </div>
+            </Section>
+
+            <Section
+              title={es ? "Actividad reciente" : "Recent activity"}
+              sub={es ? "Qué se movió en mwt.one y por qué vía (C1 creación, C11 cambio de fase, sistema)." : "What moved in mwt.one and how (C1 create, C11 phase change, system)."}
+              right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{actividad.length}</span>}
+            >
+              {actividad.length === 0 ? (
+                <div className="dash-sub" style={{ padding: "10px 2px" }}>{es ? "Sin eventos registrados." : "No recorded events."}</div>
+              ) : (
+                <table className="dash-table">
+                  <tbody>
+                    {actividad.slice(0, 8).map((a) => (
+                      <tr key={a.event_id}>
+                        <td style={{ whiteSpace: "nowrap", color: "var(--text-tertiary)" }}>
+                          {a.created_at ? fmtDate(a.created_at.slice(0, 10), lang) : "-"}
+                        </td>
+                        <td style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>
+                          {a.exp_codigo || "-"}
+                        </td>
+                        <td style={{ color: "var(--text-tertiary)" }}>
+                          {a.action_source || "-"}{a.new_status ? ` · ${a.new_status}` : ""}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
