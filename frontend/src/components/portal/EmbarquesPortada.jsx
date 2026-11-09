@@ -109,7 +109,7 @@ export default function EmbarquesPortada({ lang = "es", clientId, limit = 0 }) {
     const vivos = (items || []).filter((it) => {
       const ped = Number(it.pedido || 0);
       const ent = Number(it.entregadas || 0);
-      if (ped > 0 && ent >= ped) return false;
+      if (ent > 0 && (ped === 0 || ent >= ped)) return false;
       const est = String(it.estado || "").toUpperCase();
       return !["CERRADO", "ENTREGADO"].includes(est);
     });

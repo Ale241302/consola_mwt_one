@@ -116,33 +116,14 @@ export default function ClientHome({ lang = "es" }) {
           )}
         </div>
 
-        {/* Saldo por pagar + pedidos por estado */}
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
-          <div className="card card-pad-lg">
-            <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 800, letterSpacing: ".04em", marginBottom: 10 }}>
-              {es ? "SALDO POR PAGAR" : "BALANCE DUE"}
-            </div>
-            {conSaldo.length === 0 ? (
-              <div style={{ color: "var(--text-tertiary)", fontSize: 13 }}>
-                {es ? "Sin saldo pendiente en tus pedidos." : "No open balance on your orders."}
-              </div>
-            ) : (
-              <>
-                <div className="tabular-nums" style={{ font: "800 26px/1.1 var(--font-display)" }}>
-                  {fmtMonto(saldo)}
-                </div>
-                <div className="micro" style={{ color: "var(--text-secondary)", marginTop: 4 }}>
-                  {conSaldo.length} {es ? "pedidos con saldo. Se calcula con lo facturado menos lo pagado de cada pedido." : "orders with balance, invoiced minus paid per order."}
-                </div>
-                <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>
-                  {es
-                    ? "mwt.one todavía no guarda la fecha de vencimiento de cada factura."
-                    : "mwt.one does not store a due date per invoice yet."}
-                </div>
-              </>
-            )}
-          </div>
+        <div className="micro" style={{ color: "var(--text-tertiary)" }}>
+          {es
+            ? "El saldo por pagar se calcula con lo facturado menos lo pagado de cada pedido. mwt.one todavía no guarda la fecha de vencimiento de cada factura."
+            : "Balance due is invoiced minus paid per order. mwt.one does not store a due date per invoice yet."}
+        </div>
 
+        {/* Pedidos por estado */}
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
           <div className="card card-pad-lg">
             <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 800, letterSpacing: ".04em", marginBottom: 10 }}>
               {es ? "MIS PEDIDOS POR ESTADO" : "MY ORDERS BY STATE"}
