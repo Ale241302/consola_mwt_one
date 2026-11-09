@@ -204,9 +204,9 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           <Kpi label={es ? "Por revisar" : "To review"} value={cambios.length + tareasRev.length}
                sub={es ? "cambios de fecha y tareas" : "date changes and tasks"}
                tone={cambios.length + tareasRev.length > 0 ? "var(--warning-fg, #92400E)" : "var(--success-fg, #166534)"} />
-          <Kpi label={es ? "Próximas salidas" : "Upcoming shipments"}
-               value={salidas.length}
-               sub={es ? "próximos 21 días" : "next 21 days"}
+          <Kpi label={es ? "Salidas y sin fecha" : "Shipments and no date"}
+               value={salidas.length + sinFecha.length}
+               sub={`${salidas.length} ${es ? "con fecha" : "dated"} · ${sinFecha.length} ${es ? "sin fecha" : "undated"}`}
                tone="var(--info, #3083FE)" />
         </div>
 
@@ -294,7 +294,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
             </Section>
 
             {/* Próximas salidas */}
-            <Section title={es ? "PRÓXIMAS SALIDAS DE PRODUCCIÓN" : "UPCOMING SHIPMENTS"}
+            <Section title={es ? "SALIDAS DE PRODUCCIÓN · INCLUYE SIN FECHA" : "PRODUCTION SHIPMENTS · INCLUDES UNDATED"}
                      right={onGoCorreo ? <button className="btn btn-ghost btn-sm" onClick={onGoCorreo}>
                        {es ? "Ver correo" : "Mail"}</button> : null}>
               {(salidas.length + sinFecha.length) === 0 ? (
@@ -325,23 +325,6 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           {/* ── Columna lateral ─────────────────────────────────── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
 
-            {/* Sin fecha de embarque: lo que frena la planificación */}
-            <Section title={es ? "SIN FECHA DE EMBARQUE" : "NO SHIP DATE"}
-                     right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{sinFecha.length}</span>}>
-              {sinFecha.length === 0 ? (
-                <Empty>{es ? "Todos los pedidos en curso tienen fecha." : "Every open file has a date."}</Empty>
-              ) : sinFecha.slice(0, 6).map((s) => (
-                <Row key={`${s.expediente_id}-${s.campo || s.exp_estado}`} grid="1.2fr 1fr" onClick={() => open(s.expediente_id)}>
-                  <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {s.display_id || "—"}
-                  </div>
-                  <div className="micro" style={{ color: "var(--text-tertiary)", textAlign: "right" }}>
-                    {s.exp_estado || "—"}
-                  </div>
-                </Row>
-              ))}
-            </Section>
-
             {/* Top clientes por saldo (desde el expediente) */}
             <Section title={es ? "CLIENTES CON SALDO" : "CLIENTS WITH BALANCE"}>
               {saldoPorCliente.length === 0 ? <Empty>—</Empty> : saldoPorCliente.slice(0, 6).map((c) => (
@@ -359,6 +342,11 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                      right={onGoFinanzas ? <button className="btn btn-ghost btn-sm" onClick={onGoFinanzas}>
                        {es ? "Ver Finanzas" : "Finance"}</button> : null}>
               {comFilas.length === 0 ? <Empty>—</Empty> : <>
+                <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr", gap: 10, padding: "0 4px 6px" }}>
+                  {[es ? "Marca" : "Brand", es ? "Proyectada" : "Projected", es ? "Facturada" : "Invoiced"].map((h, i) => (
+                    <div key={i} className="micro" style={{ color: "var(--text-tertiary)", fontWeight: 800, textAlign: i ? "right" : "left" }}>{h}</div>
+                  ))}
+                </div>
                 {comFilas.map((m) => (
                   <Row key={m.brand_name} grid="1.3fr 1fr 1fr">
                     <div style={{ fontWeight: 700 }}>{m.brand_name}</div>

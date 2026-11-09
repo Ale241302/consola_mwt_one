@@ -78,7 +78,7 @@ export default function ScreenCobros() {
       nReventa: reventa.length,
       comision: comision.reduce((s, e) => s + e._saldo, 0),
       nComision: comision.length,
-      facturado: conSaldo.reduce((s, e) => s + e._facturado, 0),
+      saldoTotal: conSaldo.reduce((s, e) => s + e._saldo, 0),
     };
   }, [conSaldo]);
 
@@ -162,10 +162,10 @@ export default function ScreenCobros() {
               </div>
             </div>
             <div className="card card-pad-lg">
-              <div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "FACTURADO SIN COBRAR" : "INVOICED, NOT COLLECTED"}</div>
-              <div className="tabular-nums" style={{ font: "800 24px/1.1 var(--font-display)", marginTop: 4 }}>{money(kpis.facturado)}</div>
+              <div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "SALDO TOTAL" : "TOTAL BALANCE"}</div>
+              <div className="tabular-nums" style={{ font: "800 24px/1.1 var(--font-display)", marginTop: 4 }}>{money(kpis.saldoTotal)}</div>
               <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
-                {es ? "suma de las dos columnas" : "sum of both columns"}
+                {es ? "reventa + comisión" : "resale + commission"}
               </div>
             </div>
           </div>

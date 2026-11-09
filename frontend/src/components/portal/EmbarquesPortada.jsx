@@ -5,7 +5,7 @@
 // hito con su precisión, y un detalle expandible con salidas (destino,
 // AWB/BL) y documentos vigentes. Sin datos internos (R3).
 // =====================================================================
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { portalApi, apiFetch, getToken } from "../../lib/api.js";
 import { fmtDate } from "../../lib/i18n.js";
@@ -56,7 +56,7 @@ function Funnel({ c, es }) {
   );
 }
 
-export default function EmbarquesPortada({ lang = "es", clientId }) {
+export default function EmbarquesPortada({ lang = "es", clientId, limit = 0 }) {
   const es = lang === "es";
   const navigate = useNavigate();
   const go = useCallback((it) => {
@@ -101,6 +101,26 @@ export default function EmbarquesPortada({ lang = "es", clientId }) {
   }, [clientId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // "Próximas" significa en curso, no histórico: se excluyen los ya entregados
+  // y se ordena por la fecha más próxima. Un ETA de 2023 no es una próxima
+  // llegada.
+  const activos = useMemo(() => {
+    const vivos = (items || []).filter((it) => {
+      const ped = Number(it.pedido || 0);
+      const ent = Number(it.entregadas || 0);
+      if (ped > 0 && ent >= ped) return false;
+      const est = String(it.estado || "").toUpperCase();
+      return !["CERRADO", "ENTREGADO"].includes(est);
+    });
+    const fecha = (it) => {
+      const raw = it.eta || it.proximo_hito?.fecha || "";
+      const t = raw ? new Date(raw).getTime() : NaN;
+      return isNaN(t) ? Infinity : t;
+    };
+    return vivos.sort((a, b) => fecha(a) - fecha(b));
+  }, [items]);
+  const visibles = limit > 0 ? activos.slice(0, limit) : activos;
 
   const toggle = useCallback(async (id) => {
     if (openId === id) { setOpenId(null); return; }
@@ -147,15 +167,16 @@ export default function EmbarquesPortada({ lang = "es", clientId }) {
           {es ? "PRÓXIMAS LLEGADAS Y SALIDAS" : "UPCOMING ARRIVALS & DEPARTURES"}
         </div>
         <span className="micro" style={{ color: "var(--text-tertiary)" }}>
-          {items.length} {es ? "embarques" : "shipments"}
+          {activos.length} {es ? "embarques" : "shipments"}
+          {limit > 0 && activos.length > limit ? ` · ${limit} ${es ? "más próximos" : "soonest"}` : ""}
         </span>
       </div>
 
-      {items.length === 0 ? (
+      {visibles.length === 0 ? (
         <div style={{ padding: "16px 4px", color: "var(--text-tertiary)", fontSize: 12 }}>
           {es ? "Sin embarques activos todavía." : "No active shipments yet."}
         </div>
-      ) : items.map((it) => {
+      ) : visibles.map((it) => {
         const hito = it.proximo_hito;
         const prec = hito ? (PREC[hito.precision] || PREC.EXACTA) : null;
         const est = hito ? null : estimar(it.estado);

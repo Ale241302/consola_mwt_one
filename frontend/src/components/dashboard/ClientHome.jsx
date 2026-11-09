@@ -6,7 +6,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { portalApi } from "../../lib/api.js";
-import { fmtDate } from "../../lib/i18n.js";
 import EmbarquesPortada from "../portal/EmbarquesPortada.jsx";
 
 const ESTADOS = [
@@ -34,7 +33,6 @@ export default function ClientHome({ lang = "es" }) {
   const navigate = useNavigate();
   const [me, setMe] = useState(null);
   const [exps, setExps] = useState([]);
-  const [cobros, setCobros] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -51,12 +49,8 @@ export default function ClientHome({ lang = "es" }) {
         return;
       }
       const cid = null;  // todas las empresas del usuario: scopea el backend por JWT
-      const [e, c] = await Promise.all([
-        portalApi.misExpedientes(cid).catch(() => []),
-        portalApi.misCobros(cid).catch(() => []),
-      ]);
+      const e = await portalApi.misExpedientes(cid).catch(() => []);
       setExps(Array.isArray(e) ? e : (e?.results || []));
-      setCobros(Array.isArray(c) ? c : (c?.results || []));
     } finally { setLoading(false); }
   }, [es]);
   useEffect(() => { load(); }, [load]);
@@ -74,23 +68,15 @@ export default function ClientHome({ lang = "es" }) {
   const credito = limiteGrupo || me?.credito_limit_usd;
   const usado = usadoGrupo || me?.credito_usado;
 
-  // Cobranza del cliente: qué debe pagar y cuándo (lo que más consulta).
-  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-  const pendientes = (cobros || [])
-    .filter((c) => Number(c.monto_pendiente) > 0)
-    .map((c) => {
-      const fv = c.fecha_vencimiento ? new Date(c.fecha_vencimiento) : null;
-      return {
-        ...c,
-        _monto: Number(c.monto_pendiente) || 0,
-        _dias: fv ? Math.round((fv - hoy) / 86400000) : null,
-      };
-    })
-    .sort((a, b) => (a._dias == null ? 1 : b._dias == null ? -1 : a._dias - b._dias));
-  const saldo = pendientes.reduce((s, c) => s + c._monto, 0);
-  const vencido = pendientes.filter((c) => c._dias != null && c._dias < 0)
-    .reduce((s, c) => s + c._monto, 0);
-  const proximo = pendientes[0] || null;
+  // Saldo por pagar: facturado menos pagado de sus propios pedidos.
+  // `mis_cobros` está vacío (el módulo de cobranza nunca se pobló), así que el
+  // número sale del expediente. mwt.one no guarda vencimiento por pedido: no
+  // se inventa una fecha.
+  const conSaldo = exps
+    .filter((e) => Number(e.balance) > 0)
+    .map((e) => ({ ...e, _saldo: Number(e.balance) }))
+    .sort((a, b) => b._saldo - a._saldo);
+  const saldo = conSaldo.reduce((s, e) => s + e._saldo, 0);
   const fmtMonto = (v, moneda = "USD") => new Intl.NumberFormat("es-CR", {
     style: "currency", currency: moneda, maximumFractionDigits: 0,
   }).format(Number(v) || 0);
@@ -120,38 +106,39 @@ export default function ClientHome({ lang = "es" }) {
           <Kpi label={es ? "En destino" : "At destination"} value={count("EN_DESTINO")} />
           <Kpi label={es ? "Entregados" : "Delivered"} value={cerrados} tone="var(--success-fg, #166534)" />
           <Kpi label={es ? "Saldo por pagar" : "Balance due"} value={fmtMonto(saldo)}
-               tone={vencido > 0 ? "var(--critical)" : "var(--text-primary)"}
-               sub={vencido > 0 ? `${fmtMonto(vencido)} ${es ? "vencido" : "overdue"}` : null} />
-          {Number(credito) > 0 && <Kpi label={es ? "Crédito usado" : "Credit used"} value={`${Math.round((Number(usado || 0) / Number(credito || 1)) * 100)}%`} sub={`de ${Number(credito).toLocaleString("en-US")}`} />}
+               tone={saldo > 0 ? "var(--text-primary)" : "var(--success-fg, #166534)"}
+               sub={`${conSaldo.length} ${es ? "pedidos con saldo" : "orders with balance"}`} />
+          {Number(credito) > 0 && (
+            <Kpi label={es ? "Crédito usado" : "Credit used"}
+                 value={`${Math.round((Number(usado || 0) / Number(credito || 1)) * 100)}%`}
+                 sub={`de ${Number(credito).toLocaleString("en-US")}`}
+                 tone={Number(usado || 0) > Number(credito || 0) ? "var(--critical)" : undefined} />
+          )}
         </div>
 
-        {/* Próximo pago + pedidos por estado (lo que antes no se veía) */}
+        {/* Saldo por pagar + pedidos por estado */}
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
           <div className="card card-pad-lg">
             <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 800, letterSpacing: ".04em", marginBottom: 10 }}>
-              {es ? "PRÓXIMO PAGO" : "NEXT PAYMENT"}
+              {es ? "SALDO POR PAGAR" : "BALANCE DUE"}
             </div>
-            {!proximo ? (
-              <div style={{ color: "var(--text-tertiary)", fontSize: 13 }}>{es ? "Sin pagos pendientes." : "No pending payments."}</div>
+            {conSaldo.length === 0 ? (
+              <div style={{ color: "var(--text-tertiary)", fontSize: 13 }}>
+                {es ? "Sin saldo pendiente en tus pedidos." : "No open balance on your orders."}
+              </div>
             ) : (
               <>
                 <div className="tabular-nums" style={{ font: "800 26px/1.1 var(--font-display)" }}>
-                  {fmtMonto(proximo._monto, proximo.moneda || "USD")}
+                  {fmtMonto(saldo)}
                 </div>
-                <div className="micro" style={{ color: proximo._dias < 0 ? "var(--critical)" : "var(--text-secondary)", marginTop: 4 }}>
-                  {proximo.fecha_vencimiento
-                    ? `${es ? "vence" : "due"} ${fmtDate(proximo.fecha_vencimiento, lang)}`
-                    : (es ? "sin fecha de vencimiento" : "no due date")}
-                  {proximo._dias != null && ` · ${proximo._dias < 0
-                    ? `${Math.abs(proximo._dias)}d ${es ? "vencido" : "overdue"}`
-                    : `${es ? "en" : "in"} ${proximo._dias}d`}`}
+                <div className="micro" style={{ color: "var(--text-secondary)", marginTop: 4 }}>
+                  {conSaldo.length} {es ? "pedidos con saldo. Se calcula con lo facturado menos lo pagado de cada pedido." : "orders with balance, invoiced minus paid per order."}
                 </div>
-                {pendientes.length > 1 && (
-                  <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>
-                    {es ? `+ ${pendientes.length - 1} cuotas más · total ${fmtMonto(saldo)}`
-                        : `+ ${pendientes.length - 1} more · total ${fmtMonto(saldo)}`}
-                  </div>
-                )}
+                <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 8 }}>
+                  {es
+                    ? "mwt.one todavía no guarda la fecha de vencimiento de cada factura."
+                    : "mwt.one does not store a due date per invoice yet."}
+                </div>
               </>
             )}
           </div>
@@ -175,7 +162,7 @@ export default function ClientHome({ lang = "es" }) {
         </div>
 
         {/* Embarques (lo más importante para el cliente) */}
-        <EmbarquesPortada lang={lang} clientId={cid} />
+        <EmbarquesPortada lang={lang} clientId={cid} limit={6} />
 
         {/* Accesos rápidos */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
