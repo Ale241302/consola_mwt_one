@@ -159,7 +159,6 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     return acc;
   }, [exps]);
   const totalExps = (exps || []).length;
-  const abiertos = (exps || []).filter((e) => !["CERRADO", "CANCELADO"].includes(e.estado)).length;
   const conocidos = ESTADOS.reduce((s, x) => s + (porEstado[x.key]?.n || 0), 0);
   const otros = totalExps - conocidos;
 
@@ -208,7 +207,6 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   });
   const fl = flujo?.totales || {};
   const open = (id) => { if (id && onOpenExpediente) onOpenExpediente(id); };
-  const hoy = new Date().toISOString();
 
   return (
     <div className="dash-mw" data-section="ceo-home">
@@ -218,22 +216,6 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
       {err && <div className="card card-pad-lg" role="alert" style={{ color: "var(--critical)" }}>{err}</div>}
 
       {!loading && !err && <>
-        {/* ── Encabezado editorial ─────────────────────────────── */}
-        <div>
-          <div className="dash-serif" style={{ fontSize: 27, lineHeight: 1.2 }}>
-            {es ? "Diagnóstico comercial" : "Commercial diagnosis"}
-          </div>
-          <p className="dash-sub" style={{ marginTop: 5 }}>
-            {es ? "Corte" : "As of"} {fmtDate(hoy, lang)} · mwt.one y finanzas.
-            {" "}
-            {es ? "Los números se recalculan al refrescar." : "Numbers are recomputed on refresh."}
-          </p>
-          <p className="dash-lead" style={{ marginTop: 12 }}>
-            {es ? <>Hay <b>{abiertos}</b> expedientes abiertos de {totalExps}. Quedan <b>{dinero(saldoReventa)}</b> por cobrar en reventa y <b>{dinero(saldoComision)}</b> facturados en comisión, que cobra Marluvas. <b>{conSaldo.length}</b> pedidos tienen saldo.</>
-                : <>{abiertos} open files out of {totalExps}. <b>{dinero(saldoReventa)}</b> receivable on resale and <b>{dinero(saldoComision)}</b> invoiced in commission, collected by Marluvas. {conSaldo.length} files carry a balance.</>}
-          </p>
-        </div>
-
         {/* ── Tiles con fuente ─────────────────────────────────── */}
         <div className="dash-tiles">
           <Tile

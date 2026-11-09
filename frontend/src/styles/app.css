@@ -9559,8 +9559,8 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
    tablas densas y gráfico de barras. Paleta y radios de los tokens de MWT. */
 .dash-mw { display: flex; flex-direction: column; gap: 20px; }
 .dash-serif {
-  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
-  font-weight: 400; letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-weight: 600; letter-spacing: -0.01em;
 }
 .dash-lead { max-width: 62rem; margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); }
 .dash-lead b { color: var(--text-primary); font-weight: 600; }
@@ -9574,8 +9574,8 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
 .dash-tile .lab { font-size: 11px; color: var(--text-tertiary); }
 .dash-tile .lab::after { content: " \24D8"; opacity: .5; }
 .dash-tile .big {
-  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
-  font-weight: 400; font-size: 30px; line-height: 1.1; letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-weight: 800; font-size: 28px; line-height: 1.1; letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums; margin: 6px 0;
 }
 .dash-tile .cmp { font-size: 11px; color: var(--text-tertiary); line-height: 1.45; }
