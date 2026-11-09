@@ -1027,6 +1027,17 @@ def radiografia_ceo(request):
     for t in tareas_pend:
         t["due_date"] = t["due_date"].isoformat() if t.get("due_date") else None
 
+    # Los listados van con LIMIT 50; los totales se cuentan aparte para no
+    # mostrar "50 tareas" cuando hay 91.
+    tot_tareas = _query("""
+        SELECT count(*) AS n,
+               count(*) FILTER (WHERE due_date < CURRENT_DATE) AS vencidas
+          FROM tareas.tarea
+         WHERE is_active = TRUE AND estado = 'PENDIENTE'
+    """)
+    tareas_total = int(tot_tareas[0]["n"]) if tot_tareas else len(tareas_pend)
+    tareas_vencidas_total = int(tot_tareas[0]["vencidas"]) if tot_tareas else 0
+
     # Actividad reciente: qué se movió y por qué vía. `action_source` distingue
     # creación (C1), transición de fase (C11), sistema, etc.
     actividad = _query(f"""
@@ -1051,6 +1062,8 @@ def radiografia_ceo(request):
         "proximas_salidas": salidas,
         "sin_fecha": sin_fecha,
         "tareas_pendientes": tareas_pend,
+        "tareas_pendientes_total": tareas_total,
+        "tareas_vencidas_total": tareas_vencidas_total,
         "actividad_reciente": actividad,
         "bloqueos": {
             "cambios_fecha": cambios,

@@ -181,7 +181,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     const porCliente = {};
     items.forEach((e) => {
       const cid = e.client_id || "-";
-      const d = porCliente[cid] || { cid, reventa: 0, comision: 0 };
+      const d = porCliente[cid] || { cid, nombre: e.client_name || clientes[e.client_id] || "-", reventa: 0, comision: 0 };
       if (e._reventa) d.reventa += e._saldo;
       else d.comision += e._saldo;
       porCliente[cid] = d;
@@ -195,7 +195,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
         .map((d) => ({ ...d, total: d.reventa + d.comision }))
         .sort((a, b) => b.total - a.total),
     };
-  }, [exps]);
+  }, [exps, clientes]);
 
   // ── Riesgo y finanzas ───────────────────────────────────────────────
   const salidas = rad?.proximas_salidas || [];
@@ -203,11 +203,15 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const cambios = rad?.bloqueos?.cambios_fecha || [];
   const tareasRev = rad?.bloqueos?.tareas_revision || [];
   const tareasPend = rad?.tareas_pendientes || [];
+  const tareasTotal = rad?.tareas_pendientes_total ?? tareasPend.length;
+  const tareasVencidas = rad?.tareas_vencidas_total ?? 0;
   const respuestas = rad?.respuestas_pendientes || [];
   const actividad = rad?.actividad_reciente || [];
   const hoyISO = new Date().toISOString().slice(0, 10);
-  const tareasVencidas = tareasPend.filter((t) => t.due_date && t.due_date < hoyISO).length;
-  const porRevisar = cambios.length + tareasRev.length + tareasPend.length + respuestas.length;
+  const porRevisar = cambios.length + tareasRev.length + tareasTotal + respuestas.length;
+  const correosLabel = respuestas.length >= 50
+    ? `50+ ${es ? "correos" : "emails"}`
+    : `${respuestas.length} ${es ? "correos" : "emails"}`;
 
   // Flujo por mes para que el gráfico se pueda leer con números.
   const mesesFlujo = useMemo(() => {
@@ -275,7 +279,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           <Tile
             label={es ? "Por revisar" : "To review"}
             value={porRevisar}
-            cmp={`${tareasPend.length} ${es ? "tareas" : "tasks"} · ${tareasVencidas} ${es ? "vencidas" : "overdue"} · ${respuestas.length} ${es ? "correos" : "emails"}`}
+            cmp={`${tareasTotal} ${es ? "tareas" : "tasks"} · ${tareasVencidas} ${es ? "vencidas" : "overdue"} · ${correosLabel}`}
             src={es
               ? "Tareas pendientes (91 en total), tareas que esperan revisión, cambios de fecha en conflicto y correos sin responder. Las tareas vencidas se cuentan contra hoy."
               : "Pending tasks, review tasks, conflicting date changes and unanswered emails."}
@@ -479,7 +483,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                   <tbody>
                     {saldosPorCliente.slice(0, 8).map((c) => (
                       <tr key={c.cid}>
-                        <td>{clientes[c.cid] || "-"}</td>
+                        <td>{c.nombre || clientes[c.cid] || "-"}</td>
                         <td className="n">{c.reventa ? dinero(c.reventa) : "-"}</td>
                         <td className="n" style={{ color: "var(--text-tertiary)" }}>{c.comision ? dinero(c.comision) : "-"}</td>
                         <td className="n" style={{ fontWeight: 700 }}>{dinero(c.total)}</td>
@@ -574,7 +578,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                 </table>
               )}
               <div className="dash-sub" style={{ marginTop: 8 }}>
-                {tareasVencidas} {es ? "tareas vencidas" : "overdue tasks"} · {cambios.length + tareasRev.length} {es ? "bloqueos" : "blockers"} · {respuestas.length} {es ? "correos sin responder" : "unanswered emails"}
+                {tareasVencidas} {es ? "tareas vencidas de" : "overdue tasks out of"} {tareasTotal} · {cambios.length + tareasRev.length} {es ? "bloqueos" : "blockers"} · {correosLabel} {es ? "sin responder" : "unanswered"}
               </div>
             </Section>
 
