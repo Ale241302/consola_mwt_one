@@ -3,17 +3,17 @@
 //
 // Responde en un vistazo:
 //   1. ¿Cuántos expedientes tengo y en qué estado?  (operación)
-//   2. ¿Quién me debe pagar y cuándo?               (cobranza)
+//   2. ¿Quién me debe y cuánto?                       (saldo por pedido)
 //   3. ¿Cuánto gano y cuánto cobro?                 (finanzas)
 //   4. ¿Qué comisiones hay por marca?               (comercial)
 //   5. ¿Qué se viene y qué está bloqueado?          (riesgo)
 //
-// Datos reales: /api/expedientes/, /api/cobros/, /api/clientes/,
-// /api/finanzas/*. Sin mocks. Si un endpoint falla, la tarjeta lo dice.
+// Datos reales: /api/expedientes/, /api/clientes/, /api/finanzas/*. Sin mocks.
+// Si un endpoint falla, la tarjeta lo dice.
 // R1: cero hex, solo CSS vars. R5: tabular-nums en métricas.
 // =====================================================================
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { finanzasApi, expedientesApi, cobrosApi, clientesApi } from "../../lib/api.js";
+import { finanzasApi, expedientesApi, clientesApi } from "../../lib/api.js";
 import { fmtDate } from "../../lib/i18n.js";
 
 const money = (v, ccy = "USD") => {
@@ -85,17 +85,10 @@ const dot = (color) => (
 );
 
 /** Semáforo por días hasta el vencimiento (negativo = vencido). */
-function vencTone(dias) {
-  if (dias == null) return { color: "var(--text-tertiary)", txt: "sin fecha" };
-  if (dias < 0) return { color: "var(--critical)", txt: `${Math.abs(dias)}d vencido` };
-  if (dias <= 7) return { color: "var(--warning-fg, #92400E)", txt: `en ${dias}d` };
-  return { color: "var(--text-secondary)", txt: `en ${dias}d` };
-}
 
 export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, onGoCorreo, onGoExpedientes }) {
   const es = lang !== "en";
   const [exps, setExps] = useState([]);
-  const [cobros, setCobros] = useState([]);
   const [clientes, setClientes] = useState({});
   const [rad, setRad] = useState(null);
   const [com, setCom] = useState([]);
@@ -106,23 +99,21 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     const safe = (p) => p.catch(() => null);
-    const [e, c, cli, r, comi, f] = await Promise.all([
+    const [e, cli, r, comi, f] = await Promise.all([
       safe(expedientesApi.list()),
-      safe(cobrosApi.list()),
       safe(clientesApi.list()),
       safe(finanzasApi.radiografia(21)),
       safe(finanzasApi.comisionesPorMarca()),
       safe(finanzasApi.flujo(90)),
     ]);
     setExps(rowsOf(e));
-    setCobros(rowsOf(c));
     const map = {};
     rowsOf(cli).forEach((x) => { map[x.id] = x.razon_social || x.nombre_comercial || ""; });
     setClientes(map);
     setRad(r || null);
     setCom(comi?.results || (Array.isArray(comi) ? comi : []));
     setFlujo(f || null);
-    if (!e && !c) setErr(es ? "No se pudieron cargar los datos del panel." : "Dashboard data failed to load.");
+    if (!e) setErr(es ? "No se pudieron cargar los expedientes del panel." : "Dashboard data failed to load.");
     setLoading(false);
   }, [es]);
   useEffect(() => { load(); }, [load]);
@@ -146,48 +137,37 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const conocidos = ESTADOS.reduce((s, x) => s + (porEstado[x.key]?.n || 0), 0);
   const otros = totalExps - conocidos;
 
-  // ── Cobranza ───────────────────────────────────────────────────────
-  const cobranza = useMemo(() => {
-    const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-    const items = (cobros || []).filter((c) => Number(c.monto_pendiente) > 0);
-    let pendiente = 0, vencido = 0;
-    const buckets = { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+  // ── Dinero por cobrar (saldo real de los pedidos) ───────────────────
+  // `/api/cobros/` está vacío en producción (el módulo nunca se pobló), así que
+  // el panel no puede usarlo como fuente: mostraba $0 habiendo saldo. El saldo
+  // real vive en el expediente (`balance` = facturado - pagado), que el listado
+  // ya entrega calculado por el backend.
+  const { conSaldo, saldoReventa, saldoComision, nReventa, saldoPorCliente } = useMemo(() => {
+    const items = (exps || [])
+      .filter((e) => Number(e.balance) > 0)
+      .map((e) => ({
+        ...e,
+        _saldo: Number(e.balance),
+        _reventa: (e.modo_operacion || "").toUpperCase() === "FULL",
+      }))
+      .sort((a, b) => b._saldo - a._saldo);
+    const reventa = items.filter((e) => e._reventa);
+    const comision = items.filter((e) => !e._reventa);
     const porCliente = {};
-    items.forEach((c) => {
-      const monto = Number(c.monto_pendiente) || 0;
-      pendiente += monto;
-      const fv = c.fecha_vencimiento ? new Date(c.fecha_vencimiento) : null;
-      const dias = fv ? Math.round((fv - hoy) / 86400000) : null;
-      if (dias != null && dias < 0) vencido += monto;
-      const m = dias == null ? "sin fecha" : dias < 0 ? (Math.abs(dias) > 90 ? "90+" : Math.abs(dias) > 60 ? "61-90" : Math.abs(dias) > 30 ? "31-60" : "0-30") : "0-30";
-      if (buckets[m] != null) buckets[m] += monto;
-      const cid = c.client_id || "—";
-      porCliente[cid] = porCliente[cid] || { monto: 0, n: 0, proxVenc: null };
-      porCliente[cid].monto += monto;
-      porCliente[cid].n += 1;
-      if (fv && (!porCliente[cid].proxVenc || fv < porCliente[cid].proxVenc)) {
-        porCliente[cid].proxVenc = fv;
-      }
+    reventa.forEach((e) => {
+      const cid = e.client_id || "—";
+      porCliente[cid] = (porCliente[cid] || 0) + e._saldo;
     });
-    const proximos = items
-      .map((c) => {
-        const fv = c.fecha_vencimiento ? new Date(c.fecha_vencimiento) : null;
-        return {
-          ...c,
-          _dias: fv ? Math.round((fv - hoy) / 86400000) : null,
-          _monto: Number(c.monto_pendiente) || 0,
-        };
-      })
-      .sort((a, b) => {
-        if (a._dias == null) return 1;
-        if (b._dias == null) return -1;
-        return a._dias - b._dias;
-      });
-    const topClientes = Object.entries(porCliente)
-      .map(([cid, v]) => ({ cid, ...v }))
-      .sort((a, b) => b.monto - a.monto);
-    return { items, pendiente, vencido, buckets, proximos, topClientes };
-  }, [cobros]);
+    return {
+      conSaldo: items,
+      saldoReventa: reventa.reduce((s, e) => s + e._saldo, 0),
+      saldoComision: comision.reduce((s, e) => s + e._saldo, 0),
+      nReventa: reventa.length,
+      saldoPorCliente: Object.entries(porCliente)
+        .map(([cid, monto]) => ({ cid, monto }))
+        .sort((a, b) => b.monto - a.monto),
+    };
+  }, [exps]);
 
   // ── Riesgo / próximas salidas ──────────────────────────────────────
   const salidas = rad?.proximas_salidas || [];
@@ -212,24 +192,22 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
       {err && <div className="card card-pad-lg" style={{ color: "var(--critical)" }}>{err}</div>}
 
       {!loading && !err && <>
-        {/* ── KPIs operativos + cobranza ─────────────────────────── */}
+        {/* ── Qué mirar primero: operación, dinero y pendientes ──── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))", gap: 12 }}>
-          <Kpi label={es ? "Expedientes" : "Files"} value={totalExps}
-               sub={es ? `${abiertos} abiertos` : `${abiertos} open`}
+          <Kpi label={es ? "Expedientes abiertos" : "Open files"} value={abiertos}
+               sub={`${es ? "de" : "of"} ${totalExps} ${es ? "en total" : "total"}`}
                onClick={onGoExpedientes} />
-          <Kpi label={es ? "En producción" : "In production"} value={porEstado.PRODUCCION?.n || 0}
-               sub={dinero(porEstado.PRODUCCION?.valor)} tone="var(--info, #3083FE)" />
-          <Kpi label={es ? "En tránsito" : "In transit"} value={porEstado.TRANSITO?.n || 0}
-               sub={dinero(porEstado.TRANSITO?.valor)} tone="var(--warning-fg, #92400E)" />
-          <Kpi label={es ? "En destino" : "At destination"} value={porEstado.EN_DESTINO?.n || 0}
-               sub={dinero(porEstado.EN_DESTINO?.valor)} />
-          <Kpi label={es ? "Por cobrar" : "Receivable"} value={dinero(cobranza.pendiente)}
-               sub={`${cobranza.items.length} ${es ? "cobros abiertos" : "open"}`} tone="var(--text-primary)"
-               onClick={onGoFinanzas} />
-          <Kpi label={es ? "Vencido" : "Overdue"} value={dinero(cobranza.vencido)}
-               sub={es ? "mora acumulada" : "past due"}
-               tone={cobranza.vencido > 0 ? "var(--critical)" : "var(--success-fg, #166534)"}
-               onClick={onGoFinanzas} />
+          <Kpi label={es ? "Por cobrar (reventa)" : "Receivable (resale)"} value={dinero(saldoReventa)}
+               sub={`${nReventa} ${es ? "pedidos" : "files"} · ${dinero(saldoComision)} ${es ? "en comisión (lo cobra Marluvas)" : "in commission"}`}
+               tone={saldoReventa > 0 ? "var(--text-primary)" : "var(--text-tertiary)"}
+               onClick={onGoExpedientes} />
+          <Kpi label={es ? "Por revisar" : "To review"} value={cambios.length + tareasRev.length}
+               sub={es ? "cambios de fecha y tareas" : "date changes and tasks"}
+               tone={cambios.length + tareasRev.length > 0 ? "var(--warning-fg, #92400E)" : "var(--success-fg, #166534)"} />
+          <Kpi label={es ? "Próximas salidas" : "Upcoming shipments"}
+               value={salidas.length}
+               sub={es ? "próximos 21 días" : "next 21 days"}
+               tone="var(--info, #3083FE)" />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
@@ -279,45 +257,39 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
               </>}
             </Section>
 
-            {/* Cuándo deben pagar */}
+            {/* Pedidos con saldo: lo que hay que cobrar, tomado del expediente */}
             <Section
-              title={es ? "CUÁNDO DEBEN PAGAR" : "WHEN THEY PAY"}
-              right={onGoFinanzas ? <button className="btn btn-ghost btn-sm" onClick={onGoFinanzas}>
-                {es ? "Ver cobranza" : "Collections"}</button> : null}
+              title={es ? "PEDIDOS CON SALDO" : "FILES WITH BALANCE"}
+              right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>
+                {conSaldo.length} · {dinero(saldoReventa + saldoComision)}
+              </span>}
             >
-              {cobranza.proximos.length === 0 ? (
-                <Empty>
-                  {es
-                    ? "El servicio de cobros no devolvió cuentas abiertas. Si esperabas saldos, revisalos en Finanzas."
-                    : "The collections service returned no open balances. If you expected some, check Finance."}
-                </Empty>
+              {conSaldo.length === 0 ? (
+                <Empty>{es ? "Ningún pedido tiene saldo pendiente." : "No file has an open balance."}</Empty>
               ) : <>
-                <div style={{ display: "grid", gridTemplateColumns: "1.4fr .9fr .8fr .8fr .7fr", gap: 10, padding: "0 4px 6px" }}>
-                  {[es ? "Cliente" : "Client", es ? "Vence" : "Due", es ? "Monto" : "Amount",
-                    es ? "Mora" : "Overdue", es ? "Estado" : "State"].map((h, i) => (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr .8fr .8fr .7fr", gap: 10, padding: "0 4px 6px" }}>
+                  {[es ? "Proforma" : "Proforma", es ? "Cliente" : "Client",
+                    es ? "Negocio" : "Business", es ? "Saldo" : "Balance", es ? "Estado" : "State"].map((h, i) => (
                     <div key={i} className="micro" style={{ color: "var(--text-tertiary)", fontWeight: 800 }}>{h}</div>
                   ))}
                 </div>
-                {cobranza.proximos.slice(0, 10).map((c) => {
-                  const tone = vencTone(c._dias);
-                  return (
-                    <Row key={c.id} grid="1.4fr .9fr .8fr .8fr .7fr" onClick={() => open(c.expediente_id)}>
-                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {clientes[c.client_id] || c.client_id?.slice(0, 8) || "—"}
-                      </div>
-                      <div className="tabular-nums" style={{ color: "var(--text-secondary)" }}>
-                        {c.fecha_vencimiento ? fmtDate(c.fecha_vencimiento, lang) : "—"}
-                      </div>
-                      <div className="tabular-nums" style={{ fontWeight: 700, textAlign: "right" }}>
-                        {money(c._monto, c.moneda || "USD")}
-                      </div>
-                      <div className="tabular-nums" style={{ color: tone.color, fontWeight: 700 }}>
-                        {tone.txt}
-                      </div>
-                      <div className="micro" style={{ color: "var(--text-tertiary)" }}>{c.estado || "—"}</div>
-                    </Row>
-                  );
-                })}
+                {conSaldo.slice(0, 8).map((e) => (
+                  <Row key={e.id} grid="1fr 1.3fr .8fr .8fr .7fr" onClick={() => open(e.id)}>
+                    <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {(e.proforma_codigos || [])[0] || e.codigo || "—"}
+                    </div>
+                    <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {e.client_name || clientes[e.client_id] || "—"}
+                    </div>
+                    <div className="micro" style={{ color: e._reventa ? "var(--text-primary)" : "var(--text-tertiary)" }}>
+                      {e._reventa ? (es ? "Reventa" : "Resale") : (es ? "Comisión" : "Commission")}
+                    </div>
+                    <div className="tabular-nums" style={{ fontWeight: 700, textAlign: "right" }}>
+                      {money(e._saldo)}
+                    </div>
+                    <div className="micro" style={{ color: "var(--text-tertiary)" }}>{e.estado || "—"}</div>
+                  </Row>
+                ))}
               </>}
             </Section>
 
@@ -353,42 +325,33 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           {/* ── Columna lateral ─────────────────────────────────── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
 
-            {/* Antigüedad de cartera */}
-            <Section title={es ? "CARTERA POR ANTIGÜEDAD" : "RECEIVABLES AGING"}>
-              {[["0-30", es ? "0–30 días" : "0–30 days"],
-                ["31-60", "31–60"],
-                ["61-90", "61–90"],
-                ["90+", "90+"]].map(([k, label]) => (
-                <Row key={k} grid="1fr 1fr">
-                  <div className="micro" style={{ color: "var(--text-tertiary)" }}>{label}</div>
-                  <div className="tabular-nums" style={{
-                    textAlign: "right", fontWeight: 700,
-                    color: (k === "61-90" || k === "90+") && cobranza.buckets[k] > 0 ? "var(--critical)" : "var(--text-primary)",
-                  }}>{dinero(cobranza.buckets[k])}</div>
+            {/* Sin fecha de embarque: lo que frena la planificación */}
+            <Section title={es ? "SIN FECHA DE EMBARQUE" : "NO SHIP DATE"}
+                     right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{sinFecha.length}</span>}>
+              {sinFecha.length === 0 ? (
+                <Empty>{es ? "Todos los pedidos en curso tienen fecha." : "Every open file has a date."}</Empty>
+              ) : sinFecha.slice(0, 6).map((s) => (
+                <Row key={`${s.expediente_id}-${s.campo || s.exp_estado}`} grid="1.2fr 1fr" onClick={() => open(s.expediente_id)}>
+                  <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {s.display_id || "—"}
+                  </div>
+                  <div className="micro" style={{ color: "var(--text-tertiary)", textAlign: "right" }}>
+                    {s.exp_estado || "—"}
+                  </div>
                 </Row>
               ))}
-              <Row grid="1fr 1fr">
-                <div style={{ fontWeight: 800, fontSize: 12 }}>{es ? "Total pendiente" : "Total"}</div>
-                <div className="tabular-nums" style={{ textAlign: "right", fontWeight: 800 }}>{dinero(cobranza.pendiente)}</div>
-              </Row>
             </Section>
 
-            {/* Top clientes por saldo */}
-            <Section title={es ? "CLIENTES CON SALDO" : "CLIENTS WITH BALANCE"}
-                     right={onGoFinanzas ? <button className="btn btn-ghost btn-sm" onClick={onGoFinanzas}>
-                       {es ? "Finanzas" : "Finance"}</button> : null}>
-              {cobranza.topClientes.length === 0 ? <Empty>—</Empty> : cobranza.topClientes.slice(0, 6).map((c) => {
-                const fv = c.proxVenc ? fmtDate(c.proxVenc.toISOString(), lang) : "—";
-                return (
-                  <Row key={c.cid} grid="1.6fr 1fr .9fr">
-                    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>
-                      {clientes[c.cid] || "—"}
-                    </div>
-                    <div className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>{dinero(c.monto)}</div>
-                    <div className="micro" style={{ color: "var(--text-tertiary)", textAlign: "right" }}>{fv}</div>
-                  </Row>
-                );
-              })}
+            {/* Top clientes por saldo (desde el expediente) */}
+            <Section title={es ? "CLIENTES CON SALDO" : "CLIENTS WITH BALANCE"}>
+              {saldoPorCliente.length === 0 ? <Empty>—</Empty> : saldoPorCliente.slice(0, 6).map((c) => (
+                <Row key={c.cid} grid="1.6fr 1fr">
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>
+                    {clientes[c.cid] || "—"}
+                  </div>
+                  <div className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>{dinero(c.monto)}</div>
+                </Row>
+              ))}
             </Section>
 
             {/* Comisiones */}
