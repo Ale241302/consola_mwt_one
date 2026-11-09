@@ -1,9 +1,12 @@
-import json,csv,re,datetime as dt,statistics as st,collections
+import json,csv,re,datetime as dt,statistics as st,collections,sys,pathlib
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
+from _paths import ENTRADAS, SALIDAS, preparar
 from ledger import L
+preparar()
 HOY=dt.date(2026,11,8)
-B=json.load(open('base_mwt.json'))
-C=json.load(open('carpetas.json'))
-CC={r['proforma']:r for r in csv.DictReader(open('/mnt/user-data/uploads/.claude-server-commander/cobro_cruce.csv',encoding='utf-8-sig'))}
+B=json.load(open(ENTRADAS/'base_mwt.json'))
+C=json.load(open(ENTRADAS/'carpetas.json'))
+CC={r['proforma']:r for r in csv.DictReader(open(ENTRADAS/'cobro_cruce.csv',encoding='utf-8-sig'))}
 def ncli(n):
     n=n.lower()
     for k,v in [('honduras','Sondel Honduras'),('sondel','Sondel'),('imporcomp','Imporcomp'),('importaciones','Importaciones y Compras'),('ummie','Ummie'),('comtek','Comtek'),('pro customer','Pro Customer'),('equipos y guantes','Eguisa / SIASA'),('grupo soluciones','Eguisa / SIASA'),('sonepar','Sonepar')]:
@@ -34,6 +37,26 @@ for x in B['expedientes']:
 for p in ped.values():
     p['pais']=PAIS.get(p['cliente'],'Sin dato')
     if p['proforma'] in ('2395-2025','2256-2024'): p['negocio']='reventa'
+
+# ---- D1 · códigos PF- que son el mismo pedido que su proforma canónica
+# 2491-2026 existe como carpeta (02 M Muito Work\...\2491-2026 PO 20330) y se
+# cargó en mwt.one como "PF-2026-0001". Son el MISMO pedido: sin esta fusión la
+# ficha lo cuenta dos veces (60) y la tabla por cliente una (59).
+RENOMBRES_PF={'PF-2026-0001':'2491-2026'}
+for _origen,_canonico in list(RENOMBRES_PF.items()):
+    if _origen not in ped: continue
+    _datos=ped.pop(_origen)
+    if _canonico in ped:
+        for _k in ('usd','usd_fuente','en_mwt','estado','modo','pares','registro','salida','llegada','cierre'):
+            ped[_canonico][_k]=_datos[_k]
+        ped[_canonico]['_x']=_datos.get('_x') or ped[_canonico].get('_x')
+        ped[_canonico]['_ph']=_datos.get('_ph') or ped[_canonico].get('_ph')
+        print('D1 fusionado',_origen,'->',_canonico)
+    else:
+        _datos['proforma']=_canonico
+        ped[_canonico]=_datos
+        print('D1 renombrado',_origen,'->',_canonico)
+
 # ---- dataset pedidos
 cols=['proforma','anio','negocio','cliente','pais','usd','usd_fuente','en_mwt','estado','modo','pares','registro','salida','llegada','cierre']
 with open('ds_pedidos.csv','w',newline='') as f:
@@ -169,6 +192,8 @@ with open('ds_cobertura.csv','w',newline='') as f:
         w.writerow([a,v['carpetas'],v['con_monto'],v['en_mwt'],v['con_sap'],round(v['con_monto']/v['carpetas'],3),round(v['en_mwt']/v['carpetas'],3)])
 
 # La lista depurada de Por cobrar siempre se aplica después de regenerar (08/11/2026)
-import runpy; runpy.run_path('por_cobrar_curado.py')
-runpy.run_path('flujo.py')
-runpy.run_path('clientes_ficha.py')
+import runpy
+_AQUI=str(pathlib.Path(__file__).resolve().parent)
+runpy.run_path(_AQUI+'/por_cobrar_curado.py')
+runpy.run_path(_AQUI+'/flujo.py')
+runpy.run_path(_AQUI+'/clientes_ficha.py')

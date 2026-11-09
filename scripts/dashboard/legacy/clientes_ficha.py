@@ -1,4 +1,6 @@
-import json,csv,re,statistics as st,collections,datetime as dt
+import json,csv,re,statistics as st,collections,datetime as dt,sys,pathlib
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
+from _paths import ENTRADAS
 
 def ncli(n):
     n=n.lower()
@@ -9,7 +11,7 @@ KP={'Sondel':(200000.0,145490.0,141322.0),'Sondel Honduras':(200000.0,145490.0,4
     'Ummie':(150000.0,5010.85,5010.85),'Comtek':(150000.0,144.12,144.12),'Sonepar':(150000.0,81248.7,81248.7),'Eguisa / SIASA':(150000.0,17917.55,17917.55),'Pro Customer':(150000.0,0.0,0.0)}
 GRUPO={'Sondel':'Sondel (padre de Sondel Honduras)','Sondel Honduras':'Sondel (subsidiaria de Sondel S.A.)','Imporcomp':'Imporcomp (padre de Importaciones y Compras)','Importaciones y Compras':'Imporcomp (subsidiaria de Imporcomp S.A.)'}
 TASA={'Sonepar':'7 % (liquidaciones de Bianca)','Eguisa / SIASA':'6,06 %','Comtek':'5,61 % a 10 % según pedido'}
-B=json.load(open('base_mwt.json'))
+B=json.load(open(ENTRADAS/'base_mwt.json'))
 dias=collections.defaultdict(list);plazo=collections.defaultdict(list)
 for x in B['expedientes']:
     if x['estado']!='CERRADO':continue

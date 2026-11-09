@@ -141,3 +141,6 @@ Tabla de Numeracion oficial de Marluvas_260721_091450.pdf
 # scripts de correo, base del dashboard). Vive solo en disco, nunca en git.
 traspaso_harness_2026-11-09/
 
+# Entradas y salidas del dashboard: datos reales de clientes, nunca en git.
+data/dashboard/
+

@@ -1,6 +1,9 @@
-import json, collections
+import json, collections, sys, pathlib
 from decimal import Decimal, ROUND_HALF_UP
-R='/home/claude/dash/raw/'
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _paths import ENTRADAS, RAW, preparar
+preparar()
+R=str(RAW)+'/'
 PH={'R':'REGISTRO','PR':'PRODUCCION','PP':'PREPARACION','D':'DESPACHO','T':'TRANSITO','ED':'EN_DESTINO','C':'CERRADO'}
 def num(x):
     return None if x=='' else float(x)
@@ -82,7 +85,7 @@ for c in clientes:
 errores.append(dict(codigo='*',paso='clientes',detalle="cliente_listar no devuelve 'pais'; se agrega pais_segun_expedientes. Sin is_parent=all omite SonDel Honduras (se uso is_parent=all)."))
 errores.append(dict(codigo='2498-2026',paso='fases',detalle='primer expediente_obtener dio Bad Gateway; reintento OK'))
 errores.append(dict(codigo='2478-2026 (CERRADO)',paso='uuid',detalle='listar/buscar no exponen UUID; se obtuvo desde finanzas_comisiones (9eb65937-...) y con el se leyeron fases y lineas'))
-json.dump(dict(expedientes=out,clientes=clientes,errores=errores),open('/home/claude/dash/base_mwt.json','w',encoding='utf-8'),ensure_ascii=False,indent=1)
+json.dump(dict(expedientes=out,clientes=clientes,errores=errores),open(str(ENTRADAS/'base_mwt.json'),'w',encoding='utf-8'),ensure_ascii=False,indent=1)
 print(len(out), sum(1 for r in out if r['phase_durations']), sum(1 for r in out if r['lineas']), sum(l['cantidad'] for r in out for l in r['lineas']), sum(1 for r in out if r['finanzas']))
 # value check
 for r in out:

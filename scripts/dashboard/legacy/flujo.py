@@ -1,6 +1,8 @@
-import json,csv,re,datetime as dt
+import json,csv,re,datetime as dt,sys,pathlib
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
+from _paths import ENTRADAS
 HOY=dt.date(2026,11,8)
-B=json.load(open('base_mwt.json'));BM={}
+B=json.load(open(ENTRADAS/'base_mwt.json'));BM={}
 for x in B['expedientes']: BM.setdefault(re.sub(r'^PF ','',x['proforma_codigo']),x)
 EC={r['proforma']:r for r in csv.DictReader(open('ds_en_curso.csv'))}
 PC={r['proforma']:r for r in csv.DictReader(open('ds_por_cobrar.csv'))}
