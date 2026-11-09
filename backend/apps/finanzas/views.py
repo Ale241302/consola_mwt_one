@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
@@ -1150,6 +1151,43 @@ def comisiones_por_marca(request):
         m["comision"] = str(_dec(m["comision"]).quantize(Decimal("0.01")))
         m["premio"] = str(_dec(m["premio"]).quantize(Decimal("0.01")))
 
+    # Premio por marca (columna de la tabla), no una fila suelta.
+    prem_marca = _query("""
+        SELECT h.marca_id::text AS marca_id,
+               COALESCE(m.nombre, '(sin marca)') AS brand_name,
+               COALESCE(SUM(h.comision_usd), 0) AS total,
+               count(*) AS n
+          FROM finance.comision_historica h
+          LEFT JOIN brands.marca m ON m.id = h.marca_id
+         WHERE h.is_active = TRUE AND h.tipo = 'PREMIO'
+         GROUP BY h.marca_id, m.nombre
+    """)
+    prem_por_id = {p["marca_id"]: p for p in prem_marca}
+    for r in results:
+        p = prem_por_id.get(str(r.get("brand_id"))) if r.get("brand_id") else None
+        r["premio"] = str(_dec(p["total"]).quantize(Decimal("0.01"))) if p else "0.00"
+        r["premios_n"] = int(p["n"]) if p else 0
+
+    # Comisión por cliente: es lo que MWT gana y no se mezcla con el saldo que
+    # el cliente tiene con Marluvas.
+    por_cli: dict[str, dict] = {}
+    for it in items:
+        amt = it.get("commission_amount")
+        if amt is None:
+            continue
+        cid = str(it.get("client_id") or "-")
+        d = por_cli.setdefault(cid, {
+            "client_id": cid,
+            "cliente": it.get("client_name") or cid,
+            "comision": Decimal("0"),
+        })
+        d["comision"] += _dec(amt)
+    por_cliente = [
+        {**d, "comision": str(d["comision"].quantize(Decimal("0.01")))}
+        for d in por_cli.values()
+    ]
+    por_cliente.sort(key=lambda x: _dec(x["comision"]), reverse=True)
+
     return Response({
         "results": results,
         "today": today.isoformat(),
@@ -1159,6 +1197,8 @@ def comisiones_por_marca(request):
             "n": premios_n,
         },
         "por_mes": por_mes,
+        "por_cliente": por_cliente,
+        "marcas": [{"id": p["marca_id"], "nombre": p["brand_name"]} for p in prem_marca],
     })
 
 
@@ -1943,3 +1983,34 @@ def q_comision_historica():
 
 
 
+
+@api_view(["POST"])
+@permission_classes([IsCeoOrAdmin])
+def registrar_premio(request):
+    """Registra un premio (bono) de Marluvas en el histórico.
+
+    Antes los premios solo se transcribían a mano desde el correo; con esto el
+    panel se alimenta de la base y no de una transcripción.
+    Body: {periodo: "YYYY-MM", monto_usd: number, marca_id?: uuid, nota?: str}
+    """
+    body = request.data or {}
+    periodo = str(body.get("periodo") or "").strip()
+    monto = _dec(body.get("monto_usd"))
+    if not re.match(r"^\d{4}-\d{2}$", periodo):
+        return Response({"detail": "periodo debe ser YYYY-MM"}, status=400)
+    if monto is None or monto <= 0:
+        return Response({"detail": "monto_usd debe ser mayor a cero"}, status=400)
+
+    marca_id = (body.get("marca_id") or "").strip() or None
+    nota = (body.get("nota") or "").strip()[:200] or None
+    with connection.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO finance.comision_historica
+                (id, marca_id, periodo, tipo, estado, comision_usd, ref, is_active,
+                 created_at, updated_at)
+            VALUES (%s, %s, %s, 'PREMIO', 'PAGADA', %s, %s, TRUE, now(), now())
+            """,
+            [str(uuid.uuid4()), marca_id, periodo, monto, nota],
+        )
+    return Response({"ok": True, "periodo": periodo, "monto_usd": str(monto)}, status=201)

@@ -10,7 +10,7 @@
 // Datos reales: /api/expedientes/, /api/clientes/, /api/finanzas/*.
 // =====================================================================
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { finanzasApi, expedientesApi, clientesApi } from "../../lib/api.js";
+import { finanzasApi, expedientesApi, clientesApi, apiFetch, getToken } from "../../lib/api.js";
 import { fmtDate } from "../../lib/i18n.js";
 
 const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -20,6 +20,12 @@ const dinero = (v) => {
 };
 const rowsOf = (r) => (Array.isArray(r) ? r : (r?.results || []));
 const pct = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
+// Año del pedido: primero la proforma (2472-2026), después el código.
+const anioDe = (e) => {
+  const fuente = (e.proforma_codigos || [])[0] || e.codigo || e.created_at || "";
+  const m = String(fuente).match(/(20\d{2})/);
+  return m ? Number(m[1]) : null;
+};
 
 const ESTADOS = [
   { key: "REGISTRO", es: "Registro", en: "Registered", color: "var(--text-tertiary)" },
@@ -83,12 +89,15 @@ function ComisionesChart({ datos, es }) {
   const activo = filas[hover != null ? hover : filas.length - 1];
 
   return (
-    <div>
-      <div className="micro" style={{ color: "var(--text-secondary)", marginBottom: 6 }}>
+    <div className="dash-chart">
+      <div className="micro" style={{ color: "var(--text-secondary)", marginBottom: 6, transition: "opacity .18s ease" }}>
         <b>{activo.mes}</b>
         {" · "}{es ? "Comisión" : "Commission"} {dinero(activo.comision)}
         {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
         {" · "}{es ? "Total" : "Total"} {dinero(total(activo))}
+      </div>
+      <div className="micro" style={{ color: "var(--text-tertiary)", textAlign: "right", marginBottom: 2 }}>
+        {es ? "máx" : "max"} {dinero(max)}
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img"
            aria-label={es ? "Comisión y premio por mes" : "Commission and bonus by month"}>
@@ -101,16 +110,24 @@ function ComisionesChart({ datos, es }) {
           const hp = (Number(d.premio || 0) / max) * (H - pad - 8);
           const x = i * bw + Math.max(2, (bw - 14) / 2);
           const w = Math.max(4, bw - 14);
+          const atenuada = hover != null && hover !== i;
+          const estilo = {
+            opacity: atenuada ? 0.35 : 1,
+            transform: hover === i ? "translateY(-3px)" : "none",
+            transition: "opacity .18s ease, transform .18s ease",
+            transformBox: "fill-box",
+            transformOrigin: "bottom",
+          };
           return (
             <g key={d.mes}
                onMouseOver={() => setHover(i)}
                onMouseOut={() => setHover(null)}>
               <rect x={i * bw} y="0" width={bw} height={H - pad} fill="transparent" />
-              <rect x={x} y={H - pad - hc} width={w} height={hc} rx="2" fill="var(--brand-accent)">
+              <rect x={x} y={H - pad - hc} width={w} height={hc} rx="2" fill="var(--brand-accent)" style={estilo}>
                 <title>{`${d.mes} · ${es ? "Comisión" : "Commission"} ${dinero(d.comision)}`}</title>
               </rect>
               {hp > 0 && (
-                <rect x={x} y={H - pad - hc - hp} width={w} height={hp} rx="2" fill="var(--warning-fg, #92400E)" opacity="0.85">
+                <rect x={x} y={H - pad - hc - hp} width={w} height={hp} rx="2" fill="var(--warning-fg, #92400E)" opacity="0.85" style={estilo}>
                   <title>{`${d.mes} · ${es ? "Premio" : "Bonus"} ${dinero(d.premio)}`}</title>
                 </rect>
               )}
@@ -134,7 +151,15 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const [rad, setRad] = useState(null);
   const [com, setCom] = useState([]);
   const [comPorMes, setComPorMes] = useState([]);
+  const [porClienteCom, setPorClienteCom] = useState([]);
   const [premios, setPremios] = useState(null);
+  const [anio, setAnio] = useState(new Date().getFullYear());
+  const [premioOpen, setPremioOpen] = useState(false);
+  const [premioPeriodo, setPremioPeriodo] = useState(new Date().toISOString().slice(0, 7));
+  const [premioMonto, setPremioMonto] = useState("");
+  const [premioNota, setPremioNota] = useState("");
+  const [premioMsg, setPremioMsg] = useState(null);
+  const [premioSaving, setPremioSaving] = useState(false);
   const [flujo, setFlujo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
@@ -156,6 +181,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     setRad(r || null);
     setCom(comi?.results || (Array.isArray(comi) ? comi : []));
     setComPorMes(comi?.por_mes || []);
+    setPorClienteCom(comi?.por_cliente || []);
     setPremios(comi?.premios || null);
     setFlujo(f || null);
     if (!e) setErr(es ? "No se pudieron cargar los expedientes del panel." : "Dashboard data failed to load.");
@@ -163,19 +189,47 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   }, [es]);
   useEffect(() => { load(); }, [load]);
 
-  // ── Operación ───────────────────────────────────────────────────────
+  const guardarPremio = useCallback(async () => {
+    setPremioSaving(true);
+    setPremioMsg(null);
+    try {
+      await apiFetch("/finanzas/premios/", {
+        method: "POST",
+        token: getToken(),
+        body: {
+          periodo: premioPeriodo,
+          monto_usd: Number(premioMonto),
+          nota: premioNota || undefined,
+        },
+      });
+      setPremioMsg(es ? "Premio registrado." : "Bonus saved.");
+      setPremioMonto("");
+      setPremioNota("");
+      await load();
+    } catch (e) {
+      setPremioMsg(e?.body?.detail || e?.message || (es ? "No se pudo registrar." : "Could not save."));
+    } finally {
+      setPremioSaving(false);
+    }
+  }, [premioPeriodo, premioMonto, premioNota, es, load]);
+
+  // ── Operación (filtrada por año) ────────────────────────────────────
+  const expsAnio = useMemo(
+    () => (exps || []).filter((e) => anio === "todos" || anioDe(e) === anio),
+    [exps, anio]
+  );
   const porEstado = useMemo(() => {
     const acc = {};
     ESTADOS.forEach((s) => { acc[s.key] = { n: 0, valor: 0 }; });
-    (exps || []).forEach((e) => {
+    (expsAnio || []).forEach((e) => {
       const k = String(e.estado || "REGISTRO");
       if (!acc[k]) acc[k] = { n: 0, valor: 0 };
       acc[k].n += 1;
       acc[k].valor += Number(e.order_value ?? e.total_client ?? 0) || 0;
     });
     return acc;
-  }, [exps]);
-  const totalExps = (exps || []).length;
+  }, [expsAnio]);
+  const totalExps = (expsAnio || []).length;
   const conocidos = ESTADOS.reduce((s, x) => s + (porEstado[x.key]?.n || 0), 0);
   const otros = totalExps - conocidos;
 
@@ -183,7 +237,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   // `/api/cobros/` está vacío en producción: el saldo sale del expediente
   // (`balance` = facturado - pagado, calculado por el backend).
   const { conSaldo, saldoReventa, saldoComision, nReventa, saldosPorCliente } = useMemo(() => {
-    const items = (exps || [])
+    const items = (expsAnio || [])
       .filter((e) => Number(e.balance) > 0)
       .map((e) => ({
         ...e,
@@ -210,7 +264,31 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
         .map((d) => ({ ...d, total: d.reventa + d.comision }))
         .sort((a, b) => b.total - a.total),
     };
-  }, [exps, clientes]);
+  }, [expsAnio, clientes]);
+
+  // Año del gráfico de comisiones.
+  const comPorMesAnio = useMemo(
+    () => (anio === "todos" ? comPorMes : comPorMes.filter((m) => String(m.mes).startsWith(String(anio)))),
+    [comPorMes, anio]
+  );
+
+  // Cliente | Saldo (deuda con Marluvas) | Comisión (lo que gana MWT).
+  // No se suman: son dos cosas distintas.
+  const clientesTabla = useMemo(() => {
+    const map = {};
+    saldosPorCliente.forEach((c) => {
+      map[c.cid] = { cid: c.cid, nombre: c.nombre, saldo: c.total, comision: 0 };
+    });
+    porClienteCom.forEach((c) => {
+      const clave = c.client_id || "-";
+      const d = map[clave] || { cid: clave, nombre: c.cliente, saldo: 0, comision: 0 };
+      d.comision = Number(c.comision) || 0;
+      map[clave] = d;
+    });
+    return Object.values(map)
+      .filter((c) => c.saldo > 0 || c.comision > 0)
+      .sort((a, b) => (b.saldo + b.comision) - (a.saldo + a.comision));
+  }, [saldosPorCliente, porClienteCom]);
 
   // ── Riesgo y finanzas ───────────────────────────────────────────────
   const salidas = rad?.proximas_salidas || [];
@@ -262,6 +340,26 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
       {err && <div className="card card-pad-lg" role="alert" style={{ color: "var(--critical)" }}>{err}</div>}
 
       {!loading && !err && <>
+        {/* ── Selector de año ──────────────────────────────────── */}
+        <div className="flex ai-center jc-between" style={{ gap: 8, flexWrap: "wrap" }}>
+          <div className="micro" style={{ color: "var(--text-tertiary)" }}>
+            {es ? "AÑO" : "YEAR"}
+          </div>
+          <div className="flex" style={{ gap: 4, flexWrap: "wrap" }}>
+            {[new Date().getFullYear(), new Date().getFullYear() - 1, new Date().getFullYear() - 2,
+              new Date().getFullYear() - 3, "todos"].map((y) => (
+              <button
+                key={y}
+                type="button"
+                className={anio === y ? "btn btn-primary btn-sm" : "btn btn-ghost btn-sm"}
+                onClick={() => setAnio(y)}
+              >
+                {y === "todos" ? (es ? "Todos" : "All") : y}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* ── Tiles con fuente ─────────────────────────────────── */}
         <div className="dash-tiles">
           <Tile
@@ -317,8 +415,8 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
             <Section
               title={es ? "Comisiones y premios por mes" : "Commissions and bonuses by month"}
               sub={es
-                ? "Facturado por Marluvas, mes a mes. Pasá el cursor por una barra para ver comisión, premio y total."
-                : "Invoiced by Marluvas, month by month. Hover a bar for commission, bonus and total."}
+                ? `Facturado por Marluvas en ${anio === "todos" ? "todos los años" : anio}. Pasá el cursor por una barra para ver comisión, premio y total.`
+                : `Invoiced by Marluvas in ${anio === "todos" ? "all years" : anio}. Hover a bar for commission, bonus and total.`}
             >
               <div className="dash-legend">
                 <span><i className="dash-sw" style={{ background: "var(--brand-accent)" }} />{es ? "Comisión" : "Commission"}</span>
@@ -327,7 +425,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                   {es ? "Premios" : "Bonuses"} {dinero(premios?.total || 0)} ({premios?.n || 0})
                 </span>
               </div>
-              <ComisionesChart datos={comPorMes} es={es} />
+              <ComisionesChart datos={comPorMesAnio} es={es} />
             </Section>
 
             <Section
@@ -490,36 +588,28 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
 
             <Section
-              title={es ? "Saldos por cliente" : "Balances by client"}
+              title={es ? "Saldo y comisión por cliente" : "Balance and commission by client"}
               sub={es
-                ? "Deuda actual en USD. A MWT: reventa (el cliente le paga a MWT). A Marluvas: comisión (la factura la cobra Marluvas)."
-                : "Current debt in USD. To MWT: resale. To Marluvas: commission."}
+                ? "Saldo: facturado por Marluvas sin cobrar, en USD. El crédito del cliente es directo con Marluvas. Comisión: lo que MWT gana con ese cliente. No se suman."
+                : "Balance: invoiced by Marluvas, uncollected, in USD. The client's credit is with Marluvas. Commission: what MWT earns. They are not added."}
             >
-              {saldosPorCliente.length === 0 ? <div className="dash-sub">-</div> : (
+              {clientesTabla.length === 0 ? <div className="dash-sub">-</div> : (
                 <table className="dash-table">
                   <thead>
                     <tr>
                       <th>{es ? "Cliente" : "Client"}</th>
-                      <th className="n">{es ? "A MWT" : "To MWT"}</th>
-                      <th className="n">{es ? "A Marluvas" : "To Marluvas"}</th>
-                      <th className="n">{es ? "Total" : "Total"}</th>
+                      <th className="n">{es ? "Saldo (Marluvas)" : "Balance (Marluvas)"}</th>
+                      <th className="n">{es ? "Comisión (MWT)" : "Commission (MWT)"}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {saldosPorCliente.slice(0, 8).map((c) => (
+                    {clientesTabla.slice(0, 10).map((c) => (
                       <tr key={c.cid}>
                         <td>{c.nombre || clientes[c.cid] || "-"}</td>
-                        <td className="n">{c.reventa ? dinero(c.reventa) : "-"}</td>
+                        <td className="n">{c.saldo ? dinero(c.saldo) : "-"}</td>
                         <td className="n" style={{ color: "var(--text-tertiary)" }}>{c.comision ? dinero(c.comision) : "-"}</td>
-                        <td className="n" style={{ fontWeight: 700 }}>{dinero(c.total)}</td>
                       </tr>
                     ))}
-                    <tr>
-                      <td style={{ fontWeight: 700 }}>{es ? "Total" : "Total"}</td>
-                      <td className="n" style={{ fontWeight: 700 }}>{dinero(saldoReventa)}</td>
-                      <td className="n" style={{ fontWeight: 700 }}>{dinero(saldoComision)}</td>
-                      <td className="n" style={{ fontWeight: 800 }}>{dinero(saldoReventa + saldoComision)}</td>
-                    </tr>
                   </tbody>
                 </table>
               )}
@@ -528,12 +618,58 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
             <Section
               title={es ? "Comisiones y premios" : "Commissions and bonuses"}
               sub={es ? "Comisión por marca y premios pagados por Marluvas. Todo en USD." : "Commission by brand and bonuses paid by Marluvas. All in USD."}
-              right={onGoFinanzas ? (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={onGoFinanzas}>
-                  {es ? "Finanzas" : "Finance"}
-                </button>
-              ) : null}
+              right={
+                <div className="flex ai-center" style={{ gap: 6 }}>
+                  <span className="micro" style={{ color: "var(--text-tertiary)" }}>
+                    {premios?.n || 0} {es ? "premios" : "bonuses"}
+                  </span>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPremioOpen((v) => !v)}>
+                    {premioOpen ? (es ? "Cerrar" : "Close") : (es ? "+ Premio" : "+ Bonus")}
+                  </button>
+                </div>
+              }
             >
+              {premioOpen && (
+                <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 10, marginBottom: 10 }}>
+                  <div className="flex" style={{ gap: 6, flexWrap: "wrap" }}>
+                    <input
+                      type="month"
+                      className="input"
+                      value={premioPeriodo}
+                      onChange={(e) => setPremioPeriodo(e.target.value)}
+                      style={{ width: 140 }}
+                    />
+                    <input
+                      type="number"
+                      className="input"
+                      placeholder={es ? "Monto USD" : "Amount USD"}
+                      value={premioMonto}
+                      onChange={(e) => setPremioMonto(e.target.value)}
+                      style={{ width: 120 }}
+                    />
+                    <input
+                      className="input"
+                      placeholder={es ? "Nota (opcional)" : "Note (optional)"}
+                      value={premioNota}
+                      onChange={(e) => setPremioNota(e.target.value)}
+                      style={{ minWidth: 150 }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={!premioPeriodo || !premioMonto || premioSaving}
+                      onClick={guardarPremio}
+                    >
+                      {premioSaving ? (es ? "Guardando…" : "Saving…") : (es ? "Registrar" : "Save")}
+                    </button>
+                  </div>
+                  {premioMsg && (
+                    <div className="micro" style={{ marginTop: 6, color: premioMsg.includes("registrado") || premioMsg.includes("saved") ? "var(--success-fg, #166534)" : "var(--critical)" }}>
+                      {premioMsg}
+                    </div>
+                  )}
+                </div>
+              )}
               {comFilas.length === 0 ? <div className="dash-sub">-</div> : (
                 <table className="dash-table">
                   <thead>
@@ -542,6 +678,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                       <th className="n">{es ? "Devengada" : "Earned"}</th>
                       <th className="n">{es ? "Pendiente" : "Pending"}</th>
                       <th className="n">{es ? "Proyectada" : "Projected"}</th>
+                      <th className="n">{es ? "Premio" : "Bonus"}</th>
                       <th className="n">{es ? "Total" : "Total"}</th>
                     </tr>
                   </thead>
@@ -552,24 +689,13 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                         <td className="n">{dinero(m.comision_devengada)}</td>
                         <td className="n">{dinero(m.comision_pendiente)}</td>
                         <td className="n">{dinero(m.comision_proyectada)}</td>
-                        <td className="n" style={{ fontWeight: 700 }}>{dinero(m.comision_total)}</td>
+                        <td className="n">{dinero(m.premio)}</td>
+                        <td className="n" style={{ fontWeight: 700 }}>{dinero(Number(m.comision_total || 0) + Number(m.premio || 0))}</td>
                       </tr>
                     ))}
                     <tr>
-                      <td style={{ fontWeight: 700 }}>{es ? "Comisión" : "Commission"}</td>
-                      <td className="n" colSpan={3} />
-                      <td className="n" style={{ fontWeight: 800 }}>{dinero(comTotal)}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ fontWeight: 600 }}>{es ? "Premios" : "Bonuses"} {premios?.n ? `(${premios.n})` : ""}</td>
-                      <td className="n" colSpan={3} style={{ color: "var(--text-tertiary)" }}>
-                        {es ? "pagados por Marluvas" : "paid by Marluvas"}
-                      </td>
-                      <td className="n" style={{ fontWeight: 700 }}>{dinero(premios?.total || 0)}</td>
-                    </tr>
-                    <tr>
                       <td style={{ fontWeight: 700 }}>{es ? "Total" : "Total"}</td>
-                      <td className="n" colSpan={3} />
+                      <td className="n" colSpan={4} />
                       <td className="n" style={{ fontWeight: 800 }}>{dinero(comTotal + Number(premios?.total || 0))}</td>
                     </tr>
                   </tbody>
