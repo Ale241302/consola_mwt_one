@@ -75,70 +75,107 @@ function Section({ title, sub, right, children }) {
   );
 }
 
-/** Barras de comisión y premio por mes. Al pasar el cursor, detalle del mes. */
-function ComisionesChart({ datos, es }) {
+/** Barras de comisión y premio por mes, con detalle flotante y premios negativos. */
+function ComisionesChart({ datos, detalle, es }) {
   const [hover, setHover] = useState(null);
   const filas = (datos || []).filter((d) => d && d.mes);
   if (!filas.length) {
     return <div className="dash-sub" style={{ padding: "18px 2px" }}>{es ? "Sin comisiones registradas." : "No recorded commissions."}</div>;
   }
-  const total = (d) => Number(d.comision || 0) + Number(d.premio || 0);
-  const max = Math.max(1, ...filas.map(total));
-  const W = 640, H = 190, pad = 22;
+  const com = (d) => Number(d.comision || 0);
+  const pre = (d) => Number(d.premio || 0);
+  const maxPos = Math.max(1, ...filas.map((d) => com(d) + Math.max(0, pre(d))));
+  const maxNeg = Math.max(0, ...filas.map((d) => Math.max(0, -pre(d))));
+
+  const W = 640, H = 210, top = 12, bottom = 26;
+  const alto = H - top - bottom;
+  const posH = maxNeg > 0 ? alto * (maxPos / (maxPos + maxNeg)) : alto;
+  const negH = alto - posH;
+  const baseY = top + posH;
   const bw = W / filas.length;
   const activo = filas[hover != null ? hover : filas.length - 1];
+  const filasDetalle = detalle?.[activo.mes] || [];
 
   return (
-    <div className="dash-chart">
-      <div className="micro" style={{ color: "var(--text-secondary)", marginBottom: 6, transition: "opacity .18s ease" }}>
-        <b>{activo.mes}</b>
-        {" · "}{es ? "Comisión" : "Commission"} {dinero(activo.comision)}
-        {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
-        {" · "}{es ? "Total" : "Total"} {dinero(total(activo))}
-      </div>
-      <div className="micro" style={{ color: "var(--text-tertiary)", textAlign: "right", marginBottom: 2 }}>
-        {es ? "máx" : "max"} {dinero(max)}
-      </div>
+    <div className="dash-chart" style={{ position: "relative" }}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img"
            aria-label={es ? "Comisión y premio por mes" : "Commission and bonus by month"}>
         {[0.25, 0.5, 0.75, 1].map((p) => (
-          <line key={p} x1="0" x2={W} y1={H - pad - (H - pad - 8) * p} y2={H - pad - (H - pad - 8) * p}
+          <line key={p} x1="0" x2={W} y1={top + posH * (1 - p)} y2={top + posH * (1 - p)}
                 stroke="var(--border)" strokeWidth="1" />
         ))}
+        <line x1="0" x2={W} y1={baseY} y2={baseY} stroke="var(--border-strong, var(--border))" strokeWidth="1" />
         {filas.map((d, i) => {
-          const hc = (Number(d.comision || 0) / max) * (H - pad - 8);
-          const hp = (Number(d.premio || 0) / max) * (H - pad - 8);
+          const hc = (com(d) / maxPos) * posH;
+          const p = pre(d);
+          const hp = maxNeg > 0 ? (Math.abs(p) / Math.max(maxNeg, 1)) * negH : 0;
           const x = i * bw + Math.max(2, (bw - 14) / 2);
           const w = Math.max(4, bw - 14);
           const atenuada = hover != null && hover !== i;
           const estilo = {
             opacity: atenuada ? 0.35 : 1,
-            transform: hover === i ? "translateY(-3px)" : "none",
-            transition: "opacity .18s ease, transform .18s ease",
-            transformBox: "fill-box",
-            transformOrigin: "bottom",
+            transition: "opacity .18s ease",
           };
           return (
             <g key={d.mes}
                onMouseOver={() => setHover(i)}
                onMouseOut={() => setHover(null)}>
-              <rect x={i * bw} y="0" width={bw} height={H - pad} fill="transparent" />
-              <rect x={x} y={H - pad - hc} width={w} height={hc} rx="2" fill="var(--brand-accent)" style={estilo}>
+              <rect x={i * bw} y="0" width={bw} height={H} fill="transparent" />
+              <rect x={x} y={baseY - hc} width={w} height={hc} rx="2" fill="var(--brand-accent)" style={estilo}>
                 <title>{`${d.mes} · ${es ? "Comisión" : "Commission"} ${dinero(d.comision)}`}</title>
               </rect>
-              {hp > 0 && (
-                <rect x={x} y={H - pad - hc - hp} width={w} height={hp} rx="2" fill="var(--warning-fg, #92400E)" opacity="0.85" style={estilo}>
-                  <title>{`${d.mes} · ${es ? "Premio" : "Bonus"} ${dinero(d.premio)}`}</title>
+              {p !== 0 && (
+                <rect
+                  x={x}
+                  y={p > 0 ? baseY - hc - hp : baseY}
+                  width={w}
+                  height={Math.max(1, hp)}
+                  rx="2"
+                  fill={p > 0 ? "var(--warning-fg, #92400E)" : "var(--critical)"}
+                  opacity="0.85"
+                  style={estilo}
+                >
+                  <title>{`${d.mes} · ${es ? "Premio" : "Bonus"} ${dinero(p)}`}</title>
                 </rect>
               )}
             </g>
           );
         })}
-        <line x1="0" x2={W} y1={H - pad} y2={H - pad} stroke="var(--border-strong, var(--border))" strokeWidth="1" />
       </svg>
-      <div className="flex jc-between micro" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
+      <div className="flex jc-between micro" style={{ color: "var(--text-tertiary)" }}>
         <span>{filas[0].mes}</span>
         <span>{filas[filas.length - 1].mes}</span>
+      </div>
+
+      {/* Flotante: el mes activo, con qué factura y cuánto por cada una. */}
+      <div
+        role="status"
+        style={{
+          position: "absolute", top: 4, left: "50%", transform: "translateX(-50%)",
+          maxWidth: 340, padding: "8px 10px", pointerEvents: "none", zIndex: 5,
+          background: "var(--surface-raised)", border: "1px solid var(--border)",
+          borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-md)",
+          fontSize: 11, lineHeight: 1.5,
+        }}
+      >
+        <div style={{ fontWeight: 700 }}>
+          {activo.mes} · {es ? "Comisión" : "Commission"} {dinero(activo.comision)}
+          {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
+        </div>
+        {filasDetalle.length === 0 ? (
+          <div style={{ color: "var(--text-tertiary)" }}>{es ? "Sin facturas detalladas." : "No invoices detailed."}</div>
+        ) : filasDetalle.slice(0, 6).map((f, idx) => (
+          <div key={idx} style={{ color: "var(--text-secondary)" }}>
+            {f.tipo === "PREMIO" ? (es ? "Premio" : "Bonus") : (es ? "Comisión" : "Commission")}
+            {" · "}{f.pf ? `PF ${f.pf}` : (f.fe || "-")}
+            {f.oc ? ` · OC ${f.oc}` : ""}
+            {" · "}{dinero(f.monto)}
+            {f.cliente ? ` · ${f.cliente}` : ""}
+          </div>
+        ))}
+        {filasDetalle.length > 6 && (
+          <div style={{ color: "var(--text-tertiary)" }}>+{filasDetalle.length - 6} {es ? "más" : "more"}</div>
+        )}
       </div>
     </div>
   );
@@ -152,6 +189,8 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const [com, setCom] = useState([]);
   const [comPorMes, setComPorMes] = useState([]);
   const [porClienteCom, setPorClienteCom] = useState([]);
+  const [porMesDetalle, setPorMesDetalle] = useState({});
+  const [proximas, setProximas] = useState([]);
   const [premios, setPremios] = useState(null);
   const [anio, setAnio] = useState(new Date().getFullYear());
   const [premioOpen, setPremioOpen] = useState(false);
@@ -160,19 +199,17 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const [premioNota, setPremioNota] = useState("");
   const [premioMsg, setPremioMsg] = useState(null);
   const [premioSaving, setPremioSaving] = useState(false);
-  const [flujo, setFlujo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr(null);
     const safe = (p) => p.catch(() => null);
-    const [e, cli, r, comi, f] = await Promise.all([
+    const [e, cli, r, comi] = await Promise.all([
       safe(expedientesApi.list()),
       safe(clientesApi.list()),
       safe(finanzasApi.radiografia(21)),
       safe(finanzasApi.comisionesPorMarca()),
-      safe(finanzasApi.flujo(90)),
     ]);
     setExps(rowsOf(e));
     const map = {};
@@ -182,8 +219,9 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     setCom(comi?.results || (Array.isArray(comi) ? comi : []));
     setComPorMes(comi?.por_mes || []);
     setPorClienteCom(comi?.por_cliente || []);
+    setPorMesDetalle(comi?.por_mes_detalle || {});
+    setProximas(comi?.proximas_entradas || []);
     setPremios(comi?.premios || null);
-    setFlujo(f || null);
     if (!e) setErr(es ? "No se pudieron cargar los expedientes del panel." : "Dashboard data failed to load.");
     setLoading(false);
   }, [es]);
@@ -306,21 +344,6 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     ? `50+ ${es ? "correos" : "emails"}`
     : `${respuestas.length} ${es ? "correos" : "emails"}`;
 
-  // Flujo por mes para que el gráfico se pueda leer con números.
-  const mesesFlujo = useMemo(() => {
-    const acc = {};
-    (flujo?.semanas || []).forEach((s) => {
-      const mes = String(s.semana || "").slice(0, 7);
-      if (!mes) return;
-      const d = acc[mes] || { mes, entradas: 0, salidas: 0 };
-      d.entradas += Number(s.entradas_usd) || 0;
-      d.salidas += Number(s.salidas_usd) || 0;
-      acc[mes] = d;
-    });
-    return Object.values(acc)
-      .map((d) => ({ ...d, neto: d.entradas - d.salidas }))
-      .sort((a, b) => a.mes.localeCompare(b.mes));
-  }, [flujo]);
   const comTotal = com.reduce((s, m) => s + Number(m.comision_total || 0), 0);
   const comProy = com.reduce((s, m) => s + Number(m.comision_proyectada || 0), 0);
   const comFilas = com.filter((m) => {
@@ -329,7 +352,6 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     const enCero = !Number(m.comision_proyectada) && !Number(m.comision_total);
     return !(esSinMarca && enCero);
   });
-  const fl = flujo?.totales || {};
   const open = (id) => { if (id && onOpenExpediente) onOpenExpediente(id); };
 
   return (
@@ -425,38 +447,47 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                   {es ? "Premios" : "Bonuses"} {dinero(premios?.total || 0)} ({premios?.n || 0})
                 </span>
               </div>
-              <ComisionesChart datos={comPorMesAnio} es={es} />
+              <ComisionesChart datos={comPorMesAnio} detalle={porMesDetalle} es={es} />
             </Section>
 
             <Section
-              title={es ? "Entradas previstas" : "Expected inflows"}
+              title={es ? "Comisiones por cobrar" : "Commissions to collect"}
               sub={es
-                ? "Próximos 90 días: comisiones y reventas previstas. No hay pagos a Marluvas en la ventana, por eso no se muestra una serie de salidas."
-                : "Next 90 days: expected commissions and resales. No payments to Marluvas in the window."}
+                ? "Qué entra, de qué pedido y cuándo: fecha exacta y días restantes. Son comisiones; los premios van en la tabla de arriba."
+                : "What comes in, from which order, and when: exact date and days left. Commissions only; bonuses are in the table above."}
+              right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{proximas.length}</span>}
             >
-              {mesesFlujo.length === 0 ? (
-                <div className="dash-sub" style={{ padding: "14px 2px" }}>{es ? "Sin entradas previstas." : "No expected inflows."}</div>
+              {proximas.length === 0 ? (
+                <div className="dash-sub" style={{ padding: "14px 2px" }}>{es ? "Sin comisiones por cobrar con fecha." : "No dated commissions to collect."}</div>
               ) : (
-                <table className="dash-table">
-                  <thead>
-                    <tr>
-                      <th>{es ? "Mes" : "Month"}</th>
-                      <th className="n">{es ? "Entradas previstas" : "Expected in"}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {mesesFlujo.map((m) => (
-                      <tr key={m.mes}>
-                        <td>{m.mes}</td>
-                        <td className="n" style={{ fontWeight: 700 }}>{dinero(m.entradas)}</td>
+                <div className="dash-scroll">
+                  <table className="dash-table">
+                    <thead>
+                      <tr>
+                        <th>{es ? "Fecha" : "Date"}</th>
+                        <th className="n">{es ? "Días" : "Days"}</th>
+                        <th>{es ? "Cliente" : "Client"}</th>
+                        <th>{es ? "Pedido" : "Order"}</th>
+                        <th className="n">{es ? "Monto" : "Amount"}</th>
                       </tr>
-                    ))}
-                    <tr>
-                      <td style={{ fontWeight: 700 }}>{es ? "Total" : "Total"}</td>
-                      <td className="n" style={{ fontWeight: 800 }}>{dinero(fl.neto_usd)}</td>
-                    </tr>
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {proximas.slice(0, 10).map((p, i) => (
+                        <tr key={`${p.fecha}-${i}`}>
+                          <td className="tabular-nums">{fmtDate(p.fecha, lang)}</td>
+                          <td className="n" style={{ color: p.dias <= 7 ? "var(--warning-fg, #92400E)" : "var(--text-tertiary)" }}>
+                            {p.dias}
+                          </td>
+                          <td>{p.cliente}</td>
+                          <td style={{ color: "var(--text-tertiary)" }}>
+                            {p.proforma || "-"}{p.oc ? ` · OC ${p.oc}` : ""}
+                          </td>
+                          <td className="n" style={{ fontWeight: 700 }}>{dinero(p.monto)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </Section>
 
@@ -605,7 +636,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                   <tbody>
                     {clientesTabla.slice(0, 10).map((c) => (
                       <tr key={c.cid}>
-                        <td>{c.nombre || clientes[c.cid] || "-"}</td>
+                        <td>{clientes[c.cid] || (c.nombre && !/^[0-9a-f-]{36}$/i.test(c.nombre) ? c.nombre : (es ? "Cliente sin nombre" : "Unnamed client"))}</td>
                         <td className="n">{c.saldo ? dinero(c.saldo) : "-"}</td>
                         <td className="n" style={{ color: "var(--text-tertiary)" }}>{c.comision ? dinero(c.comision) : "-"}</td>
                       </tr>

@@ -1178,7 +1178,7 @@ def comisiones_por_marca(request):
         cid = str(it.get("client_id") or "-")
         d = por_cli.setdefault(cid, {
             "client_id": cid,
-            "cliente": it.get("client_name") or cid,
+            "cliente": it.get("cliente_razon_social") or cid,
             "comision": Decimal("0"),
         })
         d["comision"] += _dec(amt)
@@ -1187,6 +1187,53 @@ def comisiones_por_marca(request):
         for d in por_cli.values()
     ]
     por_cliente.sort(key=lambda x: _dec(x["comision"]), reverse=True)
+
+    # Detalle por mes: qué factura (PF/OC/FE), cliente y monto componen cada
+    # barra. Es lo que el tooltip muestra al pasar el cursor.
+    detalle = _query("""
+        SELECT h.periodo AS mes, h.tipo, h.pf_ref, h.fe_codigo,
+               h.cliente_nombre, h.comision_usd, h.fecha_emision,
+               o.codigo AS oc_codigo
+          FROM finance.comision_historica h
+          LEFT JOIN expedientes.expediente e ON e.id = h.expediente_id
+          LEFT JOIN expedientes.oc o ON o.id = e.oc_id
+         WHERE h.is_active = TRUE
+         ORDER BY h.periodo, h.tipo
+    """)
+    por_mes_detalle: dict[str, list] = {}
+    for d in detalle:
+        por_mes_detalle.setdefault(d["mes"], []).append({
+            "tipo": d["tipo"],
+            "pf": d["pf_ref"],
+            "oc": d["oc_codigo"],
+            "fe": d["fe_codigo"],
+            "cliente": d["cliente_nombre"],
+            "monto": str(_dec(d["comision_usd"]).quantize(Decimal("0.01"))),
+        })
+
+    # Próximas entradas con fecha exacta y días restantes (no solo el mes).
+    proximas = []
+    for it in items:
+        amt = it.get("commission_amount")
+        fecha = it.get("fecha_pago_aprox")
+        if amt is None or not fecha:
+            continue
+        try:
+            f = date.fromisoformat(str(fecha)[:10])
+        except (TypeError, ValueError):
+            continue
+        if f < today:
+            continue
+        proximas.append({
+            "fecha": f.isoformat(),
+            "dias": (f - today).days,
+            "cliente": it.get("cliente_razon_social") or "-",
+            "proforma": it.get("display_id") or it.get("proforma_codigo"),
+            "oc": it.get("oc_codigo"),
+            "concepto": "Comisión",
+            "monto": str(_dec(amt).quantize(Decimal("0.01"))),
+        })
+    proximas.sort(key=lambda x: x["fecha"])
 
     return Response({
         "results": results,
@@ -1197,7 +1244,9 @@ def comisiones_por_marca(request):
             "n": premios_n,
         },
         "por_mes": por_mes,
+        "por_mes_detalle": por_mes_detalle,
         "por_cliente": por_cliente,
+        "proximas_entradas": proximas,
         "marcas": [{"id": p["marca_id"], "nombre": p["brand_name"]} for p in prem_marca],
     })
 
