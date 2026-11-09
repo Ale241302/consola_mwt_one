@@ -9586,6 +9586,7 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
   border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
 }
 .dash-tile:hover .src, .dash-tile:focus-within .src { display: block; }
+.dash-tile:focus-visible { outline: 2px solid var(--brand-accent); outline-offset: 2px; }
 .dash-tile .src button { margin-top: 6px; }
 
 .dash-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }

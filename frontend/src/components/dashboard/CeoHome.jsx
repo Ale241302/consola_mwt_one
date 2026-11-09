@@ -34,7 +34,7 @@ const ESTADOS = [
 
 function Tile({ label, value, cmp, src, onGo, tone, goLabel }) {
   return (
-    <div className="dash-tile">
+    <div className="dash-tile" tabIndex={src ? 0 : -1}>
       <div className="lab">{label}</div>
       <div className="big" style={tone ? { color: tone } : undefined}>{value}</div>
       {cmp && <div className="cmp">{cmp}</div>}
