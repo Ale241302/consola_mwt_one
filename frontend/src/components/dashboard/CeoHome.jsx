@@ -69,46 +69,59 @@ function Section({ title, sub, right, children }) {
   );
 }
 
-/** Barras por semana: dos series (entradas y salidas). SVG sin dependencias. */
-function Bars({ semanas }) {
-  const datos = (semanas || []).filter(Boolean);
-  if (!datos.length) {
-    return <div className="dash-sub" style={{ padding: "18px 2px" }}>Sin series de flujo disponibles.</div>;
+/** Barras de comisión y premio por mes. Al pasar el cursor, detalle del mes. */
+function ComisionesChart({ datos, es }) {
+  const [hover, setHover] = useState(null);
+  const filas = (datos || []).filter((d) => d && d.mes);
+  if (!filas.length) {
+    return <div className="dash-sub" style={{ padding: "18px 2px" }}>{es ? "Sin comisiones registradas." : "No recorded commissions."}</div>;
   }
-  const W = 640, H = 180, pad = 18;
-  const max = Math.max(
-    1,
-    ...datos.map((s) => Math.max(Number(s.entradas_usd) || 0, Number(s.salidas_usd) || 0))
-  );
-  const bw = W / datos.length;
-  const barra = Math.max(2, (bw - 6) / 2);
-  const alto = (v) => Math.max(0, (Number(v) || 0) / max) * (H - pad - 8);
+  const total = (d) => Number(d.comision || 0) + Number(d.premio || 0);
+  const max = Math.max(1, ...filas.map(total));
+  const W = 640, H = 190, pad = 22;
+  const bw = W / filas.length;
+  const activo = filas[hover != null ? hover : filas.length - 1];
 
   return (
     <div>
+      <div className="micro" style={{ color: "var(--text-secondary)", marginBottom: 6 }}>
+        <b>{activo.mes}</b>
+        {" · "}{es ? "Comisión" : "Commission"} {dinero(activo.comision)}
+        {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
+        {" · "}{es ? "Total" : "Total"} {dinero(total(activo))}
+      </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img"
-           aria-label="Entradas y salidas por semana en los próximos 90 días">
+           aria-label={es ? "Comisión y premio por mes" : "Commission and bonus by month"}>
         {[0.25, 0.5, 0.75, 1].map((p) => (
           <line key={p} x1="0" x2={W} y1={H - pad - (H - pad - 8) * p} y2={H - pad - (H - pad - 8) * p}
                 stroke="var(--border)" strokeWidth="1" />
         ))}
-        {datos.map((s, i) => {
-          const he = alto(s.entradas_usd);
-          const hs = alto(s.salidas_usd);
+        {filas.map((d, i) => {
+          const hc = (Number(d.comision || 0) / max) * (H - pad - 8);
+          const hp = (Number(d.premio || 0) / max) * (H - pad - 8);
+          const x = i * bw + Math.max(2, (bw - 14) / 2);
+          const w = Math.max(4, bw - 14);
           return (
-            <g key={`${s.semana}-${i}`}>
-              <rect x={i * bw + 2} y={H - pad - he} width={barra} height={he}
-                    fill="var(--brand-accent)" rx="2" />
-              <rect x={i * bw + 2 + barra} y={H - pad - hs} width={barra} height={hs}
-                    fill="var(--critical)" opacity="0.55" rx="2" />
+            <g key={d.mes}
+               onMouseEnter={() => setHover(i)}
+               onMouseLeave={() => setHover(null)}>
+              <rect x={i * bw} y="0" width={bw} height={H - pad} fill="transparent" />
+              <rect x={x} y={H - pad - hc} width={w} height={hc} rx="2" fill="var(--brand-accent)">
+                <title>{`${d.mes} · ${es ? "Comisión" : "Commission"} ${dinero(d.comision)}`}</title>
+              </rect>
+              {hp > 0 && (
+                <rect x={x} y={H - pad - hc - hp} width={w} height={hp} rx="2" fill="var(--warning-fg, #92400E)" opacity="0.85">
+                  <title>{`${d.mes} · ${es ? "Premio" : "Bonus"} ${dinero(d.premio)}`}</title>
+                </rect>
+              )}
             </g>
           );
         })}
         <line x1="0" x2={W} y1={H - pad} y2={H - pad} stroke="var(--border-strong, var(--border))" strokeWidth="1" />
       </svg>
       <div className="flex jc-between micro" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
-        <span>{datos[0]?.semana || ""}</span>
-        <span>{datos[datos.length - 1]?.semana || ""}</span>
+        <span>{filas[0].mes}</span>
+        <span>{filas[filas.length - 1].mes}</span>
       </div>
     </div>
   );
@@ -120,6 +133,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const [clientes, setClientes] = useState({});
   const [rad, setRad] = useState(null);
   const [com, setCom] = useState([]);
+  const [comPorMes, setComPorMes] = useState([]);
   const [premios, setPremios] = useState(null);
   const [flujo, setFlujo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -141,6 +155,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     setClientes(map);
     setRad(r || null);
     setCom(comi?.results || (Array.isArray(comi) ? comi : []));
+    setComPorMes(comi?.por_mes || []);
     setPremios(comi?.premios || null);
     setFlujo(f || null);
     if (!e) setErr(es ? "No se pudieron cargar los expedientes del panel." : "Dashboard data failed to load.");
@@ -300,38 +315,48 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
 
             <Section
-              title={es ? "Flujo proyectado" : "Projected cash flow"}
+              title={es ? "Comisiones y premios por mes" : "Commissions and bonuses by month"}
               sub={es
-                ? "Próximos 90 días por semana. Entradas: comisiones y reventas previstas. Salidas: pagos a Marluvas."
-                : "Next 90 days by week. In: expected commissions and resales. Out: payments to Marluvas."}
+                ? "Facturado por Marluvas, mes a mes. Pasá el cursor por una barra para ver comisión, premio y total."
+                : "Invoiced by Marluvas, month by month. Hover a bar for commission, bonus and total."}
             >
               <div className="dash-legend">
-                <span><i className="dash-sw" style={{ background: "var(--brand-accent)" }} />{es ? "Entradas" : "In"}</span>
-                <span><i className="dash-sw" style={{ background: "var(--critical)", opacity: 0.6 }} />{es ? "Salidas" : "Out"}</span>
+                <span><i className="dash-sw" style={{ background: "var(--brand-accent)" }} />{es ? "Comisión" : "Commission"}</span>
+                <span><i className="dash-sw" style={{ background: "var(--warning-fg, #92400E)", opacity: 0.85 }} />{es ? "Premio" : "Bonus"}</span>
                 <span style={{ marginLeft: "auto" }}>
-                  {es ? "Neto" : "Net"} {dinero(fl.neto_usd)}
+                  {es ? "Premios" : "Bonuses"} {dinero(premios?.total || 0)} ({premios?.n || 0})
                 </span>
               </div>
-              <Bars semanas={flujo?.semanas || []} />
-              {mesesFlujo.length > 0 && (
-                <table className="dash-table" style={{ marginTop: 10 }}>
+              <ComisionesChart datos={comPorMes} es={es} />
+            </Section>
+
+            <Section
+              title={es ? "Entradas previstas" : "Expected inflows"}
+              sub={es
+                ? "Próximos 90 días: comisiones y reventas previstas. No hay pagos a Marluvas en la ventana, por eso no se muestra una serie de salidas."
+                : "Next 90 days: expected commissions and resales. No payments to Marluvas in the window."}
+            >
+              {mesesFlujo.length === 0 ? (
+                <div className="dash-sub" style={{ padding: "14px 2px" }}>{es ? "Sin entradas previstas." : "No expected inflows."}</div>
+              ) : (
+                <table className="dash-table">
                   <thead>
                     <tr>
                       <th>{es ? "Mes" : "Month"}</th>
-                      <th className="n">{es ? "Entradas" : "In"}</th>
-                      <th className="n">{es ? "Salidas" : "Out"}</th>
-                      <th className="n">{es ? "Neto" : "Net"}</th>
+                      <th className="n">{es ? "Entradas previstas" : "Expected in"}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {mesesFlujo.map((m) => (
                       <tr key={m.mes}>
                         <td>{m.mes}</td>
-                        <td className="n">{dinero(m.entradas)}</td>
-                        <td className="n">{dinero(m.salidas)}</td>
-                        <td className="n" style={{ fontWeight: 700 }}>{dinero(m.neto)}</td>
+                        <td className="n" style={{ fontWeight: 700 }}>{dinero(m.entradas)}</td>
                       </tr>
                     ))}
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{es ? "Total" : "Total"}</td>
+                      <td className="n" style={{ fontWeight: 800 }}>{dinero(fl.neto_usd)}</td>
+                    </tr>
                   </tbody>
                 </table>
               )}

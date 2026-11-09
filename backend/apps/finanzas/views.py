@@ -1135,6 +1135,21 @@ def comisiones_por_marca(request):
     premios_total = _dec(prem[0]["total"]) if prem else Decimal("0")
     premios_n = int(prem[0]["n"]) if prem else 0
 
+    # Comisión y premio por mes, para el gráfico. Salen de las facturas de
+    # comisión transcritas (finance.comision_historica), no del expediente.
+    por_mes = _query("""
+        SELECT periodo AS mes,
+               COALESCE(SUM(comision_usd) FILTER (WHERE tipo = 'COMISION'), 0) AS comision,
+               COALESCE(SUM(comision_usd) FILTER (WHERE tipo = 'PREMIO'), 0) AS premio
+          FROM finance.comision_historica
+         WHERE is_active = TRUE AND periodo ~ '^[0-9]{4}-[0-9]{2}$'
+         GROUP BY periodo
+         ORDER BY periodo
+    """)
+    for m in por_mes:
+        m["comision"] = str(_dec(m["comision"]).quantize(Decimal("0.01")))
+        m["premio"] = str(_dec(m["premio"]).quantize(Decimal("0.01")))
+
     return Response({
         "results": results,
         "today": today.isoformat(),
@@ -1143,6 +1158,7 @@ def comisiones_por_marca(request):
             "total": str(premios_total.quantize(Decimal("0.01"))),
             "n": premios_n,
         },
+        "por_mes": por_mes,
     })
 
 
