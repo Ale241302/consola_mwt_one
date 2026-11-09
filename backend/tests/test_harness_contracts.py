@@ -212,6 +212,73 @@ class TestA1AlertaTope:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# B2 · el padre ve a sus subsidiarias, la subsidiaria no ve al padre
+# ─────────────────────────────────────────────────────────────────────
+class TestB2Grupo:
+    @staticmethod
+    def _fake_cliente(hijos):
+        """Cliente falso: pares (hijo_id, parent_id)."""
+
+        class _QS:
+            def __init__(self, ids):
+                self._ids = ids
+
+            def values_list(self, *_a, **_k):
+                return self._ids
+
+        class _Objects:
+            @staticmethod
+            def filter(**kwargs):
+                padres = {str(p).lower() for p in (kwargs.get("parent_id__in") or [])}
+                return _QS([h for h, p in hijos if p.lower() in padres])
+
+        return types.SimpleNamespace(objects=_Objects)
+
+    def test_padre_ve_a_sus_subsidiarias(self, monkeypatch):
+        import apps.clientes.models as clientes_models
+
+        monkeypatch.setattr(
+            clientes_models,
+            "Cliente",
+            self._fake_cliente([("child-1", "parent-1"), ("child-2", "parent-1")]),
+        )
+        from apps.portal.views import _expandir_grupo
+
+        assert _expandir_grupo(["parent-1"]) == ["child-1", "child-2", "parent-1"]
+
+    def test_subsidiaria_no_ve_al_padre(self, monkeypatch):
+        import apps.clientes.models as clientes_models
+
+        monkeypatch.setattr(
+            clientes_models,
+            "Cliente",
+            self._fake_cliente([("child-1", "parent-1")]),
+        )
+        from apps.portal.views import _expandir_grupo
+
+        assert _expandir_grupo(["child-1"]) == ["child-1"]
+
+    def test_sin_empresas_no_hay_nada(self):
+        from apps.portal.views import _expandir_grupo
+
+        assert _expandir_grupo([]) == []
+
+    def test_si_la_base_falla_conserva_el_acceso_original(self, monkeypatch):
+        import apps.clientes.models as clientes_models
+
+        class _Roto:
+            class objects:
+                @staticmethod
+                def filter(**_kw):
+                    raise RuntimeError("sin base")
+
+        monkeypatch.setattr(clientes_models, "Cliente", _Roto)
+        from apps.portal.views import _expandir_grupo
+
+        assert _expandir_grupo(["parent-1"]) == ["parent-1"]
+
+
+# ─────────────────────────────────────────────────────────────────────
 # B1 · el secreto de la app MCP nunca sale en una lectura
 # ─────────────────────────────────────────────────────────────────────
 class TestB1Secreto:

@@ -186,6 +186,31 @@ def _resolve_client_id(request):
     return None
 
 
+def _expandir_grupo(ids: list[str]) -> list[str]:
+    """Ajuste B2 · el padre ve a sus subsidiarias; la subsidiaria no ve al padre.
+
+    La expansión es solo hacia abajo: se suman las empresas cuyo `parent_id`
+    está en el set del usuario. Tener una subsidiaria nunca agrega al padre.
+    Fail-safe: ante cualquier error devuelve la lista original.
+    """
+    if not ids:
+        return []
+    base = [str(i).lower() for i in ids if i]
+    try:
+        from apps.clientes.models import Cliente
+
+        variantes = list({*base, *[i.upper() for i in base]})
+        hijos = (
+            Cliente.objects
+            .filter(parent_id__in=variantes, is_active=True)
+            .values_list("id", flat=True)
+        )
+        return sorted({*base, *[str(hijo).lower() for hijo in hijos]})
+    except Exception as e:  # noqa: BLE001 — sin grupo es preferible a sin acceso
+        log.warning("_expandir_grupo falló: %s", e)
+        return base
+
+
 def _resolve_client_ids(request):
     """Sprint 2026-05-20 · Multi-empresa.
 
@@ -277,6 +302,9 @@ def _resolve_client_ids(request):
             log.warning("_resolve_client_ids fallback SQL falló: %s", e)
             user_ids = []
 
+    # B2 · grupo: si el usuario tiene la empresa padre, suma sus subsidiarias.
+    user_ids = _expandir_grupo(user_ids)
+
     # 2. Override: query param ?empresa_id (cliente activo del usuario)
     empresa_q = request.query_params.get("empresa_id")
     if empresa_q:
@@ -359,7 +387,8 @@ def _all_user_client_ids(request):
             log.warning("_all_user_client_ids fallback SQL falló: %s", e)
             user_ids = []
 
-    return user_ids
+    # B2 · el catálogo de empresas del padre incluye a sus subsidiarias.
+    return _expandir_grupo(user_ids)
 
 
 def _user_identity(request):
