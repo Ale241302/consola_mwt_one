@@ -1,7 +1,8 @@
 """Contratos del harness — A1 y B1 (`01_AJUSTES_MWT_ONE_Y_MCP.md`).
 
-Cada test nombra el ajuste que protege y se corre sin base de datos
-(`pytest.mark.no_db`), así sirve igual en local que en CI.
+Cada test nombra el ajuste que protege y corre sin base de datos
+(`pytest.mark.no_db`), así sirve igual en local que en CI. El contrato de C2
+necesita INSERT real y vive en `test_payment_integrity.py`.
 
 A1 · leer fechas nunca escribe y el tope de 120 días no cierra nada solo.
 B1 · el Client Secret de la app MCP no sale en ninguna lectura.

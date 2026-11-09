@@ -61,6 +61,54 @@ def _next_codigo() -> str:
     return row[0] if row and row[0] else f"PAY-NOSEQ-{uuid.uuid4().hex[:6].upper()}"
 
 
+def constraint_name(exc) -> Optional[str]:
+    """Nombre de la constraint violada por un IntegrityError.
+
+    C2: el 409 de pagos se clasificaba con `"duplicate key" in msg`, así que
+    cualquier colisión (`payment_codigo_key`, `payment_event_id_key`) se
+    reportaba como DUPLICATE_PAYMENT_REFERENCE. Con el nombre real se puede
+    decir la verdad y actuar distinto en cada caso.
+    """
+    diag = getattr(exc, "diag", None)
+    name = getattr(diag, "constraint_name", None) if diag is not None else None
+    if name:
+        return str(name)
+    import re
+
+    match = re.search(r'constraint "([^"]+)"', str(exc) or "")
+    return match.group(1) if match else None
+
+
+def _resync_payment_codigo_seq() -> None:
+    """Adelanta la secuencia de códigos al máximo ya usado (idempotente).
+
+    Si `finance.payment_codigo_seq` quedó atrás (restauración de datos,
+    pruebas manuales), cada alta choca con `payment_codigo_key`. Esto la
+    realinea; es best-effort y nunca rompe el registro.
+    """
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT setval(
+                    'finance.payment_codigo_seq',
+                    GREATEST(
+                        (SELECT COALESCE(
+                                    MAX(substring(codigo from 'PAY-[0-9]{4}-([0-9]+)')::bigint),
+                                    0)
+                           FROM finance.payment
+                          WHERE codigo LIKE 'PAY-%'),
+                        (SELECT last_value FROM finance.payment_codigo_seq),
+                        1
+                    ),
+                    true
+                )
+                """
+            )
+    except Exception as e:  # noqa: BLE001 — la realineación no debe romper el alta
+        log.warning("C2 · no se pudo realinear payment_codigo_seq: %s", e)
+
+
 def _hash_file(file) -> str:
     """SHA-256 del contenido. Reposiciona el cursor al inicio."""
     h = hashlib.sha256()
@@ -105,6 +153,90 @@ def _client_id_for_expediente(expediente_id: uuid.UUID) -> Optional[uuid.UUID]:
 # ════════════════════════════════════════════════════════════
 class PaymentService:
     """Orquesta el alta atómica de un Payment v2.0."""
+
+    @staticmethod
+    def _insert_payment_with_retry(
+        *,
+        payment_id,
+        codigo,
+        expediente_id,
+        client_id,
+        validated,
+        default_estado,
+        actor_id,
+        event_id,
+        now_utc,
+    ):
+        """INSERT del Payment, con auto-curación del código (C2).
+
+        · `payment_codigo_key` → la secuencia quedó atrás del máximo código
+          usado: se realinea y se reintenta. Antes esto se reportaba al agente
+          como "referencia duplicada" y lo mandaba a cambiar un dato que no
+          tenía nada que ver.
+        · `payment_event_id_key` → otra request concurrente ganó la carrera
+          de idempotencia: devuelve None para que `register` entregue el pago
+          existente en vez de fallar.
+        """
+        for intento in range(3):
+            try:
+                with transaction.atomic():  # savepoint: un fallo no aborta la transacción externa
+                    with connection.cursor() as cur:
+                        cur.execute(
+                            """
+                            INSERT INTO finance.payment (
+                                id, codigo, expediente_id, client_id,
+                                monto, moneda, tasa_cambio_a_usd, fecha,
+                                metodo, tipo_pago, referencia, estado, notas,
+                                created_by, event_id, metadata,
+                                is_active, created_at, updated_at
+                            )
+                            VALUES (
+                                %s, %s, %s, %s,
+                                %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s,
+                                %s, %s, %s::jsonb,
+                                TRUE, %s, %s
+                            )
+                            RETURNING id
+                            """,
+                            [
+                                str(payment_id), codigo,
+                                str(expediente_id), str(client_id) if client_id else None,
+                                Decimal(str(validated["monto"])),
+                                validated["moneda"],
+                                # Snapshot FX al momento del registro (Fase 5A · OXR).
+                                # Si OXR no está configurado, FXService devuelve 1.0
+                                # con warning (no bloquea el registro).
+                                FXService.get_usd_rate(validated["moneda"], validated["fecha"]),
+                                validated["fecha"],
+                                validated["metodo"],
+                                validated["tipo_pago"],
+                                validated["referencia"],
+                                default_estado,
+                                validated.get("notas") or None,
+                                str(actor_id) if actor_id else None,
+                                str(event_id),
+                                "{}",
+                                now_utc, now_utc,
+                            ],
+                        )
+                return Payment.objects.get(id=payment_id)
+            except IntegrityError as exc:
+                constraint = constraint_name(exc)
+                if constraint == "payment_event_id_key":
+                    return None
+                if constraint == "payment_codigo_key" and intento < 2:
+                    log.warning(
+                        "C2 · código %s ya existe; realineando payment_codigo_seq y reintentando",
+                        codigo,
+                    )
+                    _resync_payment_codigo_seq()
+                    codigo = _next_codigo()
+                    continue
+                raise
+        raise IntegrityError(
+            "payment_codigo_key: no se encontró un código libre tras 3 intentos."
+        )
 
     @staticmethod
     @transaction.atomic
@@ -180,49 +312,33 @@ class PaymentService:
         # ── 4. Crear Payment usando SQL crudo (managed=False) ──
         # Usamos cursor para tener control fino sobre los GENERATED
         # columns y los DEFAULTs de la DB (event_id, codigo, etc.).
+        # C2: el INSERT se auto-cura ante colisión de código y la colisión de
+        # event_id (dos requests concurrentes) devuelve el pago ya creado.
         default_estado = PaymentStatus.PENDIENTE_AI if evidence_file else PaymentStatus.NEEDS_REVIEW
-        with connection.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO finance.payment (
-                    id, codigo, expediente_id, client_id,
-                    monto, moneda, tasa_cambio_a_usd, fecha,
-                    metodo, tipo_pago, referencia, estado, notas,
-                    created_by, event_id, metadata,
-                    is_active, created_at, updated_at
+        payment = PaymentService._insert_payment_with_retry(
+            payment_id=payment_id,
+            codigo=codigo,
+            expediente_id=expediente_id,
+            client_id=client_id,
+            validated=validated,
+            default_estado=default_estado,
+            actor_id=actor_id,
+            event_id=event_id,
+            now_utc=now_utc,
+        )
+        if payment is None:
+            existing = Payment.objects.filter(event_id=event_id).first()
+            if not existing:
+                raise IntegrityError(
+                    "payment_event_id_key: otra request registró el mismo event_id "
+                    "pero la fila aún no es visible; reintentá la misma operación."
                 )
-                VALUES (
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s,
-                    %s, %s, %s::jsonb,
-                    TRUE, %s, %s
-                )
-                RETURNING id
-                """,
-                [
-                    str(payment_id), codigo,
-                    str(expediente_id), str(client_id) if client_id else None,
-                    Decimal(str(validated["monto"])),
-                    validated["moneda"],
-                    # Snapshot FX al momento del registro (Fase 5A · OXR).
-                    # Si OXR no está configurado, FXService devuelve 1.0
-                    # con warning (no bloquea el registro).
-                    FXService.get_usd_rate(validated["moneda"], validated["fecha"]),
-                    validated["fecha"],
-                    validated["metodo"],
-                    validated["tipo_pago"],
-                    validated["referencia"],
-                    default_estado,
-                    validated.get("notas") or None,
-                    str(actor_id) if actor_id else None,
-                    str(event_id),
-                    "{}",
-                    now_utc, now_utc,
-                ],
+            log.info("Payment idempotency por event_id · payment=%s", existing.id)
+            return RegisterResult(
+                payment=existing,
+                applications=list(PaymentApplication.objects.filter(payment_id=existing.id)),
+                evidence=PaymentEvidence.objects.filter(payment_id=existing.id).first(),
             )
-
-        payment = Payment.objects.get(id=payment_id)
 
         # ── 5. Crear PaymentApplications ────────────────────────
         applications: List[PaymentApplication] = []

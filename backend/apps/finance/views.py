@@ -41,6 +41,7 @@ from .services import (
     PaymentService,
     CreditEffectService, CounterpartyValidator, CounterpartyMismatchError,
     ExpedienteTermsUndefinedError, ActivityLogger,
+    constraint_name,
 )
 # Sprint Registrar Pago (Fase 1)
 from .enums import (
@@ -337,13 +338,18 @@ class PaymentViewSet(viewsets.ViewSet):
                 pre_verdict = pre_verdict,
             )
         except IntegrityError as exc:
-            # Sprint 2026-05-26 (CEO) - el indice payment_uniq_ref_idx
-            # ahora es PARTIAL: solo CONFIRMADO_AI/HUMANO bloquean
-            # duplicados. Si igual choca, devolvemos 409 user-friendly
-            # en vez de 500.
-            log.warning("PaymentService.register IntegrityError: %s", exc)
-            msg = str(exc).lower()
-            if "payment_uniq_ref_idx" in msg or "duplicate key" in msg:
+            # C2 · la constraint que falló decide la respuesta. Antes cualquier
+            # "duplicate key" se reportaba como DUPLICATE_PAYMENT_REFERENCE; una
+            # colisión de código (secuencia atrasada) o de event_id (dos
+            # requests iguales) mandaba al agente a cambiar la referencia, que
+            # no arregla nada. Reproducido el 09/11/2026: forzar un código
+            # repetido devolvía ese 409 mentiroso.
+            constraint = constraint_name(exc)
+            log.warning(
+                "PaymentService.register IntegrityError · constraint=%s · %s",
+                constraint, exc,
+            )
+            if constraint == "payment_uniq_ref_idx":
                 return Response({
                     "detail": (
                         "Ya existe un pago CONFIRMADO con esta referencia "
@@ -351,8 +357,37 @@ class PaymentViewSet(viewsets.ViewSet):
                         "primero recházalo o elimina el anterior desde su drawer."
                     ),
                     "code": "DUPLICATE_PAYMENT_REFERENCE",
+                    "constraint": constraint,
                 }, status=409)
-            return Response({"detail": f"Error de integridad: {exc}"}, status=409)
+            if constraint == "payment_event_id_key":
+                existing = Payment.objects.filter(
+                    event_id=s.validated_data.get("event_id")
+                ).first() if s.validated_data.get("event_id") else None
+                if existing:
+                    body = PaymentDetailSerializer(existing).data
+                    body["next_action"] = (
+                        "Ese event_id ya tenía un pago registrado; se devuelve el "
+                        "existente. No cambies la referencia."
+                    )
+                    return Response(body, status=200)
+                return Response({
+                    "detail": (
+                        "Otra request registró el mismo event_id. Reintentá la "
+                        "MISMA operación sin cambiar ningún dato."
+                    ),
+                    "code": "PAYMENT_EVENT_COLLISION",
+                    "constraint": constraint,
+                    "retry_same_request": True,
+                }, status=409)
+            return Response({
+                "detail": (
+                    f"Violación de integridad ({constraint or 'desconocida'}). "
+                    "No es un duplicado de referencia: cambiarla no lo resuelve."
+                ),
+                "code": "INTEGRITY_ERROR",
+                "constraint": constraint,
+                "retry_same_request": True,
+            }, status=409)
         except RuntimeError as exc:
             log.error("PaymentService.register falló: %s", exc)
             return Response({"detail": str(exc)}, status=502)
