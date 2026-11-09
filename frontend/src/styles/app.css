@@ -9553,3 +9553,55 @@ textarea.siz-input { resize: vertical; min-height: 56px; }
 
 
 
+
+/* ── Dashboard editorial (referencia: artifact «Diagnóstico comercial») ─────
+   Números y títulos en serif, tiles con fuente verificable al pasar el cursor,
+   tablas densas y gráfico de barras. Paleta y radios de los tokens de MWT. */
+.dash-mw { display: flex; flex-direction: column; gap: 20px; }
+.dash-serif {
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-weight: 400; letter-spacing: -0.01em;
+}
+.dash-lead { max-width: 62rem; margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); }
+.dash-lead b { color: var(--text-primary); font-weight: 600; }
+.dash-sub { margin: 0; color: var(--text-tertiary); font-size: 11.5px; line-height: 1.5; }
+
+.dash-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap: 12px; }
+.dash-tile {
+  position: relative; min-width: 0; padding: 16px;
+  background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-md);
+}
+.dash-tile .lab { font-size: 11px; color: var(--text-tertiary); }
+.dash-tile .lab::after { content: " \24D8"; opacity: .5; }
+.dash-tile .big {
+  font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-weight: 400; font-size: 30px; line-height: 1.1; letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums; margin: 6px 0;
+}
+.dash-tile .cmp { font-size: 11px; color: var(--text-tertiary); line-height: 1.45; }
+.dash-tile .src {
+  display: none; position: absolute; left: 8px; right: 8px; top: calc(100% - 6px); z-index: 20;
+  padding: 10px; font-size: 11px; line-height: 1.5; color: var(--text-primary);
+  background: var(--surface-raised); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+}
+.dash-tile:hover .src, .dash-tile:focus-within .src { display: block; }
+.dash-tile .src button { margin-top: 6px; }
+
+.dash-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.dash-table th {
+  position: sticky; top: 0; z-index: 1; background: var(--surface-raised);
+  text-align: left; font-weight: 600; color: var(--text-tertiary);
+  padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.dash-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.dash-table td.n, .dash-table th.n { text-align: right; }
+.dash-table tr.clic { cursor: pointer; }
+.dash-table tr.clic:hover td { background: var(--surface-hover); }
+.dash-scroll { max-height: 27rem; overflow: auto; }
+
+.dash-chart { position: relative; min-height: 190px; }
+.dash-legend { display: flex; gap: 14px; margin-bottom: 8px; font-size: 11px; color: var(--text-tertiary); }
+.dash-sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
+.dash-bar-row { display: grid; grid-template-columns: 130px 42px 1fr 96px; gap: 10px; align-items: center; padding: 6px 2px; border-top: 1px solid var(--border); }
+.dash-bar-track { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }

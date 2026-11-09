@@ -1,65 +1,66 @@
 // =====================================================================
-// MWT.ONE · Panel CEO/Admin — rediseño 2026-11-08
+// MWT.ONE · Panel CEO/Admin
 //
-// Responde en un vistazo:
-//   1. ¿Cuántos expedientes tengo y en qué estado?  (operación)
-//   2. ¿Quién me debe y cuánto?                       (saldo por pedido)
-//   3. ¿Cuánto gano y cuánto cobro?                 (finanzas)
-//   4. ¿Qué comisiones hay por marca?               (comercial)
-//   5. ¿Qué se viene y qué está bloqueado?          (riesgo)
+// Rediseño 2026-11-09 con el lenguaje del artifact «Diagnóstico comercial»:
+//   · números y título en serif, como un informe;
+//   · cada número grande explica su fuente al pasar el cursor (tile .src);
+//   · secciones con título y subtítulo, tablas densas y gráfico de barras;
+//   · cero dato inventado: si un endpoint no responde, se dice.
 //
-// Datos reales: /api/expedientes/, /api/clientes/, /api/finanzas/*. Sin mocks.
-// Si un endpoint falla, la tarjeta lo dice.
-// R1: cero hex, solo CSS vars. R5: tabular-nums en métricas.
+// Datos reales: /api/expedientes/, /api/clientes/, /api/finanzas/*.
 // =====================================================================
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { finanzasApi, expedientesApi, clientesApi } from "../../lib/api.js";
 import { fmtDate } from "../../lib/i18n.js";
 
-const money = (v, ccy = "USD") => {
-  const n = Number(v);
-  if (!isFinite(n)) return "—";
-  return new Intl.NumberFormat("es-CR", {
-    style: "currency", currency: ccy, maximumFractionDigits: 0,
-  }).format(n);
-};
+const nf = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const dinero = (v) => {
   const n = Number(v);
-  return isFinite(n) ? `$${n.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : "—";
+  return isFinite(n) ? `$${nf.format(n)}` : "-";
 };
 const rowsOf = (r) => (Array.isArray(r) ? r : (r?.results || []));
 const pct = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
 const ESTADOS = [
-  { key: "REGISTRO",   es: "Registro",    en: "Registered", color: "var(--text-tertiary)" },
-  { key: "PRODUCCION", es: "Producción",  en: "Production", color: "var(--info, #3083FE)" },
-  { key: "PREPARACION",es: "Preparación", en: "Preparation", color: "var(--info, #3083FE)" },
-  { key: "DESPACHO",   es: "Despacho",    en: "Dispatch",   color: "var(--warning-fg, #92400E)" },
-  { key: "TRANSITO",   es: "Tránsito",    en: "In transit", color: "var(--warning-fg, #92400E)" },
-  { key: "EN_DESTINO", es: "En destino",  en: "At destination", color: "var(--brand-accent)" },
-  { key: "CERRADO",    es: "Cerrado",     en: "Closed",    color: "var(--success-fg, #166534)" },
-  { key: "CANCELADO",  es: "Cancelado",   en: "Cancelled", color: "var(--text-tertiary)" },
+  { key: "REGISTRO", es: "Registro", en: "Registered", color: "var(--text-tertiary)" },
+  { key: "PRODUCCION", es: "Producción", en: "Production", color: "var(--info, #3083FE)" },
+  { key: "PREPARACION", es: "Preparación", en: "Preparation", color: "var(--info, #3083FE)" },
+  { key: "DESPACHO", es: "Despacho", en: "Dispatch", color: "var(--warning-fg, #92400E)" },
+  { key: "TRANSITO", es: "Tránsito", en: "In transit", color: "var(--warning-fg, #92400E)" },
+  { key: "EN_DESTINO", es: "En destino", en: "At destination", color: "var(--brand-accent)" },
+  { key: "CERRADO", es: "Cerrado", en: "Closed", color: "var(--success-fg, #166534)" },
+  { key: "CANCELADO", es: "Cancelado", en: "Cancelled", color: "var(--text-tertiary)" },
 ];
 
-function Kpi({ label, value, sub, tone, onClick }) {
+function Tile({ label, value, cmp, src, onGo, tone, goLabel }) {
   return (
-    <div className="card card-pad-lg" style={{ minWidth: 0, cursor: onClick ? "pointer" : "default" }}
-         onClick={onClick}>
-      <div className="micro" style={{ color: "var(--text-tertiary)", marginBottom: 6 }}>{label}</div>
-      <div className="tabular-nums" style={{ font: "800 26px/1.1 var(--font-display)", color: tone || "var(--text-primary)" }}>
-        {value}
-      </div>
-      {sub && <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>{sub}</div>}
+    <div className="dash-tile">
+      <div className="lab">{label}</div>
+      <div className="big" style={tone ? { color: tone } : undefined}>{value}</div>
+      {cmp && <div className="cmp">{cmp}</div>}
+      {src && (
+        <div className="src">
+          {src}
+          {onGo && (
+            <div>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onGo}>
+                {goLabel || "Ver detalle"}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function Section({ title, right, children }) {
+function Section({ title, sub, right, children }) {
   return (
     <div className="card card-pad-lg" style={{ minWidth: 0 }}>
-      <div className="flex ai-center jc-between" style={{ marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
-        <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 800, letterSpacing: ".04em" }}>
-          {title}
+      <div className="flex ai-center jc-between" style={{ gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div className="dash-serif" style={{ fontSize: 19, lineHeight: 1.25 }}>{title}</div>
+          {sub && <div className="dash-sub" style={{ marginTop: 3 }}>{sub}</div>}
         </div>
         {right}
       </div>
@@ -68,23 +69,50 @@ function Section({ title, right, children }) {
   );
 }
 
-const Empty = ({ children }) => (
-  <div style={{ padding: "14px 4px", color: "var(--text-tertiary)", fontSize: 13 }}>{children}</div>
-);
+/** Barras por semana: dos series (entradas y salidas). SVG sin dependencias. */
+function Bars({ semanas }) {
+  const datos = (semanas || []).filter(Boolean);
+  if (!datos.length) {
+    return <div className="dash-sub" style={{ padding: "18px 2px" }}>Sin series de flujo disponibles.</div>;
+  }
+  const W = 640, H = 180, pad = 18;
+  const max = Math.max(
+    1,
+    ...datos.map((s) => Math.max(Number(s.entradas_usd) || 0, Number(s.salidas_usd) || 0))
+  );
+  const bw = W / datos.length;
+  const barra = Math.max(2, (bw - 6) / 2);
+  const alto = (v) => Math.max(0, (Number(v) || 0) / max) * (H - pad - 8);
 
-const Row = ({ grid, onClick, children }) => (
-  <div onClick={onClick} style={{
-    display: "grid", gridTemplateColumns: grid, gap: 10, alignItems: "center",
-    padding: "9px 4px", borderTop: "1px solid var(--border-subtle, #EEF2F6)",
-    cursor: onClick ? "pointer" : "default", fontSize: 12.5,
-  }}>{children}</div>
-);
-
-const dot = (color) => (
-  <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: color }} />
-);
-
-/** Semáforo por días hasta el vencimiento (negativo = vencido). */
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img"
+           aria-label="Entradas y salidas por semana en los próximos 90 días">
+        {[0.25, 0.5, 0.75, 1].map((p) => (
+          <line key={p} x1="0" x2={W} y1={H - pad - (H - pad - 8) * p} y2={H - pad - (H - pad - 8) * p}
+                stroke="var(--border)" strokeWidth="1" />
+        ))}
+        {datos.map((s, i) => {
+          const he = alto(s.entradas_usd);
+          const hs = alto(s.salidas_usd);
+          return (
+            <g key={`${s.semana}-${i}`}>
+              <rect x={i * bw + 2} y={H - pad - he} width={barra} height={he}
+                    fill="var(--brand-accent)" rx="2" />
+              <rect x={i * bw + 2 + barra} y={H - pad - hs} width={barra} height={hs}
+                    fill="var(--critical)" opacity="0.55" rx="2" />
+            </g>
+          );
+        })}
+        <line x1="0" x2={W} y1={H - pad} y2={H - pad} stroke="var(--border-strong, var(--border))" strokeWidth="1" />
+      </svg>
+      <div className="flex jc-between micro" style={{ color: "var(--text-tertiary)", marginTop: 2 }}>
+        <span>{datos[0]?.semana || ""}</span>
+        <span>{datos[datos.length - 1]?.semana || ""}</span>
+      </div>
+    </div>
+  );
+}
 
 export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, onGoCorreo, onGoExpedientes }) {
   const es = lang !== "en";
@@ -118,7 +146,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   }, [es]);
   useEffect(() => { load(); }, [load]);
 
-  // ── Operación: expedientes por estado ──────────────────────────────
+  // ── Operación ───────────────────────────────────────────────────────
   const porEstado = useMemo(() => {
     const acc = {};
     ESTADOS.forEach((s) => { acc[s.key] = { n: 0, valor: 0 }; });
@@ -132,16 +160,12 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   }, [exps]);
   const totalExps = (exps || []).length;
   const abiertos = (exps || []).filter((e) => !["CERRADO", "CANCELADO"].includes(e.estado)).length;
-  // La tabla tiene que sumar el total: cualquier estado que no esté en la lista
-  // (dato nuevo del backend) se muestra como "Otros" en vez de desaparecer.
   const conocidos = ESTADOS.reduce((s, x) => s + (porEstado[x.key]?.n || 0), 0);
   const otros = totalExps - conocidos;
 
-  // ── Dinero por cobrar (saldo real de los pedidos) ───────────────────
-  // `/api/cobros/` está vacío en producción (el módulo nunca se pobló), así que
-  // el panel no puede usarlo como fuente: mostraba $0 habiendo saldo. El saldo
-  // real vive en el expediente (`balance` = facturado - pagado), que el listado
-  // ya entrega calculado por el backend.
+  // ── Saldo real por pedido ───────────────────────────────────────────
+  // `/api/cobros/` está vacío en producción: el saldo sale del expediente
+  // (`balance` = facturado - pagado, calculado por el backend).
   const { conSaldo, saldoReventa, saldoComision, nReventa, saldoPorCliente } = useMemo(() => {
     const items = (exps || [])
       .filter((e) => Number(e.balance) > 0)
@@ -155,7 +179,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     const comision = items.filter((e) => !e._reventa);
     const porCliente = {};
     reventa.forEach((e) => {
-      const cid = e.client_id || "—";
+      const cid = e.client_id || "-";
       porCliente[cid] = (porCliente[cid] || 0) + e._saldo;
     });
     return {
@@ -169,13 +193,13 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
     };
   }, [exps]);
 
-  // ── Riesgo / próximas salidas ──────────────────────────────────────
+  // ── Riesgo y finanzas ───────────────────────────────────────────────
   const salidas = rad?.proximas_salidas || [];
   const sinFecha = rad?.sin_fecha || [];
   const cambios = rad?.bloqueos?.cambios_fecha || [];
   const tareasRev = rad?.bloqueos?.tareas_revision || [];
   const comTotal = com.reduce((s, m) => s + Number(m.comision_total || 0), 0);
-  // Filas "(sin marca)" con todo en cero son ruido: no se muestran.
+  const comProy = com.reduce((s, m) => s + Number(m.comision_proyectada || 0), 0);
   const comFilas = com.filter((m) => {
     const nombre = String(m.brand_name || "").trim().toLowerCase();
     const esSinMarca = !nombre || nombre === "sin marca" || nombre === "(sin marca)";
@@ -184,210 +208,306 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   });
   const fl = flujo?.totales || {};
   const open = (id) => { if (id && onOpenExpediente) onOpenExpediente(id); };
+  const hoy = new Date().toISOString();
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, marginBottom: 24 }} data-section="ceo-home">
+    <div className="dash-mw" data-section="ceo-home">
       {loading && <div className="card card-pad-lg" style={{ color: "var(--text-tertiary)" }}>
-        {es ? "Cargando panel…" : "Loading…"}</div>}
-      {err && <div className="card card-pad-lg" style={{ color: "var(--critical)" }}>{err}</div>}
+        {es ? "Cargando panel…" : "Loading…"}
+      </div>}
+      {err && <div className="card card-pad-lg" role="alert" style={{ color: "var(--critical)" }}>{err}</div>}
 
       {!loading && !err && <>
-        {/* ── Qué mirar primero: operación, dinero y pendientes ──── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))", gap: 12 }}>
-          <Kpi label={es ? "Expedientes abiertos" : "Open files"} value={abiertos}
-               sub={`${es ? "de" : "of"} ${totalExps} ${es ? "en total" : "total"}`}
-               onClick={onGoExpedientes} />
-          <Kpi label={es ? "Por cobrar (reventa)" : "Receivable (resale)"} value={dinero(saldoReventa)}
-               sub={`${nReventa} ${es ? "pedidos" : "files"} · ${dinero(saldoComision)} ${es ? "en comisión (lo cobra Marluvas)" : "in commission"}`}
-               tone={saldoReventa > 0 ? "var(--text-primary)" : "var(--text-tertiary)"}
-               onClick={onGoExpedientes} />
-          <Kpi label={es ? "Por revisar" : "To review"} value={cambios.length + tareasRev.length}
-               sub={es ? "cambios de fecha y tareas" : "date changes and tasks"}
-               tone={cambios.length + tareasRev.length > 0 ? "var(--warning-fg, #92400E)" : "var(--success-fg, #166534)"} />
-          <Kpi label={es ? "Salidas y sin fecha" : "Shipments and no date"}
-               value={salidas.length + sinFecha.length}
-               sub={`${salidas.length} ${es ? "con fecha" : "dated"} · ${sinFecha.length} ${es ? "sin fecha" : "undated"}`}
-               tone="var(--info, #3083FE)" />
+        {/* ── Encabezado editorial ─────────────────────────────── */}
+        <div>
+          <div className="dash-serif" style={{ fontSize: 27, lineHeight: 1.2 }}>
+            {es ? "Diagnóstico comercial" : "Commercial diagnosis"}
+          </div>
+          <p className="dash-sub" style={{ marginTop: 5 }}>
+            {es ? "Corte" : "As of"} {fmtDate(hoy, lang)} · mwt.one y finanzas.
+            {" "}
+            {es ? "Los números se recalculan al refrescar." : "Numbers are recomputed on refresh."}
+          </p>
+          <p className="dash-lead" style={{ marginTop: 12 }}>
+            {es ? <>Hay <b>{abiertos}</b> expedientes abiertos de {totalExps}. Quedan <b>{dinero(saldoReventa)}</b> por cobrar en reventa y <b>{dinero(saldoComision)}</b> facturados en comisión, que cobra Marluvas. <b>{conSaldo.length}</b> pedidos tienen saldo.</>
+                : <>{abiertos} open files out of {totalExps}. <b>{dinero(saldoReventa)}</b> receivable on resale and <b>{dinero(saldoComision)}</b> invoiced in commission, collected by Marluvas. {conSaldo.length} files carry a balance.</>}
+          </p>
+        </div>
+
+        {/* ── Tiles con fuente ─────────────────────────────────── */}
+        <div className="dash-tiles">
+          <Tile
+            label={es ? "Por cobrar (reventa)" : "Receivable (resale)"}
+            value={dinero(saldoReventa)}
+            cmp={`${nReventa} ${es ? "pedidos · lo cobra MWT" : "files · collected by MWT"}`}
+            src={es
+              ? "Saldo = facturado menos pagado de cada expediente (financials.totals_for). Solo modo FULL: en comisión la factura la cobra Marluvas."
+              : "Balance = invoiced minus paid per file (financials.totals_for). FULL mode only."}
+            onGo={onGoExpedientes}
+          />
+          <Tile
+            label={es ? "Comisión facturada" : "Invoiced commission"}
+            value={dinero(comTotal)}
+            cmp={`${es ? "proyectada" : "projected"} ${dinero(comProy)} · ${comFilas.length} ${es ? "marcas" : "brands"}`}
+            src={es
+              ? "Suma de comision_total de /api/finanzas/comisiones-por-marca/. La columna proyectada es la estimación sin facturar."
+              : "Sum of comision_total from /api/finanzas/comisiones-por-marca/."}
+            onGo={onGoFinanzas}
+          />
+          <Tile
+            label={es ? "Pedidos con saldo" : "Files with balance"}
+            value={conSaldo.length}
+            cmp={`${es ? "de" : "of"} ${totalExps} ${es ? "expedientes" : "files"}`}
+            src={es
+              ? "Expedientes con balance mayor a cero. No incluye cancelados, que no tienen saldo."
+              : "Files with a balance above zero."}
+            onGo={onGoExpedientes}
+          />
+          <Tile
+            label={es ? "Por revisar" : "To review"}
+            value={cambios.length + tareasRev.length}
+            cmp={es ? "cambios de fecha y tareas" : "date changes and tasks"}
+            src={es
+              ? "Radiografía CEO: bloqueos por cambio de fecha más tareas en REQUIERE_REVISION."
+              : "CEO radiography: pending date changes plus tasks awaiting review."}
+          />
+          <Tile
+            label={es ? "Salidas y sin fecha" : "Shipments and undated"}
+            value={salidas.length + sinFecha.length}
+            cmp={`${salidas.length} ${es ? "con fecha" : "dated"} · ${sinFecha.length} ${es ? "sin fecha" : "undated"}`}
+            src={es
+              ? "Radiografía CEO: próximas salidas de producción en 21 días y expedientes sin fecha publicada."
+              : "CEO radiography: shipments due in 21 days and files without a published date."}
+            onGo={onGoCorreo}
+          />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
-          {/* ── Columna principal ───────────────────────────────── */}
+          {/* ── Columna principal ─────────────────────────────── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
 
-            {/* Expedientes por estado */}
             <Section
-              title={es ? "EXPEDIENTES POR ESTADO" : "FILES BY STATE"}
-              right={<button className="btn btn-ghost btn-sm" onClick={() => onGoExpedientes && onGoExpedientes()}>
-                {es ? "Ver expedientes" : "All files"}
-              </button>}
+              title={es ? "Flujo proyectado" : "Projected cash flow"}
+              sub={es
+                ? "Próximos 90 días por semana. Entradas: comisiones y reventas previstas. Salidas: pagos a Marluvas."
+                : "Next 90 days by week. In: expected commissions and resales. Out: payments to Marluvas."}
             >
-              {totalExps === 0 ? <Empty>—</Empty> : <>
+              <div className="dash-legend">
+                <span><i className="dash-sw" style={{ background: "var(--brand-accent)" }} />{es ? "Entradas" : "In"}</span>
+                <span><i className="dash-sw" style={{ background: "var(--critical)", opacity: 0.6 }} />{es ? "Salidas" : "Out"}</span>
+                <span style={{ marginLeft: "auto" }}>
+                  {es ? "Neto" : "Net"} {dinero(fl.neto_usd)}
+                </span>
+              </div>
+              <Bars semanas={flujo?.semanas || []} />
+            </Section>
+
+            <Section
+              title={es ? "Pedidos por estado" : "Files by state"}
+              sub={es
+                ? "Cada fila es un estado real de mwt.one. La barra muestra el peso sobre el total."
+                : "Each row is a real mwt.one state. The bar shows its share of the total."}
+              right={onGoExpedientes ? (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={onGoExpedientes}>
+                  {es ? "Ver expedientes" : "All files"}
+                </button>
+              ) : null}
+            >
+              {totalExps === 0 ? <div className="dash-sub">-</div> : <>
                 {ESTADOS.map((s) => {
                   const v = porEstado[s.key] || { n: 0, valor: 0 };
-                  const w = pct(v.n, totalExps);
                   return (
-                    <div key={s.key} style={{ padding: "7px 4px", borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
-                      <div style={{ display: "grid", gridTemplateColumns: "150px 48px 1fr 110px", gap: 10, alignItems: "center" }}>
-                        <div className="flex ai-center gap-2" style={{ fontSize: 12.5 }}>
-                          {dot(s.color)} {es ? s.es : s.en}
-                        </div>
-                        <div className="tabular-nums" style={{ fontWeight: 800 }}>{v.n}</div>
-                        <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
-                          <div style={{ height: "100%", width: `${w}%`, background: s.color }} />
-                        </div>
-                        <div className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)", fontSize: 12 }}>
-                          {dinero(v.valor)}
-                        </div>
+                    <div key={s.key} className="dash-bar-row">
+                      <div className="flex ai-center gap-2" style={{ fontSize: 12.5 }}>
+                        <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 999, background: s.color }} />
+                        {es ? s.es : s.en}
+                      </div>
+                      <div className="tabular-nums" style={{ fontWeight: 700 }}>{v.n}</div>
+                      <div className="dash-bar-track">
+                        <div style={{ height: "100%", width: `${pct(v.n, totalExps)}%`, background: s.color }} />
+                      </div>
+                      <div className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)", fontSize: 12 }}>
+                        {dinero(v.valor)}
                       </div>
                     </div>
                   );
                 })}
                 {otros > 0 && (
-                  <div style={{ padding: "7px 4px", borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "150px 48px 1fr 110px", gap: 10, alignItems: "center" }}>
-                      <div className="flex ai-center gap-2" style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>
-                        {dot("var(--text-tertiary)")} {es ? "Otros estados" : "Other states"}
-                      </div>
-                      <div className="tabular-nums" style={{ fontWeight: 800 }}>{otros}</div>
-                      <div />
-                      <div className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)", fontSize: 12 }}>—</div>
-                    </div>
+                  <div className="dash-bar-row">
+                    <div style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>{es ? "Otros estados" : "Other states"}</div>
+                    <div className="tabular-nums" style={{ fontWeight: 700 }}>{otros}</div>
+                    <div className="dash-bar-track"><div style={{ width: `${pct(otros, totalExps)}%`, height: "100%", background: "var(--text-tertiary)" }} /></div>
+                    <div className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)", fontSize: 12 }}>-</div>
                   </div>
                 )}
               </>}
             </Section>
 
-            {/* Pedidos con saldo: lo que hay que cobrar, tomado del expediente */}
             <Section
-              title={es ? "PEDIDOS CON SALDO" : "FILES WITH BALANCE"}
-              right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>
-                {conSaldo.length} · {dinero(saldoReventa + saldoComision)}
-              </span>}
+              title={es ? "Pedidos con saldo" : "Files with balance"}
+              sub={es
+                ? "Facturado sin cobrar por pedido. Reventa la cobra MWT; comisión la cobra Marluvas."
+                : "Invoiced, uncollected, per file. Resale is collected by MWT; commission by Marluvas."}
+              right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{conSaldo.length} · {dinero(saldoReventa + saldoComision)}</span>}
             >
               {conSaldo.length === 0 ? (
-                <Empty>{es ? "Ningún pedido tiene saldo pendiente." : "No file has an open balance."}</Empty>
-              ) : <>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr .8fr .8fr .7fr", gap: 10, padding: "0 4px 6px" }}>
-                  {[es ? "Proforma" : "Proforma", es ? "Cliente" : "Client",
-                    es ? "Negocio" : "Business", es ? "Saldo" : "Balance", es ? "Estado" : "State"].map((h, i) => (
-                    <div key={i} className="micro" style={{ color: "var(--text-tertiary)", fontWeight: 800 }}>{h}</div>
-                  ))}
+                <div className="dash-sub" style={{ padding: "14px 2px" }}>{es ? "Ningún pedido tiene saldo pendiente." : "No file has an open balance."}</div>
+              ) : (
+                <div className="dash-scroll">
+                  <table className="dash-table">
+                    <thead>
+                      <tr>
+                        <th>{es ? "Proforma" : "Proforma"}</th>
+                        <th>{es ? "Cliente" : "Client"}</th>
+                        <th>{es ? "Negocio" : "Business"}</th>
+                        <th>{es ? "Estado" : "State"}</th>
+                        <th className="n">{es ? "Saldo" : "Balance"}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {conSaldo.map((e) => (
+                        <tr key={e.id} className="clic" onClick={() => open(e.id)}>
+                          <td style={{ fontWeight: 600 }}>{(e.proforma_codigos || [])[0] || e.codigo || "-"}</td>
+                          <td>{e.client_name || clientes[e.client_id] || "-"}</td>
+                          <td style={{ color: e._reventa ? "var(--text-primary)" : "var(--text-tertiary)" }}>
+                            {e._reventa ? (es ? "Reventa" : "Resale") : (es ? "Comisión" : "Commission")}
+                          </td>
+                          <td style={{ color: "var(--text-tertiary)" }}>{e.estado || "-"}</td>
+                          <td className="n" style={{ fontWeight: 700 }}>{dinero(e._saldo)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                {conSaldo.slice(0, 8).map((e) => (
-                  <Row key={e.id} grid="1fr 1.3fr .8fr .8fr .7fr" onClick={() => open(e.id)}>
-                    <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {(e.proforma_codigos || [])[0] || e.codigo || "—"}
-                    </div>
-                    <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {e.client_name || clientes[e.client_id] || "—"}
-                    </div>
-                    <div className="micro" style={{ color: e._reventa ? "var(--text-primary)" : "var(--text-tertiary)" }}>
-                      {e._reventa ? (es ? "Reventa" : "Resale") : (es ? "Comisión" : "Commission")}
-                    </div>
-                    <div className="tabular-nums" style={{ fontWeight: 700, textAlign: "right" }}>
-                      {money(e._saldo)}
-                    </div>
-                    <div className="micro" style={{ color: "var(--text-tertiary)" }}>{e.estado || "—"}</div>
-                  </Row>
-                ))}
-              </>}
+              )}
             </Section>
 
-            {/* Próximas salidas */}
-            <Section title={es ? "SALIDAS DE PRODUCCIÓN · INCLUYE SIN FECHA" : "PRODUCTION SHIPMENTS · INCLUDES UNDATED"}
-                     right={onGoCorreo ? <button className="btn btn-ghost btn-sm" onClick={onGoCorreo}>
-                       {es ? "Ver correo" : "Mail"}</button> : null}>
+            <Section
+              title={es ? "Salidas de producción" : "Production shipments"}
+              sub={es
+                ? "Incluye los pedidos sin fecha publicada. Las fechas vencidas se muestran con la fecha real."
+                : "Includes files without a published date. Past dates are shown as they are."}
+              right={onGoCorreo ? (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={onGoCorreo}>
+                  {es ? "Ver correo" : "Mail"}
+                </button>
+              ) : null}
+            >
               {(salidas.length + sinFecha.length) === 0 ? (
-                <Empty>{es ? "Sin expedientes en producción." : "No files in production."}</Empty>
-              ) : <>
-                <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.4fr .9fr .9fr .9fr", gap: 10, padding: "0 4px 6px" }}>
-                  {[es ? "Proforma" : "Proforma", es ? "Cliente" : "Client", es ? "Estado" : "State",
-                    es ? "Inicio" : "Start", es ? "Fin" : "End"].map((h, i) => (
-                    <div key={i} className="micro" style={{ color: "var(--text-tertiary)", fontWeight: 800 }}>{h}</div>
-                  ))}
+                <div className="dash-sub" style={{ padding: "14px 2px" }}>{es ? "Sin expedientes en producción." : "No files in production."}</div>
+              ) : (
+                <div className="dash-scroll">
+                  <table className="dash-table">
+                    <thead>
+                      <tr>
+                        <th>{es ? "Proforma" : "Proforma"}</th>
+                        <th>{es ? "Cliente" : "Client"}</th>
+                        <th>{es ? "Estado" : "State"}</th>
+                        <th>{es ? "Inicio" : "Start"}</th>
+                        <th className="n">{es ? "Fin" : "End"}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...salidas, ...sinFecha].slice(0, 8).map((s) => (
+                        <tr key={`${s.expediente_id}-${s.campo || s.exp_estado}`} className="clic" onClick={() => open(s.expediente_id)}>
+                          <td style={{ fontWeight: 600 }}>{s.display_id || "-"}</td>
+                          <td>{s.cliente || "-"}</td>
+                          <td style={{ color: "var(--text-tertiary)" }}>{s.campo || s.exp_estado || "-"}</td>
+                          <td className="tabular-nums">{s.fecha_inicio ? fmtDate(s.fecha_inicio, lang) : "-"}</td>
+                          <td className="n tabular-nums" style={{ fontWeight: s.fecha_fin ? 600 : 400 }}>
+                            {s.fecha_fin ? `${s.fin_estimada ? "≈ " : ""}${fmtDate(s.fecha_fin, lang)}` : "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                {[...salidas, ...sinFecha].slice(0, 8).map((s) => (
-                  <Row key={`${s.expediente_id}-${s.campo || s.exp_estado}`}
-                       grid="1.1fr 1.4fr .9fr .9fr .9fr" onClick={() => open(s.expediente_id)}>
-                    <div style={{ fontWeight: 700 }}>{s.display_id}</div>
-                    <div style={{ color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.cliente || "—"}</div>
-                    <div style={{ color: "var(--text-tertiary)" }}>{s.campo || s.exp_estado || "—"}</div>
-                    <div className="tabular-nums">{s.fecha_inicio ? fmtDate(s.fecha_inicio, lang) : "—"}</div>
-                    <div className="tabular-nums" style={{ fontWeight: s.fecha_fin ? 700 : 400 }}>
-                      {s.fecha_fin ? `${s.fin_estimada ? "≈ " : ""}${fmtDate(s.fecha_fin, lang)}` : "—"}
-                    </div>
-                  </Row>
-                ))}
-              </>}
+              )}
             </Section>
           </div>
 
-          {/* ── Columna lateral ─────────────────────────────────── */}
+          {/* ── Columna lateral ───────────────────────────────── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
 
-            {/* Top clientes por saldo (desde el expediente) */}
-            <Section title={es ? "CLIENTES CON SALDO" : "CLIENTS WITH BALANCE"}>
-              {saldoPorCliente.length === 0 ? <Empty>—</Empty> : saldoPorCliente.slice(0, 6).map((c) => (
-                <Row key={c.cid} grid="1.6fr 1fr">
-                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>
-                    {clientes[c.cid] || "—"}
-                  </div>
-                  <div className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>{dinero(c.monto)}</div>
-                </Row>
-              ))}
+            <Section
+              title={es ? "Clientes con saldo" : "Clients with balance"}
+              sub={es ? "Solo reventa: es lo que el cliente le debe a MWT." : "Resale only: what the client owes MWT."}
+            >
+              {saldoPorCliente.length === 0 ? <div className="dash-sub">-</div> : (
+                <table className="dash-table">
+                  <tbody>
+                    {saldoPorCliente.slice(0, 6).map((c) => (
+                      <tr key={c.cid}>
+                        <td>{clientes[c.cid] || "-"}</td>
+                        <td className="n" style={{ fontWeight: 700 }}>{dinero(c.monto)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </Section>
 
-            {/* Comisiones */}
-            <Section title={es ? "COMISIONES POR MARCA" : "COMMISSIONS BY BRAND"}
-                     right={onGoFinanzas ? <button className="btn btn-ghost btn-sm" onClick={onGoFinanzas}>
-                       {es ? "Ver Finanzas" : "Finance"}</button> : null}>
-              {comFilas.length === 0 ? <Empty>—</Empty> : <>
-                <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr", gap: 10, padding: "0 4px 6px" }}>
-                  {[es ? "Marca" : "Brand", es ? "Proyectada" : "Projected", es ? "Facturada" : "Invoiced"].map((h, i) => (
-                    <div key={i} className="micro" style={{ color: "var(--text-tertiary)", fontWeight: 800, textAlign: i ? "right" : "left" }}>{h}</div>
-                  ))}
-                </div>
-                {comFilas.map((m) => (
-                  <Row key={m.brand_name} grid="1.3fr 1fr 1fr">
-                    <div style={{ fontWeight: 700 }}>{m.brand_name}</div>
-                    <div className="tabular-nums" style={{ textAlign: "right" }}>{money(m.comision_proyectada)}</div>
-                    <div className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>{money(m.comision_total)}</div>
-                  </Row>
-                ))}
-                <Row grid="1.3fr 1fr 1fr">
-                  <div style={{ fontWeight: 800, fontSize: 12 }}>{es ? "Total" : "Total"}</div>
-                  <div />
-                  <div className="tabular-nums" style={{ textAlign: "right", fontWeight: 800 }}>{money(comTotal)}</div>
-                </Row>
-              </>}
+            <Section
+              title={es ? "Comisiones por marca" : "Commissions by brand"}
+              sub={es ? "Proyectada y facturada." : "Projected and invoiced."}
+              right={onGoFinanzas ? (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={onGoFinanzas}>
+                  {es ? "Finanzas" : "Finance"}
+                </button>
+              ) : null}
+            >
+              {comFilas.length === 0 ? <div className="dash-sub">-</div> : (
+                <table className="dash-table">
+                  <thead>
+                    <tr>
+                      <th>{es ? "Marca" : "Brand"}</th>
+                      <th className="n">{es ? "Proyectada" : "Projected"}</th>
+                      <th className="n">{es ? "Facturada" : "Invoiced"}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comFilas.map((m) => (
+                      <tr key={m.brand_name}>
+                        <td style={{ fontWeight: 600 }}>{m.brand_name}</td>
+                        <td className="n">{dinero(m.comision_proyectada)}</td>
+                        <td className="n" style={{ fontWeight: 700 }}>{dinero(m.comision_total)}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{es ? "Total" : "Total"}</td>
+                      <td className="n">{dinero(comProy)}</td>
+                      <td className="n" style={{ fontWeight: 800 }}>{dinero(comTotal)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
             </Section>
 
-            {/* Flujo + bloqueos */}
-            <Section title={es ? "FLUJO 90 DÍAS" : "90-DAY FLOW"}>
-              <Row grid="1fr 1fr"><div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "Entradas" : "In"}</div>
-                <div className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>{dinero(fl.entradas_usd)}</div></Row>
-              <Row grid="1fr 1fr"><div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "Salidas" : "Out"}</div>
-                <div className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>{dinero(fl.salidas_usd)}</div></Row>
-              <Row grid="1fr 1fr"><div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "Neto USD" : "Net USD"}</div>
-                <div className="tabular-nums" style={{ textAlign: "right", fontWeight: 800, color: "var(--success-fg, #166534)" }}>{dinero(fl.neto_usd)}</div></Row>
-            </Section>
-
-            <Section title={es ? "BLOQUEOS · POR REVISAR" : "BLOCKERS"}
-                     right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{cambios.length + tareasRev.length}</span>}>
-              {(cambios.length + tareasRev.length) === 0 ? <Empty>{es ? "Sin bloqueos." : "No blockers."}</Empty> : <>
-                {cambios.slice(0, 5).map((x) => (
-                  <Row key={x.extraccion_id} grid="1fr 1fr" onClick={() => open(x.expediente_id)}>
-                    <div style={{ fontWeight: 700 }}>{x.display_id}</div>
-                    <div style={{ color: "var(--warning-fg, #92400E)" }}>{es ? "Cambio de " : ""}{x.campo}</div>
-                  </Row>
-                ))}
-                {tareasRev.slice(0, 5).map((x) => (
-                  <Row key={x.tarea_id} grid="1fr 1fr" onClick={() => open(x.expediente_id)}>
-                    <div style={{ fontWeight: 700 }}>{x.exp_codigo || "—"}</div>
-                    <div title={x.titulo || ""} style={{ color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.titulo}</div>
-                  </Row>
-                ))}
-              </>}
+            <Section
+              title={es ? "Bloqueos por revisar" : "Blockers"}
+              sub={es ? "Cambios de fecha y tareas que esperan una decisión." : "Date changes and tasks waiting on a decision."}
+              right={<span className="micro" style={{ color: "var(--text-tertiary)" }}>{cambios.length + tareasRev.length}</span>}
+            >
+              {(cambios.length + tareasRev.length) === 0 ? (
+                <div className="dash-sub" style={{ padding: "10px 2px" }}>{es ? "Sin bloqueos." : "No blockers."}</div>
+              ) : (
+                <table className="dash-table">
+                  <tbody>
+                    {cambios.slice(0, 5).map((x) => (
+                      <tr key={x.extraccion_id} className="clic" onClick={() => open(x.expediente_id)}>
+                        <td style={{ fontWeight: 600 }}>{x.display_id}</td>
+                        <td style={{ color: "var(--warning-fg, #92400E)" }}>{es ? "Cambio de " : ""}{x.campo}</td>
+                      </tr>
+                    ))}
+                    {tareasRev.slice(0, 5).map((x) => (
+                      <tr key={x.tarea_id} className="clic" onClick={() => open(x.expediente_id)}>
+                        <td style={{ fontWeight: 600 }}>{x.exp_codigo || "-"}</td>
+                        <td style={{ color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.titulo}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </Section>
           </div>
         </div>
