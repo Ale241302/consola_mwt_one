@@ -31,11 +31,14 @@ const rowsOf = (r) => (Array.isArray(r) ? r : (r?.results || []));
 const pct = (a, b) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
 const ESTADOS = [
-  { key: "REGISTRO",   es: "Registro",   en: "Registered", color: "var(--text-tertiary)" },
-  { key: "PRODUCCION", es: "Producción", en: "Production", color: "var(--info, #3083FE)" },
-  { key: "TRANSITO",   es: "Tránsito",   en: "In transit", color: "var(--warning-fg, #92400E)" },
-  { key: "EN_DESTINO", es: "En destino", en: "At destination", color: "var(--brand-accent)" },
-  { key: "CERRADO",    es: "Cerrado",    en: "Closed",    color: "var(--success-fg, #166534)" },
+  { key: "REGISTRO",   es: "Registro",    en: "Registered", color: "var(--text-tertiary)" },
+  { key: "PRODUCCION", es: "Producción",  en: "Production", color: "var(--info, #3083FE)" },
+  { key: "PREPARACION",es: "Preparación", en: "Preparation", color: "var(--info, #3083FE)" },
+  { key: "DESPACHO",   es: "Despacho",    en: "Dispatch",   color: "var(--warning-fg, #92400E)" },
+  { key: "TRANSITO",   es: "Tránsito",    en: "In transit", color: "var(--warning-fg, #92400E)" },
+  { key: "EN_DESTINO", es: "En destino",  en: "At destination", color: "var(--brand-accent)" },
+  { key: "CERRADO",    es: "Cerrado",     en: "Closed",    color: "var(--success-fg, #166534)" },
+  { key: "CANCELADO",  es: "Cancelado",   en: "Cancelled", color: "var(--text-tertiary)" },
 ];
 
 function Kpi({ label, value, sub, tone, onClick }) {
@@ -138,6 +141,10 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   }, [exps]);
   const totalExps = (exps || []).length;
   const abiertos = (exps || []).filter((e) => !["CERRADO", "CANCELADO"].includes(e.estado)).length;
+  // La tabla tiene que sumar el total: cualquier estado que no esté en la lista
+  // (dato nuevo del backend) se muestra como "Otros" en vez de desaparecer.
+  const conocidos = ESTADOS.reduce((s, x) => s + (porEstado[x.key]?.n || 0), 0);
+  const otros = totalExps - conocidos;
 
   // ── Cobranza ───────────────────────────────────────────────────────
   const cobranza = useMemo(() => {
@@ -188,6 +195,13 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
   const cambios = rad?.bloqueos?.cambios_fecha || [];
   const tareasRev = rad?.bloqueos?.tareas_revision || [];
   const comTotal = com.reduce((s, m) => s + Number(m.comision_total || 0), 0);
+  // Filas "(sin marca)" con todo en cero son ruido: no se muestran.
+  const comFilas = com.filter((m) => {
+    const nombre = String(m.brand_name || "").trim().toLowerCase();
+    const esSinMarca = !nombre || nombre === "sin marca" || nombre === "(sin marca)";
+    const enCero = !Number(m.comision_proyectada) && !Number(m.comision_total);
+    return !(esSinMarca && enCero);
+  });
   const fl = flujo?.totales || {};
   const open = (id) => { if (id && onOpenExpediente) onOpenExpediente(id); };
 
@@ -201,7 +215,8 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
         {/* ── KPIs operativos + cobranza ─────────────────────────── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))", gap: 12 }}>
           <Kpi label={es ? "Expedientes" : "Files"} value={totalExps}
-               sub={es ? `${abiertos} abiertos` : `${abiertos} open`} />
+               sub={es ? `${abiertos} abiertos` : `${abiertos} open`}
+               onClick={onGoExpedientes} />
           <Kpi label={es ? "En producción" : "In production"} value={porEstado.PRODUCCION?.n || 0}
                sub={dinero(porEstado.PRODUCCION?.valor)} tone="var(--info, #3083FE)" />
           <Kpi label={es ? "En tránsito" : "In transit"} value={porEstado.TRANSITO?.n || 0}
@@ -209,10 +224,12 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           <Kpi label={es ? "En destino" : "At destination"} value={porEstado.EN_DESTINO?.n || 0}
                sub={dinero(porEstado.EN_DESTINO?.valor)} />
           <Kpi label={es ? "Por cobrar" : "Receivable"} value={dinero(cobranza.pendiente)}
-               sub={`${cobranza.items.length} ${es ? "cobros abiertos" : "open"}`} tone="var(--text-primary)" />
+               sub={`${cobranza.items.length} ${es ? "cobros abiertos" : "open"}`} tone="var(--text-primary)"
+               onClick={onGoFinanzas} />
           <Kpi label={es ? "Vencido" : "Overdue"} value={dinero(cobranza.vencido)}
                sub={es ? "mora acumulada" : "past due"}
-               tone={cobranza.vencido > 0 ? "var(--critical)" : "var(--success-fg, #166534)"} />
+               tone={cobranza.vencido > 0 ? "var(--critical)" : "var(--success-fg, #166534)"}
+               onClick={onGoFinanzas} />
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
@@ -226,26 +243,40 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                 {es ? "Ver expedientes" : "All files"}
               </button>}
             >
-              {totalExps === 0 ? <Empty>—</Empty> : ESTADOS.map((s) => {
-                const v = porEstado[s.key] || { n: 0, valor: 0 };
-                const w = pct(v.n, totalExps);
-                return (
-                  <div key={s.key} style={{ padding: "7px 4px", borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "150px 48px 1fr 110px", gap: 10, alignItems: "center" }}>
-                      <div className="flex ai-center gap-2" style={{ fontSize: 12.5 }}>
-                        {dot(s.color)} {es ? s.es : s.en}
-                      </div>
-                      <div className="tabular-nums" style={{ fontWeight: 800 }}>{v.n}</div>
-                      <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${w}%`, background: s.color }} />
-                      </div>
-                      <div className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)", fontSize: 12 }}>
-                        {dinero(v.valor)}
+              {totalExps === 0 ? <Empty>—</Empty> : <>
+                {ESTADOS.map((s) => {
+                  const v = porEstado[s.key] || { n: 0, valor: 0 };
+                  const w = pct(v.n, totalExps);
+                  return (
+                    <div key={s.key} style={{ padding: "7px 4px", borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "150px 48px 1fr 110px", gap: 10, alignItems: "center" }}>
+                        <div className="flex ai-center gap-2" style={{ fontSize: 12.5 }}>
+                          {dot(s.color)} {es ? s.es : s.en}
+                        </div>
+                        <div className="tabular-nums" style={{ fontWeight: 800 }}>{v.n}</div>
+                        <div style={{ height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${w}%`, background: s.color }} />
+                        </div>
+                        <div className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)", fontSize: 12 }}>
+                          {dinero(v.valor)}
+                        </div>
                       </div>
                     </div>
+                  );
+                })}
+                {otros > 0 && (
+                  <div style={{ padding: "7px 4px", borderTop: "1px solid var(--border-subtle, #EEF2F6)" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "150px 48px 1fr 110px", gap: 10, alignItems: "center" }}>
+                      <div className="flex ai-center gap-2" style={{ fontSize: 12.5, color: "var(--text-tertiary)" }}>
+                        {dot("var(--text-tertiary)")} {es ? "Otros estados" : "Other states"}
+                      </div>
+                      <div className="tabular-nums" style={{ fontWeight: 800 }}>{otros}</div>
+                      <div />
+                      <div className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)", fontSize: 12 }}>—</div>
+                    </div>
                   </div>
-                );
-              })}
+                )}
+              </>}
             </Section>
 
             {/* Cuándo deben pagar */}
@@ -255,7 +286,11 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
                 {es ? "Ver cobranza" : "Collections"}</button> : null}
             >
               {cobranza.proximos.length === 0 ? (
-                <Empty>{es ? "Sin cobros pendientes." : "No open receivables."}</Empty>
+                <Empty>
+                  {es
+                    ? "El servicio de cobros no devolvió cuentas abiertas. Si esperabas saldos, revisalos en Finanzas."
+                    : "The collections service returned no open balances. If you expected some, check Finance."}
+                </Empty>
               ) : <>
                 <div style={{ display: "grid", gridTemplateColumns: "1.4fr .9fr .8fr .8fr .7fr", gap: 10, padding: "0 4px 6px" }}>
                   {[es ? "Cliente" : "Client", es ? "Vence" : "Due", es ? "Monto" : "Amount",
@@ -360,8 +395,8 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
             <Section title={es ? "COMISIONES POR MARCA" : "COMMISSIONS BY BRAND"}
                      right={onGoFinanzas ? <button className="btn btn-ghost btn-sm" onClick={onGoFinanzas}>
                        {es ? "Ver Finanzas" : "Finance"}</button> : null}>
-              {com.length === 0 ? <Empty>—</Empty> : <>
-                {com.map((m) => (
+              {comFilas.length === 0 ? <Empty>—</Empty> : <>
+                {comFilas.map((m) => (
                   <Row key={m.brand_name} grid="1.3fr 1fr 1fr">
                     <div style={{ fontWeight: 700 }}>{m.brand_name}</div>
                     <div className="tabular-nums" style={{ textAlign: "right" }}>{money(m.comision_proyectada)}</div>

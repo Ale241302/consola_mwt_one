@@ -6,6 +6,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { portalApi } from "../../lib/api.js";
+import { fmtDate } from "../../lib/i18n.js";
 import EmbarquesPortada from "../portal/EmbarquesPortada.jsx";
 
 const ESTADOS = [
@@ -35,13 +36,21 @@ export default function ClientHome({ lang = "es" }) {
   const [exps, setExps] = useState([]);
   const [cobros, setCobros] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const m = await portalApi.me().catch(() => null);
       setMe(m || null);
-      const cid = (m?.empresas || [])[0]?.id || null;
+      if (!m) {
+        setError(es
+          ? "No pudimos cargar tu cuenta. Volvé a intentar en un momento."
+          : "We couldn't load your account. Try again in a moment.");
+        return;
+      }
+      const cid = null;  // todas las empresas del usuario: scopea el backend por JWT
       const [e, c] = await Promise.all([
         portalApi.misExpedientes(cid).catch(() => []),
         portalApi.misCobros(cid).catch(() => []),
@@ -49,14 +58,21 @@ export default function ClientHome({ lang = "es" }) {
       setExps(Array.isArray(e) ? e : (e?.results || []));
       setCobros(Array.isArray(c) ? c : (c?.results || []));
     } finally { setLoading(false); }
-  }, []);
+  }, [es]);
   useEffect(() => { load(); }, [load]);
 
-  const cid = (me?.empresas || [])[0]?.id || null;
+  const cid = null;  // grupo completo; el detalle de embarque también se scopea por JWT
   const count = (estado) => exps.filter((e) => (e.estado || "") === estado).length;
-  const activos = exps.length;
-  const credito = me?.empresas?.[0]?.credito_limit_usd || me?.credito_limit_usd;
-  const usado = me?.empresas?.[0]?.credito_usado || me?.credito_usado;
+  // "Activos" es lo que está en curso: un pedido cerrado o cancelado no lo está.
+  const activos = exps.filter((e) => !["CERRADO", "CANCELADO"].includes(e.estado || "")).length;
+  const cerrados = count("CERRADO");
+  const empresas = me?.empresas || [];
+  const limiteGrupo = empresas.reduce(
+    (m, e) => Math.max(m, Number(e.credito_limit_usd ?? e.credito_limite ?? 0)), 0);
+  const usadoGrupo = empresas.reduce(
+    (s, e) => s + Number(e.credito_usado ?? e.credito_usado_propio ?? 0), 0);
+  const credito = limiteGrupo || me?.credito_limit_usd;
+  const usado = usadoGrupo || me?.credito_usado;
 
   // Cobranza del cliente: qué debe pagar y cuándo (lo que más consulta).
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
@@ -85,19 +101,28 @@ export default function ClientHome({ lang = "es" }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 24 }} data-section="client-home">
       {loading && <div className="card card-pad-lg" style={{ color: "var(--text-tertiary)" }}>{es ? "Cargando…" : "Loading…"}</div>}
+      {!loading && error && (
+        <div className="card card-pad-lg" role="alert" style={{ color: "var(--critical)" }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>{es ? "No se pudo cargar el panel" : "Dashboard unavailable"}</div>
+          <div className="micro" style={{ color: "var(--text-secondary)" }}>{error}</div>
+          <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} onClick={load}>
+            {es ? "Reintentar" : "Retry"}
+          </button>
+        </div>
+      )}
 
-      {!loading && <>
+      {!loading && !error && <>
         {/* KPIs */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14 }}>
           <Kpi label={es ? "Pedidos activos" : "Active orders"} value={activos} />
           <Kpi label={es ? "En fábrica" : "In production"} value={count("PRODUCCION")} />
           <Kpi label={es ? "En tránsito" : "In transit"} value={count("TRANSITO")} />
           <Kpi label={es ? "En destino" : "At destination"} value={count("EN_DESTINO")} />
-          <Kpi label={es ? "Entregados" : "Delivered"} value={count("CERRADO")} tone="var(--success-fg, #166534)" />
+          <Kpi label={es ? "Entregados" : "Delivered"} value={cerrados} tone="var(--success-fg, #166534)" />
           <Kpi label={es ? "Saldo por pagar" : "Balance due"} value={fmtMonto(saldo)}
                tone={vencido > 0 ? "var(--critical)" : "var(--text-primary)"}
                sub={vencido > 0 ? `${fmtMonto(vencido)} ${es ? "vencido" : "overdue"}` : null} />
-          {credito != null && <Kpi label={es ? "Crédito usado" : "Credit used"} value={`${Math.round((Number(usado || 0) / Number(credito || 1)) * 100)}%`} sub={`de ${Number(credito).toLocaleString("en-US")}`} />}
+          {Number(credito) > 0 && <Kpi label={es ? "Crédito usado" : "Credit used"} value={`${Math.round((Number(usado || 0) / Number(credito || 1)) * 100)}%`} sub={`de ${Number(credito).toLocaleString("en-US")}`} />}
         </div>
 
         {/* Próximo pago + pedidos por estado (lo que antes no se veía) */}
