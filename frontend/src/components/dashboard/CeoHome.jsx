@@ -78,6 +78,7 @@ function Section({ title, sub, right, children }) {
 ﻿/** Barras de comisión y premio por mes, con detalle fijo debajo (sin tooltip flotante). */
 function ComisionesChart({ datos, detalle, es }) {
   const [hover, setHover] = useState(null);
+  const [pin, setPin] = useState(null);
   const filas = (datos || []).filter((d) => d && d.mes);
   if (!filas.length) {
     return <div className="dash-sub" style={{ padding: "18px 2px" }}>{es ? "Sin comisiones registradas." : "No recorded commissions."}</div>;
@@ -93,7 +94,8 @@ function ComisionesChart({ datos, detalle, es }) {
   const negH = alto - posH;
   const baseY = top + posH;
   const bw = W / filas.length;
-  const activo = filas[hover != null ? hover : filas.length - 1];
+  const idxActivo = pin ? filas.findIndex((f) => f.mes === pin) : (hover != null ? hover : filas.length - 1);
+  const activo = filas[idxActivo >= 0 ? idxActivo : filas.length - 1];
   const filasDetalle = detalle?.[activo.mes] || [];
 
   return (
@@ -125,11 +127,16 @@ function ComisionesChart({ datos, detalle, es }) {
           const estilo = { opacity: atenuada ? 0.45 : 1, transition: "opacity .18s ease" };
           return (
             <g key={d.mes}
+               style={{ cursor: "pointer" }}
                onMouseOver={() => setHover(i)}
-               onMouseOut={() => setHover(null)}>
+               onMouseOut={() => setHover(null)}
+               onClick={() => setPin((p) => (p === d.mes ? null : d.mes))}>
               <rect x={i * bw} y="0" width={bw} height={H} fill="transparent" />
               <rect x={x} y={baseY - hc} width={w} height={hc} rx="3"
-                    fill="var(--brand-accent-dark, var(--brand-accent))" style={estilo} />
+                    fill="var(--brand-accent-dark, var(--brand-accent))"
+                    stroke={pin === d.mes ? "var(--text-primary)" : "none"}
+                    strokeWidth={pin === d.mes ? 2 : 0}
+                    style={estilo} />
               {p !== 0 && (
                 <rect
                   x={x}
@@ -160,20 +167,29 @@ function ComisionesChart({ datos, detalle, es }) {
           <div style={{ color: "var(--text-tertiary)" }}>
             {es ? "Sin facturas detalladas para este mes." : "No invoices detailed for this month."}
           </div>
-        ) : filasDetalle.slice(0, 4).map((f, idx) => (
-          <div key={idx} style={{ color: "var(--text-secondary)" }}>
-            {f.tipo === "PREMIO" ? (es ? "Premio" : "Bonus") : (es ? "Comisión" : "Commission")}
-            {" · "}{f.pf ? `PF ${f.pf}` : (f.fe || "-")}
-            {f.oc ? ` · OC ${f.oc}` : ""}
-            {" · "}{dinero(f.monto)}
-            {f.cliente ? ` · ${f.cliente}` : ""}
-          </div>
-        ))}
-        {filasDetalle.length > 4 && (
-          <div style={{ color: "var(--text-tertiary)" }}>
-            +{filasDetalle.length - 4} {es ? "más. Pasá el cursor por otra barra." : "more. Hover another bar."}
+        ) : (
+          <div style={{ maxHeight: 190, overflowY: "auto" }}>
+            {filasDetalle.map((f, idx) => {
+              const esPremio = f.tipo === "PREMIO";
+              return (
+                <div key={idx} style={{ color: "var(--text-secondary)" }}>
+                  {esPremio ? (es ? "Premio" : "Bonus") : (es ? "Comisión" : "Commission")}
+                  {esPremio
+                    ? (f.fe ? ` · ${f.fe}` : "")
+                    : ` · ${f.pf ? `PF ${f.pf}` : (f.fe || "-")}`}
+                  {f.oc ? ` · OC ${f.oc}` : ""}
+                  {" · "}{dinero(f.monto)}
+                  {f.cliente && f.cliente !== "—" ? ` · ${f.cliente}` : ""}
+                </div>
+              );
+            })}
           </div>
         )}
+        <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+          {pin
+            ? (es ? `${pin} fijado. Clic de nuevo para soltar.` : `${pin} pinned. Click again to release.`)
+            : (es ? "Clic en una barra para fijar el detalle." : "Click a bar to pin the detail.")}
+        </div>
       </div>
     </div>
   );
@@ -436,8 +452,8 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
             <Section
               title={es ? "Comisiones y premios por mes" : "Commissions and bonuses by month"}
               sub={es
-                ? `Facturado por Marluvas en ${anio === "todos" ? "todos los años" : anio}. Pasá el cursor por una barra para ver comisión, premio y total.`
-                : `Invoiced by Marluvas in ${anio === "todos" ? "all years" : anio}. Hover a bar for commission, bonus and total.`}
+                ? `Facturado por Marluvas en ${anio === "todos" ? "todos los años" : anio}. El detalle de abajo cambia al pasar el cursor; hacé clic en una barra para fijarlo.`
+                : `Invoiced by Marluvas in ${anio === "todos" ? "all years" : anio}. The detail below follows the cursor; click a bar to pin it.`}
             >
               <div className="dash-legend">
                 <span><i className="dash-sw" style={{ background: "var(--brand-accent)" }} />{es ? "Comisión" : "Commission"}</span>
