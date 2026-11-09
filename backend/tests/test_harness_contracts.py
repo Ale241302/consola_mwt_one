@@ -189,6 +189,27 @@ class TestA1AlertaTope:
         assert "0 expedientes" in asunto
         assert "Detalle:" in cuerpo
 
+    def test_token_de_alerta_cabe_en_la_columna(self):
+        """La columna es varchar(64); el token viejo medía 73 y nunca se guardaba."""
+        import uuid as _uuid
+
+        from apps.expedientes.tasks import TRIGGER_KEY, _token_alerta
+
+        fecha = dt.date(2026, 11, 9)
+        exp_id = _uuid.uuid4()
+
+        sin_email = _token_alerta(TRIGGER_KEY, exp_id, fecha)
+        con_email_1 = _token_alerta(TRIGGER_KEY, exp_id, fecha, "alvaro@muitowork.com")
+        con_email_2 = _token_alerta(TRIGGER_KEY, exp_id, fecha, "alejandro@muitowork.com")
+
+        assert len(sin_email) <= 64
+        assert len(con_email_1) <= 64
+        assert len(con_email_2) <= 64
+        assert con_email_1 != con_email_2, "cada destinatario necesita su propio token"
+        assert _token_alerta(TRIGGER_KEY, exp_id, fecha, "alvaro@muitowork.com") == con_email_1
+        assert str(exp_id) not in con_email_1
+        assert "alvaro" not in con_email_1
+
 
 # ─────────────────────────────────────────────────────────────────────
 # B1 · el secreto de la app MCP nunca sale en una lectura

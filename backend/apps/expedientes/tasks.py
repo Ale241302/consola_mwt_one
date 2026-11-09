@@ -181,6 +181,26 @@ def _create_notification_log(
         log.warning("NotificationLog falló para exp=%s: %s", expediente_id, e)
 
 
+def _token_alerta(
+    prefijo: str, expediente_id, fecha: date, email: Optional[str] = None
+) -> str:
+    """Token de idempotencia que cabe en la columna (64) y es único por fila.
+
+    `notifications.notification_log.idempotence_token` es varchar(64) con un
+    índice único (`uq_nlog_idempotence_active`), así que no puede repetirse
+    entre destinatarios. UUID y email van hasheados: el token queda corto,
+    estable y sin exponer datos.
+    """
+    partes = [
+        prefijo,
+        fecha.isoformat(),
+        hashlib.sha1(str(expediente_id).encode()).hexdigest()[:10],
+    ]
+    if email:
+        partes.append(hashlib.sha1(email.lower().encode()).hexdigest()[:8])
+    return ":".join(partes)
+
+
 def _admin_recipients() -> List[Tuple[uuid.UUID, str]]:
     """Solo admins fijos: la alerta de tope sin pago es interna, no del cliente."""
     recipients: List[Tuple[uuid.UUID, str]] = []
@@ -385,10 +405,15 @@ def check_en_destino_eta_task(self):
             continue
 
         alertas += 1
-        token = f"{TRIGGER_KEY}:{exp.id}:{end_date.isoformat()}"
 
-        # Idempotencia: una alerta por expediente + fecha fin.
-        if NotificationLog.objects.filter(idempotence_token=token).exists():
+        # Idempotencia: una alerta por expediente y fecha fin. El token viejo
+        # medía 73 caracteres (la columna admite 64) y se repetía entre
+        # destinatarios, así que NINGUNA fila de auditoría llegaba a guardarse.
+        # Ahora se decide por (trigger, expediente, día) y el token va por
+        # destinatario.
+        if NotificationLog.objects.filter(
+            trigger=TRIGGER_KEY, expediente_id=exp.id, ts__date=today
+        ).exclude(status="Skipped").exists():
             log.info("Alerta ya enviada · exp=%s end=%s", exp.codigo, end_date)
             continue
 
@@ -424,13 +449,14 @@ def check_en_destino_eta_task(self):
                 subject=subject,
                 body_preview="Sin destinatarios resueltos",
                 status="Skipped",
-                token=token,
+                token=_token_alerta(TRIGGER_KEY, exp.id, end_date),
                 error="no_recipients",
             )
             continue
 
         for user_id, email in recipients:
             _create_activity_feed(user_id, exp, end_date, oc_codigo)
+            token = _token_alerta(TRIGGER_KEY, exp.id, end_date, email)
 
             try:
                 result = send_test_email(
