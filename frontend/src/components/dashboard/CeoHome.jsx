@@ -230,7 +230,7 @@ export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, o
           <Tile
             label={es ? "Comisión facturada" : "Invoiced commission"}
             value={dinero(comTotal)}
-            cmp={`${es ? "proyectada" : "projected"} ${dinero(comProy)} · ${comFilas.length} ${es ? "marcas" : "brands"}`}
+            cmp={`${es ? "proyectada" : "projected"} ${dinero(comProy)} · ${comFilas.length} ${comFilas.length === 1 ? (es ? "marca" : "brand") : (es ? "marcas" : "brands")}`}
             src={es
               ? "Suma de comision_total de /api/finanzas/comisiones-por-marca/. La columna proyectada es la estimación sin facturar."
               : "Sum of comision_total from /api/finanzas/comisiones-por-marca/."}
