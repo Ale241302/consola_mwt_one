@@ -335,12 +335,16 @@ class ClienteSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
         if not app:
             return None
         staff = _is_admin_request(self.context)
+        # B1 · ni el staff recibe el secreto en una lectura; se entrega solo al
+        # provisionar/rotar (mcp-app/provision) por el flujo dedicado.
+        from .secrets import mask_secret, secret_is_set
         return {
             "slug": app.slug,
             "nombre": app.nombre,
             "mcp_url": app.mcp_url,
             "oauth_client_id": app.oauth_client_id,
-            "oauth_client_secret": app.oauth_client_secret if staff else None,
+            "oauth_client_secret": mask_secret(app.oauth_client_secret) if staff else None,
+            "oauth_client_secret_set": secret_is_set(app.oauth_client_secret),
             "estado": app.estado,
         }
 

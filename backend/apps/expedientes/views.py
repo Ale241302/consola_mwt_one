@@ -591,17 +591,38 @@ def fill_missing_phase_dates(exp) -> bool:
     return True
 
 
-def check_auto_close_en_destino(exp) -> bool:
-    """
-    Si exp.estado == 'EN_DESTINO' y han transcurrido 120 días desde la fecha fin
-    de PREPARACION_DESPACHO (o la entrada a EN_DESTINO), transiciona automáticamente
-    el expediente a 'CERRADO', asignando la fecha fin a EN_DESTINO y las fechas a CERRADO.
-    """
-    if not exp or exp.estado != "EN_DESTINO":
-        return False
+# ── A1 · harness 2026-11-09 ──────────────────────────────────────────
+# El tope de 120 días dejó de cerrar expedientes por su cuenta.
+#
+# Contrato: LEER NUNCA ESCRIBE. El tope solo PROPONE el cierre
+# (`evaluate_auto_close`, puro). Aplicarlo exige tres cosas a la vez:
+# `allow_write=True`, un pago registrado y una llamada explícita. Antes, el
+# GET de `phase-durations` cerraba expedientes sin evidencia: el 06/11/2026
+# quedaron CERRADOS 2478, 2465, 2466, 2478B, 2479, 2513 y 2468 por leer sus
+# fechas. `backend/tests/test_harness_contracts.py` lo impide de nuevo.
+AUTO_CLOSE_DAYS = 120
+AUTO_CLOSE_PAYMENT_STATES = ("CONFIRMADO_AI", "CONFIRMADO_HUMANO")
 
+
+def evaluate_auto_close(exp) -> dict:
+    """Propuesta de auto-cierre a los 120 días. Puro: no toca la base.
+
+    Devuelve `{aplica, dias_tope, fecha_cierre, base, motivo}`. `aplica=True`
+    significa "el tope venció", nunca "ya se cerró".
+    """
     import datetime as _dt
+
     today = _dt.date.today()
+    result = {
+        "aplica": False,
+        "dias_tope": AUTO_CLOSE_DAYS,
+        "fecha_cierre": None,
+        "base": None,
+        "motivo": "",
+    }
+    if not exp or getattr(exp, "estado", None) != "EN_DESTINO":
+        result["motivo"] = "no_esta_en_destino"
+        return result
 
     pd = dict(exp.phase_durations_json or {})
     prep_info = pd.get("PREPARACION_DESPACHO") or pd.get("DESPACHO") or pd.get("PREPARACION") or {}
@@ -621,66 +642,145 @@ def check_auto_close_en_destino(exp) -> bool:
             base_date = _dt.date.fromisoformat(str(en_destino_start_str).strip())
         except (TypeError, ValueError):
             pass
-
     if not base_date:
-        base_date = exp.created_at.date() if exp.created_at else today
+        created = getattr(exp, "created_at", None)
+        base_date = created.date() if created else today
 
-    target_close_date = base_date + _dt.timedelta(days=120)
+    target_close_date = base_date + _dt.timedelta(days=AUTO_CLOSE_DAYS)
+    result["base"] = base_date.isoformat()
+    result["fecha_cierre"] = target_close_date.isoformat()
 
-    if today >= target_close_date:
-        en_destino_start = en_destino_start_str or base_date.isoformat()
-        try:
-            d_start = _dt.date.fromisoformat(en_destino_start)
-            en_destino_days = max(0, (target_close_date - d_start).days)
-        except Exception:
-            en_destino_days = 120
+    if today < target_close_date:
+        result["motivo"] = "tope_no_vencido"
+        return result
 
-        pd["EN_DESTINO"] = {
-            "start": en_destino_start,
-            "end": target_close_date.isoformat(),
-            "days": en_destino_days,
-        }
-        pd["CERRADO"] = {
-            "start": target_close_date.isoformat(),
-            "end": target_close_date.isoformat(),
-            "days": 0,
-        }
+    result["aplica"] = True
+    result["motivo"] = "tope_vencido"
+    return result
 
-        previous_state = exp.estado
-        exp.estado = "CERRADO"
-        exp.phase_durations_json = pd
-        exp.last_event_at = timezone.now()
-        exp.phase_signal = "ON_TRACK"
-        exp.save(update_fields=["estado", "phase_durations_json", "last_event_at", "phase_signal", "updated_at"])
 
-        try:
-            EventLog.objects.create(
-                id=uuid.uuid4(),
-                correlation_id=uuid.uuid4(),
-                event_type="expediente.phase_transition",
-                aggregate_type="expediente",
-                aggregate_id=exp.id,
-                action_source="SYSTEM_AUTO_CLOSE",
-                previous_status=previous_state,
-                new_status="CERRADO",
-                phase_from=previous_state,
-                phase_to="CERRADO",
-                payload={
-                    "from": previous_state,
-                    "to": "CERRADO",
-                    "label": "Auto-cierre 120d tras preparación y despacho",
-                    "note": "Cierre automático a los 120 días desde fin de preparación y despacho / entrada a destino",
-                    "auto_closed": True,
-                },
-                emitted_by_role="system",
-                is_active=True,
-            )
-        except Exception as e:
-            logging.getLogger(__name__).warning("EventLog auto_close falló para exp %s: %s", exp.id, e)
+def expediente_tiene_pago_registrado(exp) -> bool:
+    """True si hay un pago confirmado del expediente.
 
-        return True
+    A1: ningún proceso cierra un expediente sin pago registrado. Ante cualquier
+    error (tabla ausente, DB caída) devuelve False: falla cerrado, no cierra.
+    """
+    if not exp or not getattr(exp, "id", None):
+        return False
+    try:
+        from apps.finance.models import Payment
+        # `direction="IN"` = MWT cobra (cliente/distribuidor). Un egreso (OUT)
+        # no prueba que el pedido se cobró, así que no habilita el cierre.
+        return Payment.objects.filter(
+            expediente_id=exp.id,
+            is_active=True,
+            estado__in=AUTO_CLOSE_PAYMENT_STATES,
+            direction="IN",
+        ).exists()
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "A1 expediente_tiene_pago_registrado falló exp=%s: %s", getattr(exp, "id", "?"), e
+        )
+        return False
 
-    return False
+
+def check_auto_close_en_destino(exp, *, allow_write: bool = False) -> dict:
+    """Evalúa el tope de 120 días y, solo con `allow_write`, cierra.
+
+    Sin `allow_write` es una consulta pura: devuelve la propuesta y el motivo
+    por el que no se aplicó. Con `allow_write` sigue exigiendo pago registrado.
+    """
+    proposal = evaluate_auto_close(exp)
+    proposal["aplicado"] = False
+    if not proposal.get("aplica"):
+        return proposal
+    if not allow_write:
+        proposal["bloqueado"] = "sin_permiso_de_escritura"
+        return proposal
+    if not expediente_tiene_pago_registrado(exp):
+        proposal["bloqueado"] = "sin_pago_registrado"
+        return proposal
+    if not apply_auto_close(exp, proposal):
+        # Otra sesión lo movió entre la evaluación y el cierre: no miente.
+        proposal["bloqueado"] = "no_aplicable"
+        return proposal
+    proposal["aplicado"] = True
+    return proposal
+
+
+def apply_auto_close(exp, proposal: dict | None = None) -> bool:
+    """Aplica el cierre propuesto. Única vía que escribe el auto-cierre.
+
+    Escribe el expediente y deja rastro en EventLog. La llama solo
+    `check_auto_close_en_destino(..., allow_write=True)`.
+    """
+    import datetime as _dt
+
+    proposal = proposal or evaluate_auto_close(exp)
+    if not proposal.get("aplica") or not exp or exp.estado != "EN_DESTINO":
+        return False
+
+    # A1 · última barrera: el escritor también exige pago registrado, así un
+    # caller nuevo no puede reabrir el bug del 06/11 llamándolo directo.
+    if not expediente_tiene_pago_registrado(exp):
+        return False
+
+    pd = dict(exp.phase_durations_json or {})
+    target_close_date = _dt.date.fromisoformat(proposal["fecha_cierre"])
+    en_destino_info = pd.get("EN_DESTINO") or {}
+    en_destino_start_str = en_destino_info.get("start") if isinstance(en_destino_info, dict) else None
+    en_destino_start = en_destino_start_str or proposal["base"]
+    try:
+        d_start = _dt.date.fromisoformat(en_destino_start)
+        en_destino_days = max(0, (target_close_date - d_start).days)
+    except Exception:
+        en_destino_days = AUTO_CLOSE_DAYS
+
+    pd["EN_DESTINO"] = {
+        "start": en_destino_start,
+        "end": target_close_date.isoformat(),
+        "days": en_destino_days,
+    }
+    pd["CERRADO"] = {
+        "start": target_close_date.isoformat(),
+        "end": target_close_date.isoformat(),
+        "days": 0,
+    }
+
+    previous_state = exp.estado
+    exp.estado = "CERRADO"
+    exp.phase_durations_json = pd
+    exp.last_event_at = timezone.now()
+    exp.phase_signal = "ON_TRACK"
+    exp.save(update_fields=["estado", "phase_durations_json", "last_event_at", "phase_signal", "updated_at"])
+
+    try:
+        EventLog.objects.create(
+            id=uuid.uuid4(),
+            correlation_id=uuid.uuid4(),
+            event_type="expediente.phase_transition",
+            aggregate_type="expediente",
+            aggregate_id=exp.id,
+            action_source="SYSTEM_AUTO_CLOSE",
+            previous_status=previous_state,
+            new_status="CERRADO",
+            phase_from=previous_state,
+            phase_to="CERRADO",
+            payload={
+                "from": previous_state,
+                "to": "CERRADO",
+                "label": "Auto-cierre 120d con pago registrado",
+                "note": "Cierre automático a los 120 días desde fin de preparación y despacho / entrada a destino",
+                "auto_closed": True,
+                "harness_fix": "A1",
+            },
+            emitted_by_role="system",
+            is_active=True,
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning("EventLog auto_close falló para exp %s: %s", exp.id, e)
+
+    return True
 
 
 # ════════════════════════════════════════════════════════════
@@ -1852,18 +1952,20 @@ class ExpedienteViewSet(viewsets.ViewSet):
             return Response({"detail": "expediente_id inválido"}, status=400)
 
         if request.method.upper() == "GET":
-            check_auto_close_en_destino(exp)
-            # Self-heal: derivar fechas de fase del EventLog y rellenar huecos
-            # entre fases ancla para expedientes legados.
+            # A1 · lectura pura. El self-heal y el relleno de huecos se calculan
+            # en memoria para la respuesta, pero NO se guardan; y el tope de 120
+            # días ya no cierra nada desde una lectura: solo se informa. La
+            # propuesta se calcula sobre lo guardado (igual que el POST).
+            proposal = evaluate_auto_close(exp)
             try:
-                changed = heal_phase_durations_from_events(exp)
-                if fill_missing_phase_dates(exp):
-                    changed = True
-                if changed:
-                    exp.save(update_fields=["phase_durations_json", "updated_at"])
+                heal_phase_durations_from_events(exp)
+                fill_missing_phase_dates(exp)
             except Exception as e:
                 log.warning("phase_durations GET heal falló exp=%s: %s", exp.id, e)
-            return Response({"phase_durations": exp.phase_durations_json or {}})
+            payload = {"phase_durations": exp.phase_durations_json or {}}
+            if proposal.get("aplica"):
+                payload["auto_close_propuesta"] = proposal
+            return Response(payload)
 
         denied = _deny_client_mutation(request, action_label="expediente.phase_durations")
         if denied is not None:
@@ -1940,9 +2042,13 @@ class ExpedienteViewSet(viewsets.ViewSet):
             exp.eta = new_transito_end
         exp.save(update_fields=["phase_durations_json", "eta", "updated_at"])
 
-        check_auto_close_en_destino(exp)
-
-        return Response({"phase_durations": exp.phase_durations_json or {}})
+        # A1 · guardar fechas tampoco cierra: si el tope ya venció se devuelve
+        # la propuesta para que el CEO decida (con pago registrado).
+        payload = {"phase_durations": exp.phase_durations_json or {}}
+        proposal = evaluate_auto_close(exp)
+        if proposal.get("aplica"):
+            payload["auto_close_propuesta"] = proposal
+        return Response(payload)
 
     # ── Fusión visual de expedientes (Sprint 2026-06-11 · E3) ────────
     # Una PO del cliente dividida en N partes (operadores/SAP/proforma

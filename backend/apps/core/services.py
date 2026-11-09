@@ -107,6 +107,8 @@ _AUDIT_PII_KEYS = {
     "password", "token", "secret", "evidencia", "documento_sap",
     "file_path", "filename", "key", "storage_url", "signed_url", "url",
     "tax_id", "contact_email", "phone", "cedula", "correo", "email",
+    # B1 · credenciales de la app MCP del cliente: nunca en la auditoría.
+    "oauth_client_secret", "client_secret", "client_credentials",
 }
 
 

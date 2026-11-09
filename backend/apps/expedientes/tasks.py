@@ -197,9 +197,22 @@ def check_en_destino_eta_task(self):
 
     for exp in list(qs):
         try:
+            # A1 · el cierre a los 120 días ya no es efecto de una lectura y
+            # exige pago registrado. Si el tope venció sin pago, se alerta en
+            # el log y el expediente sigue EN_DESTINO.
             from apps.expedientes.views import check_auto_close_en_destino
-            if check_auto_close_en_destino(exp):
-                log.info("Expediente auto-cerrado tras 120d · exp=%s", exp.codigo)
+            proposal = check_auto_close_en_destino(exp, allow_write=True)
+            if proposal.get("aplicado"):
+                log.info(
+                    "Expediente auto-cerrado tras %sd con pago · exp=%s · fecha=%s",
+                    proposal.get("dias_tope"), exp.codigo, proposal.get("fecha_cierre"),
+                )
+                continue
+            if proposal.get("aplica"):
+                log.warning(
+                    "Auto-cierre NO aplicado · exp=%s · motivo=%s · fecha_tope=%s",
+                    exp.codigo, proposal.get("bloqueado"), proposal.get("fecha_cierre"),
+                )
                 continue
         except Exception as exc:
             log.warning("check_auto_close_en_destino failed for exp %s: %s", exp.codigo, exc)

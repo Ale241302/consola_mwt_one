@@ -341,11 +341,23 @@ def validate_nodo_cambios(cambios: Any) -> Optional[str]:
     return _validate_dict(cambios, label="cambios de nodo", allowed_keys=_NODO_KEYS)
 
 
-def validate_cambios(cambios: Any, label: str = "cambios", allowed_keys: set[str] | None = None) -> Optional[str]:
+def validate_cambios(
+    cambios: Any,
+    label: str = "cambios",
+    allowed_keys: set[str] | None = None,
+    allow_empty: bool = False,
+) -> Optional[str]:
     """Validador genérico para PATCH (oc_editar/expediente_editar/sap_editar/
-    documento_editar/transferencia_editar/nodo_editar/artefacto_editar)."""
+    documento_editar/transferencia_editar/nodo_editar/artefacto_editar).
+
+    `allow_empty` debe existir en la firma: `expediente_edit_full_patch`,
+    `sap_editar` y `transfer_costo_editar` lo pasan explícito. Sin el
+    parámetro, la llamada levantaba `TypeError: validate_cambios() got an
+    unexpected keyword argument 'allow_empty'` y `expediente_edit_full_patch`
+    fallaba siempre (C1, 07/11/2026).
+    """
     return _validate_dict(cambios, label=label, allowed_keys=allowed_keys,
-                          allow_empty=False)
+                          allow_empty=allow_empty)
 
 
 def pydantic_available() -> bool:

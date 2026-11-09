@@ -50,6 +50,26 @@ _GLOBAL_ONLY_TOOLS = frozenset({
     "mwt_audit_write_registry",
 })
 
+
+def _is_client_role(role: str) -> bool:
+    """True para roles del Portal B2B (espejo de redact.is_client)."""
+    r = (role or "").strip().lower()
+    return r.startswith("client_") or r in ("cliente", "client")
+
+
+# A2 · harness 2026-11-09 — tools que un rol de cliente NUNCA recibe.
+#
+# `expediente_phase_durations_get` cerraba expedientes al consultarlos (A1) y la
+# usuaria de Sondel (client_b2b, compras2@sondelsa.com) la tenía entre sus
+# tools permitidas. Aunque A1 ya no muta, el lado cliente no tiene uso legítimo:
+# el cronograma lo consulta por `expediente_tiempos`. Se quita del listado Y se
+# rechaza en `call_tool` (fail-closed), no solo del catálogo visible.
+_CLIENT_FORBIDDEN_TOOLS = frozenset({
+    "expediente_phase_durations_get",
+    "expediente_phase_durations_set",
+    "expediente_envio_backfill",
+})
+
 TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     # ── Introspección / salud / utilidades (siempre visibles) ──────────────
     "mwt_whoami": _ALWAYS,
@@ -316,24 +336,30 @@ def allowed_tool_names(user: dict) -> set[str] | None:
     perms = _normalize_permissions(user)
     modules = perms.get("modules") or []
     actions = perms.get("actions") or []
+    role = (user.get("role") or user.get("role_slug") or "")
+    client_role = _is_client_role(role)
 
     if "*" in modules:
-        return None
-    if not modules:
+        # A2 · un cliente con wildcard tampoco recibe las tools prohibidas.
+        allowed: set[str] | None = None if not client_role else set(TOOL_MODULES)
+    elif not modules:
         # Rol sin matriz materializada: solo tools de introspección (seguro).
-        return {name for name, req in TOOL_MODULES.items() if req is None}
-
-    allowed: set[str] = set()
-    for name, req in TOOL_MODULES.items():
-        if req is None:
+        allowed = {name for name, req in TOOL_MODULES.items() if req is None}
+    else:
+        allowed = set()
+        for name, req in TOOL_MODULES.items():
+            if req is None:
+                allowed.add(name)
+                continue
+            module, action = req
+            if module not in modules:
+                continue
+            if actions and "*" not in actions and f"{module}.{action}" not in actions:
+                continue
             allowed.add(name)
-            continue
-        module, action = req
-        if module not in modules:
-            continue
-        if actions and "*" not in actions and f"{module}.{action}" not in actions:
-            continue
-        allowed.add(name)
+
+    if allowed is None:
+        return None
 
     # Ola 2 · 2.5 — guard anti-bypass: en una app de cliente (tenant resuelto),
     # las tools globales de introspección interna NO se listan aunque el rol
@@ -344,7 +370,29 @@ def allowed_tool_names(user: dict) -> set[str] | None:
     if current_tenant().is_scoped:
         allowed -= _GLOBAL_ONLY_TOOLS
 
+    # A2 · un rol de cliente nunca ve las tools de fases/backfill, tenga o no
+    # el módulo `expedientes.view` (o wildcard) en su matriz.
+    if client_role:
+        allowed -= _CLIENT_FORBIDDEN_TOOLS
+
     return allowed
+
+
+def is_tool_denied(name: str, allowed: set[str] | None) -> bool:
+    """True si la llamada a `name` debe rechazarse para este set de tools.
+
+    - `allowed is None` → sin restricción (sin identidad o wildcard interno).
+    - Escrituras fuera del set → denegadas (contrato original de `call_tool`).
+    - A2 · tools de fases/backfill fuera del set → denegadas aunque sean lectura.
+
+    El resto de lecturas se deja pasar: el backend las limita por rol y empresa.
+    """
+    if allowed is None or name in allowed:
+        return False
+    requirement = TOOL_MODULES.get(name)
+    return name in _CLIENT_FORBIDDEN_TOOLS or (
+        requirement is not None and requirement[1] in _MUTATING_ACTIONS
+    )
 
 
 class RbacFastMCP(FastMCP):
@@ -491,11 +539,9 @@ class RbacFastMCP(FastMCP):
             raise PermissionError(
                 "IDENTITY_UNAVAILABLE: no se pudo resolver tu identidad para esta llamada."
             ) from exc
-        if allowed is not None and name not in allowed:
-            requirement = TOOL_MODULES.get(name)
-            if requirement is not None and requirement[1] in _MUTATING_ACTIONS:
-                log.warning("call_tool RBAC: escritura %s denegada por rol", name)
-                raise PermissionError(
-                    f"TOOL_NOT_ALLOWED: tu rol no permite la herramienta '{name}'."
-                )
+        if is_tool_denied(name, allowed):
+            log.warning("call_tool RBAC: %s denegada por rol", name)
+            raise PermissionError(
+                f"TOOL_NOT_ALLOWED: tu rol no permite la herramienta '{name}'."
+            )
         return await super().call_tool(name, arguments, **kwargs)

@@ -718,9 +718,13 @@ export default function ScreenClienteDetail() {
               <div className="caption" style={{marginBottom:4}}>OAuth Client Secret</div>
               <div style={{display:'flex', alignItems:'center', gap:6}}>
                 <span style={{flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-                  {mcpShowSecret ? (rawClient.mcp_app.oauth_client_secret || '—') : '••••••••••••••••'}
+                  {mcpShowSecret
+                    ? (rawClient.mcp_app.oauth_client_secret === '***'
+                        ? '*** guardado · rotá para obtener uno nuevo'
+                        : (rawClient.mcp_app.oauth_client_secret || '—'))
+                    : '••••••••••••••••'}
                 </span>
-                {rawClient.mcp_app.oauth_client_secret && (
+                {rawClient.mcp_app.oauth_client_secret && rawClient.mcp_app.oauth_client_secret !== '***' && (
                   <>
                     <button className="btn btn-ghost btn-sm" title={mcpShowSecret ? 'Ocultar' : 'Revelar'}
                             onClick={()=>setMcpShowSecret(s=>!s)}

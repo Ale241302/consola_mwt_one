@@ -134,6 +134,7 @@ export default function ScreenClienteFormView() {
   const [mcpAction, setMcpAction] = useState(null);   // "provision"|"deprovision"|"sync"
   const [mcpError, setMcpError] = useState(null);
   const [mcpShowSecret, setMcpShowSecret] = useState(false);
+  const [mcpFreshSecret, setMcpFreshSecret] = useState(null);   // secreto entregado al provisionar/rotar (B1)
   const [mcpCopied, setMcpCopied] = useState(null);
 
   const loadMcpApp = useCallback(async (cid) => {
@@ -165,7 +166,11 @@ export default function ScreenClienteFormView() {
     setMcpAction(action);
     setMcpError(null);
     try {
-      await clientesApi.action(`mcp-app/${action}`, clienteId, {});
+      const res = await clientesApi.action(`mcp-app/${action}`, clienteId, {});
+      // B1 · el secreto solo llega en la respuesta de provision/rotación; se
+      // muestra una vez y no se vuelve a pedir (las lecturas vienen en "***").
+      const entregado = res?.oauth_client_secret;
+      if (entregado && entregado !== "***") setMcpFreshSecret(entregado);
       await loadMcpApp(clienteId);
     } catch (err) {
       setMcpError(String(err?.message || err));
@@ -818,10 +823,15 @@ export default function ScreenClienteFormView() {
                     <McpRow
                       icon={<IconLock size={13}/>}
                       label="OAuth Client Secret"
-                      value={mcpShowSecret ? (mcpApp.oauth_client_secret || "—") : "••••••••••••••••"}
+                      value={mcpShowSecret
+                        ? (mcpFreshSecret
+                            || (mcpApp.oauth_client_secret && mcpApp.oauth_client_secret !== "***"
+                                ? mcpApp.oauth_client_secret
+                                : "*** guardado · rotá para obtener uno nuevo"))
+                        : "••••••••••••••••"}
                       mono
                       secret
-                      onCopy={mcpApp.oauth_client_secret ? () => copyMcp("sec", mcpApp.oauth_client_secret) : null}
+                      onCopy={mcpFreshSecret ? () => copyMcp("sec", mcpFreshSecret) : null}
                       copied={mcpCopied === "sec"}
                       onToggle={() => setMcpShowSecret(s => !s)}
                     />

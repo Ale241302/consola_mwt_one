@@ -523,13 +523,17 @@ class ClienteViewSet(viewsets.ViewSet):
         app = McpApp.objects.filter(cliente_id=pk).first()
         if not app:
             return Response({"detail": "Este cliente no tiene app MCP provisionada."}, status=404)
+        # B1 · el secreto NO viaja en la respuesta; solo se entrega al
+        # provisionar/rotar (respuesta de mcp-app/provision).
+        from .secrets import mask_secret, secret_is_set
         return Response({
             "cliente_id": str(app.cliente_id),
             "slug": app.slug,
             "nombre": app.nombre,
             "mcp_url": app.mcp_url,
             "oauth_client_id": app.oauth_client_id,
-            "oauth_client_secret": app.oauth_client_secret,
+            "oauth_client_secret": mask_secret(app.oauth_client_secret),
+            "oauth_client_secret_set": secret_is_set(app.oauth_client_secret),
             "estado": app.estado,
             "created_at": app.created_at.isoformat() if app.created_at else None,
         })
@@ -544,7 +548,24 @@ class ClienteViewSet(viewsets.ViewSet):
         except Cliente.DoesNotExist:
             return Response({"detail": "Cliente no existe"}, status=404)
         result = _provision_mcp_app(cli)
-        return Response(result, status=200 if result.get("ok") else 400)
+        # B1 · esta es la ÚNICA respuesta que entrega el secreto (alta/rotación).
+        # Queda auditada y marcada como no cacheable; nunca se registra el valor.
+        response = Response(result, status=200 if result.get("ok") else 400)
+        response["Cache-Control"] = "no-store"
+        try:
+            from apps.core.services import audit_write
+            audit_write(
+                event="write",
+                tool="clientes.mcp_app_provision",
+                actor_email=getattr(request.user, "email", None),
+                actor_role=getattr(request.user, "role", None),
+                args_sanitized={"cliente_id": str(pk), "secret_delivered": bool(result.get("ok"))},
+                ok=bool(result.get("ok")),
+                http_status=200 if result.get("ok") else 400,
+            )
+        except Exception as e:  # noqa: BLE001 — la auditoría no rompe la provisión
+            log.warning("audit mcp_app_provision falló cliente=%s: %s", pk, e)
+        return response
 
     @action(detail=True, methods=["post"], url_path="mcp-app/deprovision")
     def mcp_app_deprovision(self, request, pk=None):
