@@ -98,6 +98,11 @@ function ComisionesChart({ datos, detalle, es }) {
 
   return (
     <div className="dash-chart" style={{ position: "relative" }}>
+      <div className="micro" style={{ color: "var(--text-secondary)", marginBottom: 4 }}>
+        <b>{activo.mes}</b>
+        {" · "}{es ? "Comisión" : "Commission"} {dinero(activo.comision)}
+        {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
+      </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img"
            aria-label={es ? "Comisión y premio por mes" : "Commission and bonus by month"}>
         {[0.25, 0.5, 0.75, 1].map((p) => (
@@ -147,36 +152,38 @@ function ComisionesChart({ datos, detalle, es }) {
         <span>{filas[filas.length - 1].mes}</span>
       </div>
 
-      {/* Flotante: el mes activo, con qué factura y cuánto por cada una. */}
-      <div
-        role="status"
-        style={{
-          position: "absolute", top: 4, left: "50%", transform: "translateX(-50%)",
-          maxWidth: 340, padding: "8px 10px", pointerEvents: "none", zIndex: 5,
-          background: "var(--surface-raised)", border: "1px solid var(--border)",
-          borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-md)",
-          fontSize: 11, lineHeight: 1.5,
-        }}
-      >
-        <div style={{ fontWeight: 700 }}>
-          {activo.mes} · {es ? "Comisión" : "Commission"} {dinero(activo.comision)}
-          {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
-        </div>
-        {filasDetalle.length === 0 ? (
-          <div style={{ color: "var(--text-tertiary)" }}>{es ? "Sin facturas detalladas." : "No invoices detailed."}</div>
-        ) : filasDetalle.slice(0, 6).map((f, idx) => (
-          <div key={idx} style={{ color: "var(--text-secondary)" }}>
-            {f.tipo === "PREMIO" ? (es ? "Premio" : "Bonus") : (es ? "Comisión" : "Commission")}
-            {" · "}{f.pf ? `PF ${f.pf}` : (f.fe || "-")}
-            {f.oc ? ` · OC ${f.oc}` : ""}
-            {" · "}{dinero(f.monto)}
-            {f.cliente ? ` · ${f.cliente}` : ""}
+      {/* Flotante al pasar el cursor: el mes activo, con qué factura y cuánto. */}
+      {hover != null && (
+        <div
+          role="status"
+          style={{
+            position: "absolute", top: 4, right: 4,
+            maxWidth: 320, padding: "8px 10px", pointerEvents: "none", zIndex: 5,
+            background: "var(--surface-raised)", border: "1px solid var(--border)",
+            borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-md)",
+            fontSize: 11, lineHeight: 1.5,
+          }}
+        >
+          <div style={{ fontWeight: 700 }}>
+            {activo.mes} · {es ? "Comisión" : "Commission"} {dinero(activo.comision)}
+            {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
           </div>
-        ))}
-        {filasDetalle.length > 6 && (
-          <div style={{ color: "var(--text-tertiary)" }}>+{filasDetalle.length - 6} {es ? "más" : "more"}</div>
-        )}
-      </div>
+          {filasDetalle.length === 0 ? (
+            <div style={{ color: "var(--text-tertiary)" }}>{es ? "Sin facturas detalladas." : "No invoices detailed."}</div>
+          ) : filasDetalle.slice(0, 6).map((f, idx) => (
+            <div key={idx} style={{ color: "var(--text-secondary)" }}>
+              {f.tipo === "PREMIO" ? (es ? "Premio" : "Bonus") : (es ? "Comisión" : "Commission")}
+              {" · "}{f.pf ? `PF ${f.pf}` : (f.fe || "-")}
+              {f.oc ? ` · OC ${f.oc}` : ""}
+              {" · "}{dinero(f.monto)}
+              {f.cliente ? ` · ${f.cliente}` : ""}
+            </div>
+          ))}
+          {filasDetalle.length > 6 && (
+            <div style={{ color: "var(--text-tertiary)" }}>+{filasDetalle.length - 6} {es ? "más" : "more"}</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
