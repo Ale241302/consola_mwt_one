@@ -1,331 +1,237 @@
 // ─────────────────────────────────────────────────────────────
-// pages/Cobros.jsx — CollectionsDashboard (Centro de control)
-// Agente responsable: [AG-FRONTEND]
+// pages/Cobros.jsx — Cobros
 //
-// El cobro en MWT.ONE es 100% automático: un cron del backend
-// (CollectionBot) evalúa diariamente los días de gracia y envía
-// C1/C2/C3 deduplicados cada 7 días. Esta vista NO sirve para
-// que el humano envíe correos — sirve para SUPERVISAR y GOBERNAR
-// excepciones sobre lo que la IA está haciendo.
+// Contexto (2026-11-09): `cobros.cobro` está vacía en producción y
+// mwt.one no guarda fecha de vencimiento por pedido. La pantalla anterior
+// mostraba cuatro ceros y una cartera "en mora" que se inventaba con un hash
+// del id del expediente. Eso se eliminó.
 //
-// Composición:
-//   · KPIs de cabecera (4 tarjetas tabular-nums).
-//   · Tab 1 · Cartera en mora    → OverduePortfolioTable.
-//   · Tab 2 · Auditoría del bot  → AutomaticCollectionLogTable.
-//   · Drawer lateral             → DebtCaseDrawer (gobernanza).
+// Ahora la pantalla muestra lo que sí existe y es verificable: el saldo de
+// cada pedido (facturado - pagado, calculado por el backend) separado por
+// modo de operación.
+//   · Reventa: la deuda es de MWT (el cliente le paga a MWT).
+//   · Comisión: la factura la cobra Marluvas; MWT cobra su comisión.
+// La antigüedad de cartera no se muestra porque no hay fecha de vencimiento
+// real en la base. Cuando exista, se agrega.
 // ─────────────────────────────────────────────────────────────
-import React, { useMemo, useState } from "react";
-import { useOutletContext } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import {
-  IconAlert, IconDollar, IconMail, IconShield, IconSparkle,
-} from "../lib/icons.jsx";
-// Sprint 2026-05-24 · CEO: pantalla Cobros migra a estado vacio mientras
-// no exista hook real (hoy era 100% mock-driven). Cuando se construya
-// useCobrosData(), reemplazar estos const [] por el hook.
-const EXPEDIENTES = [];
-const CLIENTS = [];
-const NOTIFICATION_LOGS = [];
-const COLLECTION_EMAIL_LOG = [];
-import OverduePortfolioTable, { stageFromDays }
-  from "../components/cobros/OverduePortfolioTable.jsx";
-import AutomaticCollectionLogTable
-  from "../components/cobros/AutomaticCollectionLogTable.jsx";
-import DebtCaseDrawer from "../components/cobros/DebtCaseDrawer.jsx";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useOutletContext } from "react-router-dom";
+import { clientesApi, expedientesApi } from "../lib/api.js";
 
-// ── helpers ─────────────────────────────────────────────────
-function fmtMoney(v, cur = "USD") {
-  if (v == null || isNaN(v)) return "—";
-  return `${cur} ${Number(v).toLocaleString("en-US", {
-    minimumFractionDigits: 2, maximumFractionDigits: 2,
-  })}`;
-}
-// Hash determinístico simple (string → 0..N-1) — para reproducibilidad
-// del days_overdue por expediente sin tener que reescribir el seed SQL.
-function seedFromId(id, mod) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return h % mod;
-}
+const money = (v) => {
+  const n = Number(v);
+  if (!isFinite(n)) return "-";
+  return `USD ${n.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+};
 
-// Construye el universo de "casos en mora" partiendo de EXPEDIENTES
-// con balance > 0; usa CLIENTS.credito_dias como payment_grace_days
-// (proxy mientras el campo no llegue de backend).
-function buildOverdueCases(expedientes, clients, notificationLogs) {
-  const clientById = new Map(clients.map(c => [c.id, c]));
+const rowsOf = (r) => (Array.isArray(r) ? r : (r?.results || []));
 
-  // Index por expediente_id de las acciones automáticas más recientes
-  const lastByExp = new Map();
-  notificationLogs.forEach(n => {
-    if (!["C1","C2","C3"].includes(n.trigger)) return;
-    if (!n.expediente_id) return;
-    const cur = lastByExp.get(n.expediente_id);
-    if (!cur || (n.ts || "").localeCompare(cur.ts || "") > 0) {
-      lastByExp.set(n.expediente_id, n);
-    }
-  });
-
-  return expedientes
-    .filter(e => Number(e.balance) > 0 && !e.is_blocked && e.status !== "CERRADO")
-    .map(e => {
-      const cli = clientById.get(e.client_id) || {};
-      const grace = Number(cli.credito_dias) || 30;
-      // days_overdue determinístico (0..70) — sale en mora cuando >0
-      const synthDays = seedFromId(e.id, 71); // 0..70
-      const daysOverdue = Math.max(0, synthDays - 5); // ~7% de los expedientes quedan en 0
-      const stage = stageFromDays(daysOverdue);
-      const lastAct = lastByExp.get(e.id);
-
-      // case_state derivado:
-      //   bloqueado por el sistema → blocked
-      //   T3 + sin pago hace mucho → escalated
-      //   resto                    → active
-      let caseState = "active";
-      if (cli.estado === "BLOQUEADO") caseState = "blocked";
-      else if (stage.key === "T3" && seedFromId(e.id + "esc", 5) === 0) caseState = "escalated";
-      else if (seedFromId(e.id + "pause", 11) === 0) caseState = "paused";
-
-      return {
-        id:                  "case-" + e.id,
-        expediente_id:       e.id,
-        expediente_code:     e.ref || e.id,
-        proforma_id:         e.proforma || null,
-        client_id:           e.client_id,
-        client_name:         e.client || cli.name || "—",
-        amount_overdue:      Number(e.balance) || 0,
-        total_invoiced:      Number(e.total_invoiced) || 0,
-        total_paid:          Number(e.total_paid) || 0,
-        currency:            e.currency || "USD",
-        days_overdue:        daysOverdue,
-        stage,
-        payment_grace_days:  grace,
-        grace_extra_days:    0,
-        case_state:          caseState,
-        pause_reason:        "",
-        last_action_at:      lastAct?.ts || null,
-        last_action_template:lastAct?.template_key || null,
-      };
-    })
-    .filter(c => c.days_overdue > 0); // solo los realmente vencidos
-}
-
-// Selecciona los eventos del CollectionBot relevantes a un caso.
-function timelineFor(caseData, allCollectionLogs) {
-  if (!caseData) return [];
-  return allCollectionLogs.filter(c => c.expediente_id === caseData.expediente_id);
-}
-
-// Calcula los KPIs de cabecera a partir de cases + logs
-function computeKpis(cases, collectionLogs) {
-  const totalExposure = cases.reduce((a, c) => a + (c.amount_overdue || 0), 0);
-  const overdueCount  = cases.length;
-
-  const sevenDaysAgo  = Date.now() - 7 * 86400 * 1000;
-  const lastWeekLogs  = collectionLogs.filter(c => {
-    const t = new Date(c.created_at || c.ts).getTime();
-    return !isNaN(t) && t >= sevenDaysAgo;
-  });
-  const sentLastWeek  = lastWeekLogs.filter(c => c.status === "Sent").length;
-
-  // Recuperación: aproximación con monto recuperado en últimos 7 días.
-  // Sumamos el amount_overdue de los logs cuyo expediente está al día
-  // hoy (no aparece en cases). Es una heurística — en producción viene
-  // del endpoint /cobros/recovery_window/.
-  const overdueIds = new Set(cases.map(c => c.expediente_id));
-  const recovered = lastWeekLogs
-    .filter(c => !overdueIds.has(c.expediente_id))
-    .reduce((a, c) => a + (c.amount_overdue || 0), 0);
-
-  return { totalExposure, overdueCount, sentLastWeek, recovered };
-}
-
-// ── KPI card ────────────────────────────────────────────────
-function KpiCard({ icon: Icon, label, value, sub, accent = "navy" }) {
-  return (
-    <div className="card cobros-kpi" data-accent={accent}>
-      <div className="cobros-kpi-icon" data-accent={accent}>
-        <Icon size={16}/>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="micro">{label}</div>
-        <div className="cobros-kpi-value tabular-nums">{value}</div>
-        {sub && <div className="caption" style={{ marginTop: 4 }}>{sub}</div>}
-      </div>
-    </div>
-  );
-}
-
-// ── Main ────────────────────────────────────────────────────
 export default function ScreenCobros() {
   const { lang } = useOutletContext();
-  const [tab, setTab]             = useState("portfolio");
-  const [activeCase, setActiveCase] = useState(null);
-  // patches en memoria por caso (mock; en prod sería onUpdate → API)
-  const [patches, setPatches]     = useState({});
+  const es = lang !== "en";
+  const navigate = useNavigate();
 
-  // Construcción base
-  const baseCases = useMemo(
-    () => buildOverdueCases(EXPEDIENTES, CLIENTS, NOTIFICATION_LOGS),
-    []
-  );
+  const [exps, setExps] = useState([]);
+  const [clientes, setClientes] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [q, setQ] = useState("");
+  const [negocio, setNegocio] = useState("todos");
+  const [estado, setEstado] = useState("todos");
 
-  // Aplicar patches del usuario (pause / escalated / grace_extra_days)
-  const cases = useMemo(() => baseCases.map(c => {
-    const p = patches[c.id];
-    if (!p) return c;
-    const merged = { ...c, ...p };
-    // Recalcular stage si el grace extra tira al expediente "out of mora"
-    const effectiveDays = Math.max(0, merged.days_overdue - (merged.grace_extra_days || 0));
-    if (effectiveDays !== merged.days_overdue) {
-      merged.stage = stageFromDays(effectiveDays);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const safe = (p) => p.catch(() => null);
+    const [e, cli] = await Promise.all([safe(expedientesApi.list()), safe(clientesApi.list())]);
+    if (!e) {
+      setError(es ? "No se pudieron cargar los pedidos." : "Could not load orders.");
+      setLoading(false);
+      return;
     }
-    return merged;
-  }), [baseCases, patches]);
+    setExps(rowsOf(e));
+    const map = {};
+    rowsOf(cli).forEach((x) => { map[x.id] = x.razon_social || x.nombre_comercial || ""; });
+    setClientes(map);
+    setLoading(false);
+  }, [es]);
+  useEffect(() => { load(); }, [load]);
 
-  const kpis = useMemo(
-    () => computeKpis(cases, COLLECTION_EMAIL_LOG),
-    [cases]
+  const conSaldo = useMemo(() => {
+    return (exps || [])
+      .filter((e) => Number(e.balance) > 0)
+      .map((e) => ({
+        ...e,
+        _saldo: Number(e.balance),
+        _facturado: Number(e.total_invoiced || 0),
+        _pagado: Number(e.total_paid || 0),
+        _reventa: (e.modo_operacion || "").toUpperCase() === "FULL",
+      }))
+      .sort((a, b) => b._saldo - a._saldo);
+  }, [exps]);
+
+  const kpis = useMemo(() => {
+    const reventa = conSaldo.filter((e) => e._reventa);
+    const comision = conSaldo.filter((e) => !e._reventa);
+    return {
+      reventa: reventa.reduce((s, e) => s + e._saldo, 0),
+      nReventa: reventa.length,
+      comision: comision.reduce((s, e) => s + e._saldo, 0),
+      nComision: comision.length,
+      facturado: conSaldo.reduce((s, e) => s + e._facturado, 0),
+    };
+  }, [conSaldo]);
+
+  const visibles = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return conSaldo.filter((e) => {
+      if (negocio === "reventa" && !e._reventa) return false;
+      if (negocio === "comision" && e._reventa) return false;
+      if (estado !== "todos" && (e.estado || "") !== estado) return false;
+      if (!needle) return true;
+      const pf = ((e.proforma_codigos || [])[0] || e.codigo || "").toLowerCase();
+      const cli = (e.client_name || clientes[e.client_id] || "").toLowerCase();
+      return pf.includes(needle) || cli.includes(needle);
+    });
+  }, [conSaldo, negocio, estado, q, clientes]);
+
+  const estados = useMemo(
+    () => Array.from(new Set(conSaldo.map((e) => e.estado).filter(Boolean))).sort(),
+    [conSaldo]
   );
 
-  const drawerTimeline = useMemo(
-    () => timelineFor(activeCase, COLLECTION_EMAIL_LOG),
-    [activeCase]
-  );
-
-  function applyPatch(patch) {
-    if (!activeCase) return;
-    setPatches(prev => ({
-      ...prev,
-      [activeCase.id]: { ...(prev[activeCase.id] || {}), ...patch },
-    }));
-    setActiveCase(prev => prev ? { ...prev, ...patch } : prev);
-  }
+  const abrir = (e) => {
+    if (e.oc_id) navigate(`/expedientes/${e.oc_id}`);
+    else navigate("/expedientes");
+  };
 
   return (
     <div className="page">
-      {/* ── Header ─────────────── */}
       <div className="page-header">
         <div>
-          <div className="micro" style={{ marginBottom: 6 }}>
-            {lang === "es" ? "MÓDULO" : "MODULE"}
-          </div>
-          <h1 className="page-title">
-            {lang === "es" ? "Cobros" : "Collections"}
-          </h1>
-          <div className="page-subtitle" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span
-              className="cobros-bot-pill"
-              title={lang === "es" ? "El sistema cobra solo · vos supervisás" : "System collects autonomously · you supervise"}
-            >
-              <IconSparkle size={11}/>
-              {lang === "es" ? "CollectionBot · activo" : "CollectionBot · active"}
-            </span>
-            <span style={{ color: "var(--text-tertiary)" }}>
-              {lang === "es"
-                ? "Centro de control: monitoreo, auditoría y gobernanza de excepciones."
-                : "Control center: monitoring, audit and exception governance."}
-            </span>
+          <div className="micro" style={{ marginBottom: 6 }}>{es ? "MÓDULO" : "MODULE"}</div>
+          <h1 className="page-title">{es ? "Cobros" : "Collections"}</h1>
+          <div className="page-subtitle">
+            {es
+              ? "Saldo real por pedido (facturado menos pagado). La antigüedad no se muestra porque mwt.one todavía no guarda fecha de vencimiento."
+              : "Real balance per order (invoiced minus paid). Aging is not shown because mwt.one does not store a due date yet."}
           </div>
         </div>
       </div>
 
-      {/* ── KPIs ─────────────── */}
-      <motion.div
-        className="cobros-kpi-grid mb-6"
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35 }}
-      >
-        <KpiCard
-          icon={IconAlert}
-          label={lang === "es" ? "EXPOSICIÓN TOTAL EN MORA" : "TOTAL OVERDUE EXPOSURE"}
-          value={fmtMoney(kpis.totalExposure)}
-          sub={lang === "es"
-            ? `${kpis.overdueCount} expediente${kpis.overdueCount === 1 ? "" : "s"} con balance pendiente`
-            : `${kpis.overdueCount} file${kpis.overdueCount === 1 ? "" : "s"} with open balance`}
-          accent="warning"
-        />
-        <KpiCard
-          icon={IconDollar}
-          label={lang === "es" ? "EXPEDIENTES VENCIDOS" : "OVERDUE FILES"}
-          value={kpis.overdueCount}
-          sub={lang === "es"
-            ? "Superaron sus payment_grace_days"
-            : "Exceeded payment_grace_days"}
-          accent="critical"
-        />
-        <KpiCard
-          icon={IconMail}
-          label={lang === "es" ? "COBROS NOTIFICADOS · 7d" : "COLLECTIONS NOTIFIED · 7d"}
-          value={kpis.sentLastWeek}
-          sub={lang === "es"
-            ? "Correos automáticos enviados con éxito"
-            : "Automatic emails successfully sent"}
-          accent="blue"
-        />
-        <KpiCard
-          icon={IconShield}
-          label={lang === "es" ? "RECUPERACIÓN · 7d" : "RECOVERED · 7d"}
-          value={fmtMoney(kpis.recovered)}
-          sub={lang === "es"
-            ? "Pagos verificados tras gestión"
-            : "Verified payments after collection"}
-          accent="success"
-        />
-      </motion.div>
+      {loading && (
+        <div className="card card-pad-lg" style={{ color: "var(--text-tertiary)" }}>
+          {es ? "Cargando…" : "Loading…"}
+        </div>
+      )}
 
-      {/* ── Tabs ─────────────── */}
-      <div className="tabs mb-4">
-        {[
-          { k: "portfolio", es: "Cartera en mora",       en: "Overdue portfolio" },
-          { k: "audit",     es: "Auditoría del bot",     en: "Bot audit log"     },
-        ].map(t => (
-          <button
-            key={t.k}
-            className="tab"
-            data-active={tab === t.k}
-            onClick={() => setTab(t.k)}
-          >
-            {lang === "es" ? t.es : t.en}
+      {!loading && error && (
+        <div className="card card-pad-lg" role="alert" style={{ color: "var(--critical)" }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>{es ? "No se pudo cargar" : "Load failed"}</div>
+          <div className="micro" style={{ color: "var(--text-secondary)" }}>{error}</div>
+          <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 10 }} onClick={load}>
+            {es ? "Reintentar" : "Retry"}
           </button>
-        ))}
-      </div>
+        </div>
+      )}
 
-      {/* ── Tab body ─────────────── */}
-      <motion.div
-        key={tab}
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
-      >
-        {tab === "portfolio" && (
-          <OverduePortfolioTable
-            lang={lang}
-            cases={cases}
-            onOpenCase={setActiveCase}
-          />
-        )}
-        {tab === "audit" && (
-          <AutomaticCollectionLogTable
-            lang={lang}
-            logs={COLLECTION_EMAIL_LOG}
-          />
-        )}
-      </motion.div>
+      {!loading && !error && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 14 }}>
+            <div className="card card-pad-lg">
+              <div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "POR COBRAR (REVENTA)" : "RECEIVABLE (RESALE)"}</div>
+              <div className="tabular-nums" style={{ font: "800 24px/1.1 var(--font-display)", marginTop: 4 }}>{money(kpis.reventa)}</div>
+              <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+                {kpis.nReventa} {es ? "pedidos · los cobra MWT" : "orders · collected by MWT"}
+              </div>
+            </div>
+            <div className="card card-pad-lg">
+              <div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "COMISIÓN (MARLUVAS)" : "COMMISSION (MARLUVAS)"}</div>
+              <div className="tabular-nums" style={{ font: "800 24px/1.1 var(--font-display)", marginTop: 4, color: "var(--text-secondary)" }}>
+                {money(kpis.comision)}
+              </div>
+              <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+                {kpis.nComision} {es ? "pedidos · la factura la cobra Marluvas" : "orders · invoiced by Marluvas"}
+              </div>
+            </div>
+            <div className="card card-pad-lg">
+              <div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "PEDIDOS CON SALDO" : "ORDERS WITH BALANCE"}</div>
+              <div className="tabular-nums" style={{ font: "800 24px/1.1 var(--font-display)", marginTop: 4 }}>{conSaldo.length}</div>
+              <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+                {es ? "de" : "of"} {exps.length} {es ? "expedientes" : "files"}
+              </div>
+            </div>
+            <div className="card card-pad-lg">
+              <div className="micro" style={{ color: "var(--text-tertiary)" }}>{es ? "FACTURADO SIN COBRAR" : "INVOICED, NOT COLLECTED"}</div>
+              <div className="tabular-nums" style={{ font: "800 24px/1.1 var(--font-display)", marginTop: 4 }}>{money(kpis.facturado)}</div>
+              <div className="micro" style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+                {es ? "suma de las dos columnas" : "sum of both columns"}
+              </div>
+            </div>
+          </div>
 
-      {/* ── Drawer ─────────────── */}
-      <AnimatePresence>
-        {activeCase && (
-          <DebtCaseDrawer
-            key={activeCase.id}
-            lang={lang}
-            caseData={activeCase}
-            timeline={drawerTimeline}
-            onClose={() => setActiveCase(null)}
-            onUpdate={applyPatch}
-          />
-        )}
-      </AnimatePresence>
+          <div className="card card-pad-lg">
+            <div className="flex ai-center jc-between" style={{ gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+              <div className="caption" style={{ color: "var(--text-tertiary)", fontWeight: 800, letterSpacing: ".04em" }}>
+                {es ? "SALDO POR PEDIDO" : "BALANCE BY ORDER"}
+              </div>
+              <div className="flex ai-center" style={{ gap: 8, flexWrap: "wrap" }}>
+                <input
+                  className="input"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder={es ? "Proforma o cliente" : "Proforma or client"}
+                  style={{ minWidth: 200 }}
+                />
+                <select className="select" value={negocio} onChange={(e) => setNegocio(e.target.value)}>
+                  <option value="todos">{es ? "Todo negocio" : "All business"}</option>
+                  <option value="reventa">{es ? "Reventa" : "Resale"}</option>
+                  <option value="comision">{es ? "Comisión" : "Commission"}</option>
+                </select>
+                <select className="select" value={estado} onChange={(e) => setEstado(e.target.value)}>
+                  <option value="todos">{es ? "Todo estado" : "All states"}</option>
+                  {estados.map((x) => <option key={x} value={x}>{x}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {visibles.length === 0 ? (
+              <div style={{ color: "var(--text-tertiary)", fontSize: 13, padding: "16px 4px" }}>
+                {conSaldo.length === 0
+                  ? (es ? "Ningún pedido tiene saldo pendiente." : "No order has an open balance.")
+                  : (es ? "Ningún pedido coincide con el filtro." : "No order matches the filter.")}
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      {[es ? "Proforma" : "Proforma", es ? "Cliente" : "Client", es ? "Negocio" : "Business",
+                        es ? "Estado" : "State", es ? "Facturado" : "Invoiced", es ? "Pagado" : "Paid",
+                        es ? "Saldo" : "Balance"].map((h) => (
+                        <th key={h} style={{ textAlign: h === "Saldo" || h === "Facturado" || h === "Pagado" ? "right" : "left" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibles.map((e) => (
+                      <tr key={e.id} onClick={() => abrir(e)} style={{ cursor: "pointer" }}>
+                        <td style={{ fontWeight: 700 }}>{(e.proforma_codigos || [])[0] || e.codigo || "-"}</td>
+                        <td>{e.client_name || clientes[e.client_id] || "-"}</td>
+                        <td>{e._reventa ? (es ? "Reventa" : "Resale") : (es ? "Comisión" : "Commission")}</td>
+                        <td>{e.estado || "-"}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right" }}>{money(e._facturado)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", color: "var(--text-tertiary)" }}>{money(e._pagado)}</td>
+                        <td className="tabular-nums" style={{ textAlign: "right", fontWeight: 700 }}>{money(e._saldo)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
