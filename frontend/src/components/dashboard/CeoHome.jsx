@@ -103,8 +103,8 @@ function ComisionesChart({ datos, es }) {
           const w = Math.max(4, bw - 14);
           return (
             <g key={d.mes}
-               onMouseEnter={() => setHover(i)}
-               onMouseLeave={() => setHover(null)}>
+               onMouseOver={() => setHover(i)}
+               onMouseOut={() => setHover(null)}>
               <rect x={i * bw} y="0" width={bw} height={H - pad} fill="transparent" />
               <rect x={x} y={H - pad - hc} width={w} height={hc} rx="2" fill="var(--brand-accent)">
                 <title>{`${d.mes} · ${es ? "Comisión" : "Commission"} ${dinero(d.comision)}`}</title>
