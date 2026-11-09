@@ -107,9 +107,10 @@ export default function EmbarquesPortada({ lang = "es", clientId, limit = 0 }) {
   // llegada.
   const activos = useMemo(() => {
     const vivos = (items || []).filter((it) => {
-      const ped = Number(it.pedido || 0);
-      const ent = Number(it.entregadas || 0);
-      if (ent > 0 && (ped === 0 || ent >= ped)) return false;
+      const c = it.cantidades || {};
+      const ped = Number(c.pedido || 0);
+      const ent = Number(c.entregadas || 0);
+      if (ped > 0 && ent >= ped) return false;
       const est = String(it.estado || "").toUpperCase();
       return !["CERRADO", "ENTREGADO"].includes(est);
     });
@@ -182,6 +183,8 @@ export default function EmbarquesPortada({ lang = "es", clientId, limit = 0 }) {
         const est = hito ? null : estimar(it.estado);
         const open = openId === it.id;
         const det = detalle[it.id];
+        const fechaHito = hito?.valor_fecha ? new Date(hito.valor_fecha) : null;
+        const vencida = fechaHito && !isNaN(fechaHito) && fechaHito < new Date(new Date().toDateString());
         return (
           <div key={it.id} onClick={() => go(it)}
                style={{ borderTop: "1px solid var(--border-subtle, #EEF2F6)", padding: "10px 2px", cursor: "pointer" }}>
@@ -202,6 +205,7 @@ export default function EmbarquesPortada({ lang = "es", clientId, limit = 0 }) {
                       {hito.campo}: {hito.valor_fecha || hito.valor_raw || "—"}
                     </div>
                     <Chip text={es ? prec.es : prec.en} tone={hito.precision === "EXACTA" ? "ok" : "warn"} />
+                    {vencida && <Chip text={es ? "vencida" : "overdue"} tone="warn" />}
                   </>
                 ) : est ? (
                   <>
