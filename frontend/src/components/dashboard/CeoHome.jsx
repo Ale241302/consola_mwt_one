@@ -75,7 +75,7 @@ function Section({ title, sub, right, children }) {
   );
 }
 
-/** Barras de comisión y premio por mes, con detalle flotante y premios negativos. */
+﻿/** Barras de comisión y premio por mes, con detalle fijo debajo (sin tooltip flotante). */
 function ComisionesChart({ datos, detalle, es }) {
   const [hover, setHover] = useState(null);
   const filas = (datos || []).filter((d) => d && d.mes);
@@ -87,7 +87,7 @@ function ComisionesChart({ datos, detalle, es }) {
   const maxPos = Math.max(1, ...filas.map((d) => com(d) + Math.max(0, pre(d))));
   const maxNeg = Math.max(0, ...filas.map((d) => Math.max(0, -pre(d))));
 
-  const W = 640, H = 210, top = 12, bottom = 26;
+  const W = 640, H = 220, top = 14, bottom = 34;
   const alto = H - top - bottom;
   const posH = maxNeg > 0 ? alto * (maxPos / (maxPos + maxNeg)) : alto;
   const negH = alto - posH;
@@ -97,11 +97,16 @@ function ComisionesChart({ datos, detalle, es }) {
   const filasDetalle = detalle?.[activo.mes] || [];
 
   return (
-    <div className="dash-chart" style={{ position: "relative" }}>
-      <div className="micro" style={{ color: "var(--text-secondary)", marginBottom: 4 }}>
-        <b>{activo.mes}</b>
-        {" · "}{es ? "Comisión" : "Commission"} {dinero(activo.comision)}
-        {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
+    <div>
+      <div className="flex ai-center jc-between" style={{ marginBottom: 6, gap: 8, flexWrap: "wrap" }}>
+        <div className="micro" style={{ color: "var(--text-secondary)" }}>
+          <b>{activo.mes}</b>
+          {" · "}{es ? "Comisión" : "Commission"} {dinero(activo.comision)}
+          {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
+        </div>
+        <div className="micro" style={{ color: "var(--text-tertiary)" }}>
+          {es ? "máx" : "max"} {dinero(maxPos)}
+        </div>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img"
            aria-label={es ? "Comisión y premio por mes" : "Commission and bonus by month"}>
@@ -114,79 +119,66 @@ function ComisionesChart({ datos, detalle, es }) {
           const hc = (com(d) / maxPos) * posH;
           const p = pre(d);
           const hp = maxNeg > 0 ? (Math.abs(p) / Math.max(maxNeg, 1)) * negH : 0;
-          const x = i * bw + Math.max(2, (bw - 14) / 2);
-          const w = Math.max(4, bw - 14);
+          const w = Math.max(6, bw * 0.58);
+          const x = i * bw + (bw - w) / 2;
           const atenuada = hover != null && hover !== i;
-          const estilo = {
-            opacity: atenuada ? 0.35 : 1,
-            transition: "opacity .18s ease",
-          };
+          const estilo = { opacity: atenuada ? 0.45 : 1, transition: "opacity .18s ease" };
           return (
             <g key={d.mes}
                onMouseOver={() => setHover(i)}
                onMouseOut={() => setHover(null)}>
               <rect x={i * bw} y="0" width={bw} height={H} fill="transparent" />
-              <rect x={x} y={baseY - hc} width={w} height={hc} rx="2" fill="var(--brand-accent)" style={estilo}>
-                <title>{`${d.mes} · ${es ? "Comisión" : "Commission"} ${dinero(d.comision)}`}</title>
-              </rect>
+              <rect x={x} y={baseY - hc} width={w} height={hc} rx="3"
+                    fill="var(--brand-accent-dark, var(--brand-accent))" style={estilo} />
               {p !== 0 && (
                 <rect
                   x={x}
                   y={p > 0 ? baseY - hc - hp : baseY}
                   width={w}
-                  height={Math.max(1, hp)}
-                  rx="2"
+                  height={Math.max(2, hp)}
+                  rx="3"
                   fill={p > 0 ? "var(--warning-fg, #92400E)" : "var(--critical)"}
-                  opacity="0.85"
                   style={estilo}
-                >
-                  <title>{`${d.mes} · ${es ? "Premio" : "Bonus"} ${dinero(p)}`}</title>
-                </rect>
+                />
               )}
+              <text x={i * bw + bw / 2} y={H - 10} textAnchor="middle"
+                    fill="var(--text-tertiary)" fontSize="10">
+                {d.mes.slice(2)}
+              </text>
             </g>
           );
         })}
       </svg>
-      <div className="flex jc-between micro" style={{ color: "var(--text-tertiary)" }}>
-        <span>{filas[0].mes}</span>
-        <span>{filas[filas.length - 1].mes}</span>
-      </div>
 
-      {/* Flotante al pasar el cursor: el mes activo, con qué factura y cuánto. */}
-      {hover != null && (
-        <div
-          role="status"
-          style={{
-            position: "absolute", top: 4, right: 4,
-            maxWidth: 320, padding: "8px 10px", pointerEvents: "none", zIndex: 5,
-            background: "var(--surface-raised)", border: "1px solid var(--border)",
-            borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-md)",
-            fontSize: 11, lineHeight: 1.5,
-          }}
-        >
-          <div style={{ fontWeight: 700 }}>
-            {activo.mes} · {es ? "Comisión" : "Commission"} {dinero(activo.comision)}
-            {" · "}{es ? "Premio" : "Bonus"} {dinero(activo.premio)}
+      {/* Detalle del mes activo, debajo del gráfico: no tapa las barras. */}
+      <div style={{
+        marginTop: 6, padding: "8px 10px", minHeight: 46,
+        background: "var(--surface-hover)", border: "1px solid var(--border)",
+        borderRadius: "var(--radius-md)", fontSize: 11, lineHeight: 1.5,
+      }}>
+        {filasDetalle.length === 0 ? (
+          <div style={{ color: "var(--text-tertiary)" }}>
+            {es ? "Sin facturas detalladas para este mes." : "No invoices detailed for this month."}
           </div>
-          {filasDetalle.length === 0 ? (
-            <div style={{ color: "var(--text-tertiary)" }}>{es ? "Sin facturas detalladas." : "No invoices detailed."}</div>
-          ) : filasDetalle.slice(0, 6).map((f, idx) => (
-            <div key={idx} style={{ color: "var(--text-secondary)" }}>
-              {f.tipo === "PREMIO" ? (es ? "Premio" : "Bonus") : (es ? "Comisión" : "Commission")}
-              {" · "}{f.pf ? `PF ${f.pf}` : (f.fe || "-")}
-              {f.oc ? ` · OC ${f.oc}` : ""}
-              {" · "}{dinero(f.monto)}
-              {f.cliente ? ` · ${f.cliente}` : ""}
-            </div>
-          ))}
-          {filasDetalle.length > 6 && (
-            <div style={{ color: "var(--text-tertiary)" }}>+{filasDetalle.length - 6} {es ? "más" : "more"}</div>
-          )}
-        </div>
-      )}
+        ) : filasDetalle.slice(0, 4).map((f, idx) => (
+          <div key={idx} style={{ color: "var(--text-secondary)" }}>
+            {f.tipo === "PREMIO" ? (es ? "Premio" : "Bonus") : (es ? "Comisión" : "Commission")}
+            {" · "}{f.pf ? `PF ${f.pf}` : (f.fe || "-")}
+            {f.oc ? ` · OC ${f.oc}` : ""}
+            {" · "}{dinero(f.monto)}
+            {f.cliente ? ` · ${f.cliente}` : ""}
+          </div>
+        ))}
+        {filasDetalle.length > 4 && (
+          <div style={{ color: "var(--text-tertiary)" }}>
+            +{filasDetalle.length - 4} {es ? "más. Pasá el cursor por otra barra." : "more. Hover another bar."}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
 
 export default function CeoHome({ lang = "es", onOpenExpediente, onGoFinanzas, onGoCorreo, onGoExpedientes }) {
   const es = lang !== "en";
