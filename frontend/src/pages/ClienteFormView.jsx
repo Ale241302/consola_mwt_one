@@ -32,7 +32,8 @@ import {
 } from "../lib/icons.jsx";
 import { useRole } from "../context/RoleContext.jsx";
 import { CLIENTS } from "../data/mockData.js";
-import { clientesApi, apiFetch, getToken, storageUrl } from "../lib/api.js";
+import { clientesApi, marcasApi, apiFetch, getToken, storageUrl } from "../lib/api.js";
+import { clienteCorto, prvDeMarca, formatearCodigoOc, siguienteCodigoOc } from "../lib/ocCodigo.js";
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 import ComisionesFamiliaSection from "../components/clientes/ComisionesFamiliaSection.jsx";
@@ -207,6 +208,25 @@ export default function ScreenClienteFormView() {
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState(null);
 
+  // Sprint 2026-11-09 · correlativo de OC por marca (G25). El valor que
+  // se edita es el código completo: MAR-UMMIE-GT-04-25.
+  const [marcas, setMarcas] = useState([]);
+  const [correlativos, setCorrelativos] = useState({});
+  useEffect(() => {
+    let cancel = false;
+    marcasApi.list()
+      .then((d) => { if (!cancel) setMarcas(Array.isArray(d) ? d : (d?.results || [])); })
+      .catch(() => {});
+    return () => { cancel = true; };
+  }, []);
+  useEffect(() => {
+    const map = {};
+    for (const fila of (initial?.correlativos_marca || [])) {
+      if (fila?.brand_id) map[fila.brand_id] = fila.codigo || "";
+    }
+    setCorrelativos(map);
+  }, [initial]);
+
   // K2 · Comisiones por Marca/Familia (CEO/ADMIN-only).
   const [reglas, setReglas] = useState([]);
   useEffect(() => {
@@ -280,6 +300,13 @@ export default function ScreenClienteFormView() {
 
     // Defensa en profundidad: remover CEO-ONLY del payload si no admin.
     const payload = { ...form };
+    // El correlativo vive por marca (G25) y viaja como lista aparte.
+    delete payload.oc_correlativo;
+    delete payload.correlativos_marca;
+    payload.correlativos_marca = marcas.map((m) => ({
+      brand_id: m.id,
+      codigo: String(correlativos[m.id] || "").trim(),
+    }));
     if (!isAdmin) {
       delete payload.credito_limit_usd;
       delete payload.comision_pct;
@@ -675,21 +702,58 @@ export default function ScreenClienteFormView() {
                      min={0} max={180}
                      mono/>
             </Field>
-            {/* Sprint 2026-07-18 (G3) · correlativo de OC: último número
-                usado de la serie del cliente. El wizard del portal
-                auto-numera la próxima OC sin PO como este valor + 1
-                (o el mayor PO numérico previo + 1, lo que sea mayor). */}
-            <Field label={lang === "es" ? "Correlativo OC" : "OC sequence"}
-                   hint={lang === "es"
-                     ? "Último usado · la próxima OC sin PO será este + 1"
-                     : "Last used · next PO-less OC will be this + 1"}>
-              <Input type="number"
-                     value={form.oc_correlativo ?? ""}
-                     onChange={v => update("oc_correlativo", v === "" ? null : Number(v))}
-                     min={0}
-                     mono/>
-            </Field>
           </Grid>
+
+          {/* Sprint 2026-11-09 · correlativo de OC por marca (G25).
+              El código se ve completo: MAR-UMMIE-GT-04-25. La próxima OC
+              del portal usa el consecutivo + 1. */}
+          <div style={{ marginTop: 20 }}>
+            <Label>{lang === "es" ? "Correlativo OC por marca" : "OC sequence by brand"}</Label>
+            <div className="caption" style={{ marginTop: 4 }}>
+              {lang === "es"
+                ? "Último código asignado. La próxima OC sin PO será el siguiente."
+                : "Last assigned code. The next PO-less OC will be the following one."}
+            </div>
+            <div style={{ display: "grid", gap: 12, marginTop: 10 }}>
+              {marcas.map((m) => {
+                const valor = correlativos[m.id] ?? "";
+                const sugerido = formatearCodigoOc({
+                  prv: prvDeMarca(m),
+                  cliente: clienteCorto(form.razon_social),
+                  pais: form.pais_iso2,
+                  nn: 1,
+                  anio: new Date().getFullYear(),
+                });
+                const proximo = valor.trim() ? (siguienteCodigoOc(valor) || sugerido) : sugerido;
+                return (
+                  <div
+                    key={m.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "150px minmax(0, 1fr)",
+                      gap: 12,
+                      alignItems: "start",
+                    }}
+                  >
+                    <div style={{ font: "600 12px/1.4 var(--font-body)", color: NAVY }}>
+                      {m.nombre}
+                    </div>
+                    <div>
+                      <Input
+                        value={valor}
+                        onChange={(v) => setCorrelativos((p) => ({ ...p, [m.id]: v }))}
+                        placeholder={sugerido}
+                        mono
+                      />
+                      <div className="caption" style={{ marginTop: 4 }}>
+                        {lang === "es" ? `Próximo: ${proximo}` : `Next: ${proximo}`}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </Section>
 
         {/* ─── Sección 5 · Gobernanza Financiera [CEO-ONLY] ─── */}
@@ -1078,7 +1142,6 @@ function defaultsFrom(initial) {
     incoterm:          i.incoterm          || "CIF",
     medio_pago:        (i.medio_pago       || "TRANSFER_BANCARIA").toUpperCase().replace(/\s+/g, "_"),
     dias_credito:      (i.dias_credito ?? i.credito_dias ?? 60),
-    oc_correlativo:    i.oc_correlativo ?? null,
     credito_limit_usd: i.credito_limit_usd ?? i.credito_limit ?? i.credito_aprobado ?? null,
     comision_pct:      i.comision_pct ?? null,
     estado:            (i.estado || i.estado_operativo || "ACTIVO").toUpperCase(),

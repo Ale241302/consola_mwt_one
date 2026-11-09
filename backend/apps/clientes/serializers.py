@@ -28,11 +28,14 @@ Validaciones:
 """
 from __future__ import annotations
 
+import logging
 import re
 from rest_framework import serializers
 
 from apps.storage.serializers import StorageNormalizeMixin
 from .models import Cliente, ClienteCreditSnapshot
+
+log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -319,6 +322,67 @@ class ClienteSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
         reflejan el pool del PADRE (límite operativo compartido).
         """
         return o.calcular_kpis_consolidados()
+
+    # ── Correlativo de OC por marca (G25) ──────────────────────
+    # No es un campo del modelo: se calcula al leer y se procesa en
+    # create/update desde `initial_data`, así el front puede editar la
+    # lista completa de marcas en una sola llamada.
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        try:
+            from apps.expedientes.codigo_expediente import previsualizar_codigos_marca
+
+            data["correlativos_marca"] = previsualizar_codigos_marca(
+                getattr(instance, "id", None)
+            )
+        except Exception as exc:  # noqa: BLE001 - la ficha no se cae por esto
+            log.warning("correlativos_marca falló (cliente %s): %s", instance.pk, exc)
+            data["correlativos_marca"] = []
+        return data
+
+    def create(self, validated_data, **kwargs):
+        filas = (self.initial_data or {}).get("correlativos_marca")
+        inst = super().create(validated_data, **kwargs)
+        self._guardar_correlativos(inst, filas)
+        return inst
+
+    def update(self, instance, validated_data, **kwargs):
+        filas = (self.initial_data or {}).get("correlativos_marca")
+        inst = super().update(instance, validated_data, **kwargs)
+        self._guardar_correlativos(inst, filas)
+        return inst
+
+    def _guardar_correlativos(self, inst, filas):
+        """Guarda la lista `[{brand_id, codigo|nn, anio}]` de la ficha."""
+        if not isinstance(filas, list):
+            return
+        from apps.expedientes.codigo_expediente import (
+            guardar_codigo_marca,
+            parsear_codigo_marca,
+        )
+
+        for fila in filas:
+            if not isinstance(fila, dict):
+                continue
+            brand_id = fila.get("brand_id")
+            if not brand_id:
+                continue
+            codigo = str(fila.get("codigo") or "").strip()
+            nn = fila.get("nn")
+            anio = fila.get("anio")
+            if codigo:
+                partes = parsear_codigo_marca(codigo)
+                if partes:
+                    nn, anio = partes["nn"], partes["anio"]
+                elif codigo.isdigit():
+                    nn = int(codigo)
+                else:
+                    continue
+            if nn is None or str(nn).strip() == "":
+                # Fila vacía: si existía, se borra (la próxima OC arranca en 01).
+                guardar_codigo_marca(inst.id, brand_id, None, None)
+                continue
+            guardar_codigo_marca(inst.id, brand_id, nn, anio)
 
     def get_mcp_app(self, o):
         """Ola 3 · credenciales de la app MCP del cliente.

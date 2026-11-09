@@ -18,6 +18,11 @@ Endpoint único:
       transport_mode  ('MARITIMO' | 'AEREO' — sólo ADMIN; CLIENT → NULL)
       credit_clock_start_rule  ('ON_BL' | 'ON_ETA' | 'ON_ARRIVAL' | 'ON_INVOICE' | 'ON_PROFORMA')
       credit_days     (INT — sólo ADMIN; CLIENT hereda de clientes.cliente)
+      po_number       (str — número de la OC del cliente; si falta, se numera
+                       con la serie del cliente o con POL_CODIGO_OC v1.4)
+      proforma        (str — opcional, alta interna: arma el código completo
+                       EXP-{PRV}-{CLIENTE}-{DES}-{proforma})
+      destino         (str — opcional, IATA del destino para ese código)
       idempotence_token  (UUID — replay-safe; si existe, devuelve el expediente previo)
 
 Reglas de seguridad (B2B ISOLATION STRICT):
@@ -85,6 +90,10 @@ from apps.expedientes.po_alias_matcher import (
     pick_band,
     pick_plazo_price,
 )
+# Sprint 2026-11-09 · POL_CODIGO_OC v1.4 en el alta del portal: cuando el
+# cliente no sube OC numerada, la OC y el expediente salen con la
+# nomenclatura del cliente (`MAR-UMMIE-GT-04-26`) y no con `OC-AUTO-…`.
+from apps.expedientes import codigo_expediente as codigos
 
 log = logging.getLogger(__name__)
 
@@ -866,58 +875,10 @@ def _notify_admins_expediente_created(*, expediente_id, expediente_codigo,
 
 
 # ═════════════════════════════════════════════════════════════════════
-# Correlativo de OC por cliente (G3 · Sprint 2026-07-18)
+# El correlativo de OC vive en `clientes.cliente_marca_correlativo`
+# (G25 · una fila por cliente y marca). Lo maneja
+# `apps.expedientes.codigo_expediente.siguiente_codigo_marca`.
 # ═════════════════════════════════════════════════════════════════════
-def _next_oc_correlativo(client_id) -> Optional[str]:
-    """Siguiente número de la serie de OC del cliente, o None.
-
-    Regla:
-        siguiente = GREATEST(clientes.cliente.oc_correlativo,
-                             mayor expedientes.oc.codigo numérico del cliente) + 1
-
-    · El valor persistido en clientes.cliente.oc_correlativo es el
-      ÚLTIMO consumido (editable desde el form de cliente).
-    · None si el cliente no tiene serie configurada NI OCs con codigo
-      puramente numérico → el caller cae al fallback OC-AUTO-XXXX.
-    · UPDATE atómico en UNA sola sentencia (row lock) → dos submissions
-      concurrentes no pueden sacar el mismo número.
-    · Corre fuera de la tx principal: si ésta hace rollback después, el
-      número queda consumido con gap (mismo criterio que las series de
-      facturación; la idempotencia por token evita doble consumo en
-      reintentos del wizard).
-    """
-    sql = """
-        UPDATE clientes.cliente AS cl
-           SET oc_correlativo = GREATEST(
-                   COALESCE(cl.oc_correlativo, 0),
-                   COALESCE((
-                       SELECT MAX(o.codigo::bigint)
-                         FROM expedientes.oc o
-                        WHERE o.client_id = cl.id
-                          AND o.is_active = TRUE
-                          AND o.codigo ~ '^[0-9]+$'
-                   ), 0)
-               ) + 1
-         WHERE cl.id = %s::uuid
-           AND (
-                 cl.oc_correlativo IS NOT NULL
-                 OR EXISTS (
-                       SELECT 1 FROM expedientes.oc o
-                        WHERE o.client_id = cl.id
-                          AND o.is_active = TRUE
-                          AND o.codigo ~ '^[0-9]+$'
-                 )
-           )
-        RETURNING cl.oc_correlativo
-    """
-    try:
-        with connection.cursor() as c:
-            c.execute(sql, [str(client_id)])
-            row = c.fetchone()
-        return str(row[0]) if row else None
-    except Exception as e:
-        log.warning("_next_oc_correlativo falló (cliente %s): %s", client_id, e)
-        return None
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -1087,14 +1048,31 @@ def create_from_oc_impl(request):
 
     # ── 6. Datos derivados ──────────────────────────────────────────
     po = ocr_payload.get("po") or {}
-    # Sprint 2026-07-18 (G3) · si el wizard no trajo número de PO
-    # (portal B2B sin archivo / payload sintético), auto-numeramos con
-    # el correlativo del cliente. Sin serie configurada ni OCs numéricas
-    # previas → fallback OC-AUTO-XXXX de siempre.
-    po_number = (request.data.get("po_number")
-                 or po.get("number")
-                 or _next_oc_correlativo(client_id)
-                 or f"OC-AUTO-{uuid.uuid4().hex[:8].upper()}")
+    # Sprint 2026-07-18 (G3) + Sprint 2026-11-09 · número de OC:
+    #   1) el que trae el cliente (payload u OCR),
+    #   2) el consecutivo de la marca para ese cliente
+    #      (`MAR-UMMIE-GT-05-26`, tabla G25),
+    #   3) `{PRV}-{CLIENTE}-{PAÍS}-{NN}-{AA}` calculado de los OCs previos,
+    #   4) OC-AUTO-… solo si no se pudo leer el cliente (no debería pasar).
+    po_number = str(
+        request.data.get("po_number") or po.get("number") or ""
+    ).strip()
+    po_origen = "cliente" if po_number else ""
+    if not po_number:
+        _sig = codigos.siguiente_codigo_marca(
+            client_id, brand_id, _safe_date(po.get("date")),
+        )
+        if _sig:
+            po_number = _sig
+            po_origen = "consecutivo"
+    if not po_number:
+        po_number = codigos.siguiente_oc_sin_numero(
+            client_id, brand_id, _safe_date(po.get("date")),
+        ) or ""
+        po_origen = "consecutivo" if po_number else ""
+    if not po_number:
+        po_number = f"OC-AUTO-{uuid.uuid4().hex[:8].upper()}"
+        po_origen = "auto"
 
     total_value = Decimal("0")
     for ln in ocr_lines:
@@ -1108,7 +1086,13 @@ def create_from_oc_impl(request):
     artifact_id   = uuid.uuid4()
     corr_id       = uuid.uuid4()
     submission_id = uuid.uuid4()
-    expediente_codigo = f"EXP-{po_number}"
+    expediente_codigo = codigos.codigo_expediente_para(
+        client_id, brand_id,
+        po_number=po_number,
+        origen=po_origen or "cliente",
+        proforma=str(request.data.get("proforma") or "").strip() or None,
+        destino=str(request.data.get("destino") or "").strip() or None,
+    )
 
     submitted_by_id    = getattr(user, "id", None)
     submitted_by_email = getattr(user, "email", None) or getattr(user, "username", None)
@@ -1137,14 +1121,20 @@ def create_from_oc_impl(request):
                 # codigo SÍ sigue siendo único, así que si el PO se re-registra
                 # desambiguamos SOLO el codigo del expediente con sufijo
                 # -2, -3… El número de OC/PO (po_number) se conserva tal cual.
+                # Sprint 2026-11-09 · el campo es VARCHAR(32): el sufijo se
+                # recorta del código base para no reventar con 500 cuando el
+                # código ya viene completo (p. ej. EXP-MAR-SONEPAR-BOG-2371-2025).
+                _base_exp_codigo = expediente_codigo
                 c.execute(
                     "SELECT COUNT(*) FROM expedientes.expediente "
                     "WHERE codigo = %s OR codigo LIKE %s",
-                    [expediente_codigo, expediente_codigo + "-%"],
+                    [_base_exp_codigo, _base_exp_codigo + "-%"],
                 )
                 _exp_dups = int((c.fetchone() or [0])[0] or 0)
                 if _exp_dups > 0:
-                    expediente_codigo = f"{expediente_codigo}-{_exp_dups + 1}"
+                    _sufijo = f"-{_exp_dups + 1}"
+                    _corte = codigos.LARGO_MAX_CODIGO - len(_sufijo)
+                    expediente_codigo = _base_exp_codigo[:_corte].rstrip("-") + _sufijo
 
                 # 7.1 — Insertar OC
                 c.execute("""

@@ -127,7 +127,9 @@ export function RefCell({ expediente, isAdmin, onClickOc, lang = "es" }) {
   } else if (primaryOc) {
     headRaw = primaryOc; headKind = "oc";
   } else {
-    headRaw = e.codigo; headKind = "exp";
+    // Sprint 2026-11-09 · sin proforma y sin OC: se muestra el correlativo
+    // del expediente (`EXP-…`), nunca un hueco.
+    headRaw = e.codigo || e.ref || "—"; headKind = "exp";
   }
   // La proforma se persiste como "2454-2026" (sin prefijo); el head debe
   // leerse "PF 2454-2026". El PO ya trae su propio prefijo en el valor.
