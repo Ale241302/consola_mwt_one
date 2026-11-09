@@ -83,6 +83,10 @@ vite.config.js.timestamp-*.mjs
 *.bak
 *.orig
 
+# --- MCP local de correo Hostinger --------------------------------------
+hostinger_mail_mcp/_hostinger_mail_downloads/
+_hostinger_mail_downloads/
+
 # --- Scratch / temp / ad-hoc (no versionar) ------------------------------
 .tmp_python_test/
 _to_delete/
@@ -127,3 +131,9 @@ Captura de pantalla 2026-07-17 093827.png
 Sepa la Talla del Calzado Marluvas - Espa*.pdf
 Tabela de pre*.xlsx
 Tabla de Numeracion oficial de Marluvas_260721_091450.pdf
+
+# Scripts temporales con credenciales (.tmp_activate_role.sh trae la clave del
+# CEO en claro). Nunca versionar; el deploy stagea por ruta explícita, esto es
+# la red de seguridad contra un `git add -A`.
+.tmp_*
+

@@ -153,6 +153,44 @@ class TestA1LecturaHttp:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# A1 · la alerta de "tope vencido sin pago" se puede leer
+# ─────────────────────────────────────────────────────────────────────
+class TestA1AlertaTope:
+    BLOQUEADO = {
+        "codigo": "EXP-2355-2025",
+        "oc": "504069",
+        "cliente": "Sondel",
+        "fecha_tope": "2026-11-01",
+        "motivo": "sin pago confirmado",
+    }
+
+    def test_resumen_nombra_expediente_oc_y_motivo(self):
+        from apps.expedientes.tasks import _resumen_tope_sin_pago
+
+        asunto, cuerpo = _resumen_tope_sin_pago([self.BLOQUEADO])
+
+        assert "1 expediente" in asunto
+        assert "sin pago confirmado" in asunto
+        assert "EXP-2355-2025" in cuerpo
+        assert "504069" in cuerpo
+        assert "Sondel" in cuerpo
+        assert "2026-11-01" in cuerpo
+
+    def test_resumen_pluraliza(self):
+        from apps.expedientes.tasks import _resumen_tope_sin_pago
+
+        asunto, _ = _resumen_tope_sin_pago([self.BLOQUEADO, dict(self.BLOQUEADO)])
+        assert "2 expedientes" in asunto
+
+    def test_sin_bloqueados_no_arma_alerta(self):
+        from apps.expedientes.tasks import _resumen_tope_sin_pago
+
+        asunto, cuerpo = _resumen_tope_sin_pago([])
+        assert "0 expedientes" in asunto
+        assert "Detalle:" in cuerpo
+
+
+# ─────────────────────────────────────────────────────────────────────
 # B1 · el secreto de la app MCP nunca sale en una lectura
 # ─────────────────────────────────────────────────────────────────────
 class TestB1Secreto:

@@ -44,6 +44,11 @@ SUPPORT_EMAIL = getattr(settings, "SUPPORT_EMAIL", "soporte@mwt.one")
 TEMPLATE_KEY = "en_destino_eta"
 TRIGGER_KEY = "expediente.en_destino_eta"
 
+# Alerta de auto-cierre bloqueado (A1): el tope venció pero no hay pago, así
+# que el expediente NO se cierra. Se avisa por campana y por email una vez
+# al día con la lista completa.
+TRIGGER_AUTO_CLOSE_BLOCKED = "expediente.tope_sin_pago"
+
 
 def _parse_date(value) -> Optional[date]:
     """Convierte string/date/datetime a date."""
@@ -152,6 +157,8 @@ def _create_notification_log(
     status: str = "Sent",
     token: Optional[str] = None,
     error: Optional[str] = None,
+    template_key: str = TEMPLATE_KEY,
+    trigger: str = TRIGGER_KEY,
 ):
     """Auditoría de envío en notifications.notification_log."""
     try:
@@ -160,17 +167,155 @@ def _create_notification_log(
             ts=datetime.now(tz=_tz.utc),
             completed_at=datetime.now(tz=_tz.utc) if status == "Sent" else None,
             expediente_id=expediente_id,
-            template_key=TEMPLATE_KEY,
+            template_key=template_key,
             recipient_email=recipient,
             subject=subject,
             body_preview=(body_preview or "")[:500],
-            trigger=TRIGGER_KEY,
+            trigger=trigger,
             status=status,
             idempotence_token=token,
             error=(error or "")[:512] if error else None,
         )
     except Exception as e:
         log.warning("NotificationLog falló para exp=%s: %s", expediente_id, e)
+
+
+def _admin_recipients() -> List[Tuple[uuid.UUID, str]]:
+    """Solo admins fijos: la alerta de tope sin pago es interna, no del cliente."""
+    recipients: List[Tuple[uuid.UUID, str]] = []
+    seen = set()
+    for user in MwtUser.objects.filter(is_active=True, email_plain__in=ADMIN_EMAILS):
+        email = user.contact_email or user.email_plain
+        if email and email not in seen:
+            recipients.append((user.id, email))
+            seen.add(email)
+    return recipients
+
+
+def _resumen_tope_sin_pago(bloqueados: List[dict]) -> Tuple[str, str]:
+    """Asunto y cuerpo de la alerta. Puro: se puede testear sin base."""
+    from apps.expedientes.views import AUTO_CLOSE_DAYS
+
+    total = len(bloqueados)
+    plural = "expedientes" if total != 1 else "expediente"
+    asunto = (
+        f"[MWT] {total} {plural} con tope de {AUTO_CLOSE_DAYS} días vencido "
+        f"y sin pago confirmado"
+    )
+    lineas = [
+        f"Hay {total} {plural} EN DESTINO con el tope de {AUTO_CLOSE_DAYS} días",
+        "vencido y SIN pago confirmado. El auto-cierre NO se aplicó (ajuste A1):",
+        "un expediente no se cierra sin pago registrado.",
+        "",
+        "Qué hacer con cada uno:",
+        "  · Si el pago existe, registrarlo (pago_registrar) y conciliarlo.",
+        "  · Si no corresponde cerrar, corregir las fechas por etapa.",
+        "",
+        "Detalle:",
+    ]
+    for item in bloqueados:
+        lineas.append(
+            f"  • {item.get('codigo', '?')} · OC {item.get('oc', '—')} · "
+            f"{item.get('cliente', 'Cliente')} · tope {item.get('fecha_tope', '?')} · "
+            f"{item.get('motivo', 'sin pago confirmado')}"
+        )
+    lineas += [
+        "",
+        "Consola: https://consola.mwt.one/expedientes",
+    ]
+    return asunto, "\n".join(lineas)
+
+
+def _alertar_tope_sin_pago(bloqueados: List[dict], hoy: date) -> dict:
+    """Campana + email con los expedientes trabados por el tope sin pago.
+
+    Un solo correo por día con la lista completa (no uno por expediente) y
+    token de idempotencia por fecha: re-ejecutar la tarea no vuelve a avisar.
+    """
+    if not bloqueados:
+        return {"ok": True, "enviados": 0}
+
+    token = f"tope_sin_pago:{hoy.isoformat()}"  # 26 chars (< 64 de la columna)
+    if NotificationLog.objects.filter(idempotence_token=token).exists():
+        log.info("Alerta de tope sin pago ya enviada hoy (%s)", hoy)
+        return {"ok": True, "enviados": 0, "omitida": "ya_enviada"}
+
+    asunto, cuerpo = _resumen_tope_sin_pago(bloqueados)
+    html_cuerpo = "<p>" + cuerpo.replace("\n", "<br>") + "</p>"
+    titulo_campana = f"{len(bloqueados)} expediente(s) con tope vencido sin pago"
+
+    destinatarios = _admin_recipients()
+    if not destinatarios:
+        log.warning("Alerta de tope sin pago sin destinatarios admin")
+        _create_notification_log(
+            expediente_id=None,
+            recipient=None,
+            subject=asunto,
+            body_preview=cuerpo[:200],
+            status="Skipped",
+            token=token,
+            error="no_recipients",
+            template_key=TRIGGER_AUTO_CLOSE_BLOCKED,
+            trigger=TRIGGER_AUTO_CLOSE_BLOCKED,
+        )
+        return {"ok": True, "enviados": 0, "omitida": "sin_destinatarios"}
+
+    enviados = 0
+    for user_id, email in destinatarios:
+        # Campana (visible en la consola sin abrir el correo).
+        try:
+            ActivityFeed.objects.create(
+                id=uuid.uuid4(),
+                user_id=user_id,
+                kind=TRIGGER_AUTO_CLOSE_BLOCKED,
+                title=titulo_campana[:160],
+                body=cuerpo[:2000],
+                severity="WARNING",
+                icon="alert-triangle",
+                deep_link=_consola_url_base() + "/expedientes",
+                related_type="expediente",
+                related_id=None,
+            )
+        except Exception as e:
+            log.warning("ActivityFeed tope sin pago falló user=%s: %s", user_id, e)
+
+        try:
+            result = send_test_email(
+                to=email,
+                subject=asunto,
+                body=cuerpo,
+                html_body=html_cuerpo,
+                reply_to=SUPPORT_EMAIL,
+            )
+            status = "Sent" if result.get("ok") else "Failed"
+            error = result.get("error")
+        except Exception as e:  # noqa: BLE001
+            status = "Failed"
+            error = f"{type(e).__name__}: {e}"
+            log.exception("Email tope sin pago falló · to=%s", email)
+
+        _create_notification_log(
+            expediente_id=None,
+            recipient=email,
+            subject=asunto,
+            body_preview=cuerpo[:200],
+            status=status,
+            token=token,
+            error=error,
+            template_key=TRIGGER_AUTO_CLOSE_BLOCKED,
+            trigger=TRIGGER_AUTO_CLOSE_BLOCKED,
+        )
+        enviados += 1
+
+    log.warning(
+        "Alerta tope sin pago enviada · expedientes=%d · destinatarios=%d",
+        len(bloqueados), enviados,
+    )
+    return {"ok": True, "enviados": enviados}
+
+
+def _consola_url_base() -> str:
+    return getattr(settings, "CONSOLA_BASE_URL", "https://consola.mwt.one")
 
 
 @shared_task(
@@ -194,12 +339,13 @@ def check_en_destino_eta_task(self):
 
     qs = Expediente.objects.filter(estado="EN_DESTINO", is_active=True)
     alertas = 0
+    bloqueados: List[dict] = []
 
     for exp in list(qs):
         try:
             # A1 · el cierre a los 120 días ya no es efecto de una lectura y
-            # exige pago registrado. Si el tope venció sin pago, se alerta en
-            # el log y el expediente sigue EN_DESTINO.
+            # exige pago registrado. Si el tope venció sin pago, el expediente
+            # sigue EN_DESTINO y entra en la alerta visible del final.
             from apps.expedientes.views import check_auto_close_en_destino
             proposal = check_auto_close_en_destino(exp, allow_write=True)
             if proposal.get("aplicado"):
@@ -209,6 +355,15 @@ def check_en_destino_eta_task(self):
                 )
                 continue
             if proposal.get("aplica"):
+                bloqueados.append({
+                    "codigo": exp.codigo,
+                    "oc": _load_oc_codigo(exp),
+                    "cliente": _load_cliente_nombre(exp.client_id),
+                    "fecha_tope": proposal.get("fecha_cierre"),
+                    "motivo": "sin pago confirmado"
+                    if proposal.get("bloqueado") == "sin_pago_registrado"
+                    else (proposal.get("bloqueado") or "tope vencido"),
+                })
                 log.warning(
                     "Auto-cierre NO aplicado · exp=%s · motivo=%s · fecha_tope=%s",
                     exp.codigo, proposal.get("bloqueado"), proposal.get("fecha_cierre"),
@@ -295,5 +450,17 @@ def check_en_destino_eta_task(self):
                 error=error,
             )
 
-    log.info("check_en_destino_eta DONE · alertas=%d", alertas)
-    return {"ok": True, "alertas": alertas}
+    # A1 · alerta VISIBLE (campana + email) de los trabados por el tope.
+    alerta_tope = None
+    if bloqueados:
+        try:
+            alerta_tope = _alertar_tope_sin_pago(bloqueados, today)
+        except Exception as e:  # noqa: BLE001 — la alerta no rompe la tarea
+            log.exception("Alerta de tope sin pago falló: %s", e)
+            alerta_tope = {"ok": False, "error": str(e)}
+
+    log.info(
+        "check_en_destino_eta DONE · alertas=%d · tope_sin_pago=%d",
+        alertas, len(bloqueados),
+    )
+    return {"ok": True, "alertas": alertas, "tope_sin_pago": alerta_tope}
