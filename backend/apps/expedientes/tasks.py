@@ -30,6 +30,7 @@ from typing import List, Optional, Tuple
 
 from celery import shared_task
 from django.conf import settings
+from django.db import transaction
 from django.template.loader import render_to_string
 
 from apps.expedientes.models import Expediente, Oc
@@ -161,22 +162,28 @@ def _create_notification_log(
     template_key: str = TEMPLATE_KEY,
     trigger: str = TRIGGER_KEY,
 ):
-    """Auditoría de envío en notifications.notification_log."""
+    """Auditoría de envío en notifications.notification_log.
+
+    El INSERT va en su propio savepoint: si la fila se rechaza (token repetido,
+    texto largo), se revierte solo esa inserción y la transacción del que llama
+    queda usable — antes un fallo aquí la dejaba rota.
+    """
     try:
-        NotificationLog.objects.create(
-            id=uuid.uuid4(),
-            ts=datetime.now(tz=_tz.utc),
-            completed_at=datetime.now(tz=_tz.utc) if status == "Sent" else None,
-            expediente_id=expediente_id,
-            template_key=template_key,
-            recipient_email=recipient,
-            subject=subject,
-            body_preview=(body_preview or "")[:500],
-            trigger=trigger,
-            status=status,
-            idempotence_token=token,
-            error=(error or "")[:512] if error else None,
-        )
+        with transaction.atomic():
+            NotificationLog.objects.create(
+                id=uuid.uuid4(),
+                ts=datetime.now(tz=_tz.utc),
+                completed_at=datetime.now(tz=_tz.utc) if status == "Sent" else None,
+                expediente_id=expediente_id,
+                template_key=template_key,
+                recipient_email=recipient,
+                subject=subject,
+                body_preview=(body_preview or "")[:500],
+                trigger=trigger,
+                status=status,
+                idempotence_token=token,
+                error=(error or "")[:512] if error else None,
+            )
     except Exception as e:
         log.warning("NotificationLog falló para exp=%s: %s", expediente_id, e)
 
