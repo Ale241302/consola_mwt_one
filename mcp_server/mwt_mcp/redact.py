@@ -80,9 +80,15 @@ B2B_FORBIDDEN_KEYS: frozenset[str] = CEO_ONLY_KEYS | frozenset({
     "balance", "total_invoiced", "total_paid", "total_paid_usd",
     "projected_margin", "real_margin", "margin_drift",
     "total_value", "unit_price", "unit_price_legacy",
-    # ── Proforma interna MWT (el B2B no la ve; usa OC/SAP) ───────────────────
-    "proforma", "proforma_codigo", "proforma_codigos",
 })
+
+# Fix 2026-11-10 · la PF del cliente YA NO se redacta en el MCP.
+# El cliente B2B identifica su pedido por proforma (2487-2026), no solo por OC:
+# la proforma es SU documento. La frontera real (proforma INTERNA de fábrica,
+# audience MWT_INTERNAL/ADMIN_ONLY) la aplica el backend, que devuelve en
+# `proforma_codigos[]` solo las PF con audience=CLIENT para roles CLIENT_*
+# (ver apps/expedientes/serializers.py:build_expediente_ref_batches). Redactar
+# aquí otra vez dejaba al cliente sin poder resolver su expediente por PF.
 
 # Ola 5 · 2026-11-03 · `agente_mcp` (rol de agentes MCP) lee costos/márgenes
 # sin redacción: su restricción vive en la matriz RBAC (sin delete ni

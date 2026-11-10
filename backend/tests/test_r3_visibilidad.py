@@ -5,14 +5,19 @@ Agente responsable: [AG-QA-BACKEND-2]
 
 REGLA R3 · POL_VISIBILIDAD (crítica — CLAUDE.md §2 / §11.1):
 Los roles CLIENT_* NUNCA deben recibir campos CEO-only del backend:
-precio de costo MWT, márgenes, proformas[] y saps[] del listado de
-expedientes. "Renderizar y luego ocultar" es violación: el dato no
-debe salir del servidor.
+precio de costo MWT, márgenes ni proformas INTERNAS de fábrica. "Renderizar
+y luego ocultar" es violación: el dato no debe salir del servidor.
+
+Fix 2026-11-10 (CEO): el cliente SÍ ve su propia proforma (la PF que MWT le
+emitió, audience=CLIENT) y sus SAPs — es el documento/referencia con el que
+pide y consulta su pedido (PF 2487-2026 → PO 505244 → SAP 282479). Lo que
+sigue vedado es la proforma INTERNA (audience MWT_INTERNAL/ADMIN_ONLY, p. ej.
+la PF de fábrica): esa no se expone a CLIENT_*.
 
 Contrato verificado contra el código actual:
   · ExpedienteListSerializer (apps/expedientes/serializers.py):
-      - proforma_codigos → [] para CLIENT_* (gate _is_client)
-      - sap_codigos      → [] para CLIENT_* (gate _is_client)
+      - proforma_codigos → solo proformas audience=CLIENT para CLIENT_*
+      - sap_codigos      → SAPs visibles a CLIENT_* (referencia de pedido)
       - viewer_is_operator → False salvo admin/CEO/operador real
   · GradeItemViewSet (apps/commercial/views.py):
       - no-CEO → GradeItemPublicSerializer (SIN cost_usd)
@@ -65,7 +70,13 @@ def cliente_scoped(client_company_id) -> APIClient:
 
 @pytest.fixture
 def expediente_con_refs(authenticated_client, client_company_id):
-    """Expediente del cliente con SAP legacy + Documento PROFORMA."""
+    """Expediente del cliente con SAP legacy y DOS proformas:
+
+    · `PRF-QA-0001` — proforma INTERNA de fábrica (audience MWT_INTERNAL):
+      debe seguir oculta para CLIENT_*.
+    · `2487-2026` — proforma que MWT emitió al cliente (audience CLIENT):
+      el cliente debe verla y poder resolver su expediente con ella.
+    """
     payload = ExpedientePayloadFactory(client_id=client_company_id)
     payload["sap"] = "500123"
     r = authenticated_client.post("/api/expedientes/", payload, format="json")
@@ -74,6 +85,10 @@ def expediente_con_refs(authenticated_client, client_company_id):
     Documento.objects.create(
         id=_uuid.uuid4(), expediente_id=eid, kind="PROFORMA",
         codigo="PRF-QA-0001", audience="MWT_INTERNAL", is_active=True,
+    )
+    Documento.objects.create(
+        id=_uuid.uuid4(), expediente_id=eid, kind="PROFORMA",
+        codigo="2487-2026", audience="CLIENT", is_active=True,
     )
     return eid
 
@@ -92,33 +107,50 @@ class TestListadoExpedientesR3:
         assert row is not None
         assert row["sap_codigos"] == ["500123"]
         assert "PRF-QA-0001" in row["proforma_codigos"]
+        assert "2487-2026" in row["proforma_codigos"]
         assert row["viewer_is_operator"] is True
 
-    def test_cliente_NO_recibe_proformas_ni_saps(self, cliente_scoped,
-                                                 expediente_con_refs):
-        """CRÍTICO R3: el cliente ve SU fila, pero proformas[] y saps[]
-        llegan vacíos — el dato no sale del servidor."""
+    def test_cliente_ve_su_proforma_y_sus_saps(self, cliente_scoped,
+                                               expediente_con_refs):
+        """El cliente ve SU fila y puede identificar el pedido por PF o SAP."""
         r = cliente_scoped.get(self.URL)
         assert r.status_code == 200, r.content
         row = find_by_id(extract_results(r.json()), expediente_con_refs)
         assert row is not None, "el cliente debe ver su propio expediente"
-        assert row["proforma_codigos"] == [], (
-            f"R3 VIOLADA: proformas expuestas al cliente: {row['proforma_codigos']}"
+        assert row["proforma_codigos"] == ["2487-2026"], (
+            f"R3/fix 2026-11-10: el cliente debe ver su PF (audience=CLIENT): "
+            f"{row['proforma_codigos']}"
         )
-        assert row["sap_codigos"] == [], (
-            f"R3 VIOLADA: SAPs expuestos al cliente: {row['sap_codigos']}"
+        assert row["sap_codigos"] == ["500123"], (
+            f"el cliente debe poder resolver por SAP: {row['sap_codigos']}"
         )
         assert row["viewer_is_operator"] is False
 
-    def test_cliente_NO_recibe_proforma_codigo_legacy(self, cliente_scoped,
-                                                      expediente_con_refs):
+    def test_cliente_NO_recibe_proforma_interna(self, cliente_scoped,
+                                                expediente_con_refs):
+        """CRÍTICO R3: la PF de fábrica (MWT_INTERNAL) no sale del servidor."""
         r = cliente_scoped.get(self.URL)
         assert r.status_code == 200
         row = find_by_id(extract_results(r.json()), expediente_con_refs)
         assert row is not None
-        assert not row.get("proforma_codigo"), (
-            f"R3 VIOLADA: proforma_codigo legacy expuesto: {row['proforma_codigo']!r}"
+        assert "PRF-QA-0001" not in row["proforma_codigos"], (
+            f"R3 VIOLADA: proforma interna expuesta al cliente: "
+            f"{row['proforma_codigos']}"
         )
+        assert row.get("proforma_codigo") != "PRF-QA-0001", (
+            f"R3 VIOLADA: proforma_codigo legacy expone la PF interna: "
+            f"{row.get('proforma_codigo')!r}"
+        )
+
+    def test_cliente_resuelve_por_proforma_en_el_detalle(self, cliente_scoped,
+                                                         expediente_con_refs):
+        """El detalle (/expedientes/{id}/) usa el mismo contrato de refs."""
+        r = cliente_scoped.get(f"/api/expedientes/{expediente_con_refs}/")
+        assert r.status_code == 200, r.content
+        row = r.json()
+        assert row["proforma_codigos"] == ["2487-2026"]
+        assert row["sap_codigos"] == ["500123"]
+        assert "PRF-QA-0001" not in row["proforma_codigos"]
 
     def test_cliente_sin_empresas_lista_vacia(self, expediente_con_refs):
         """Defense-in-depth: no-bypass con legal_entity_ids=[] → qs.none().

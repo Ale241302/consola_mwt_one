@@ -309,7 +309,8 @@ def _current_role() -> str:
 def _present_codigos(data: Any) -> Any:
     """Ola 3.7 · Calidad — añade `codigos_presentacion` a expedientes según el rol.
     CEO/Admin -> "PF 2393-2025 · PO 504302 · 257021" (proforma + oc + sap).
-    client_b2b -> "PO 504302 · 257021" (oc + sap, sin proforma interna).
+    client_b2b -> "2487-2026 · PO 505244 · 282479" (su PF + oc + sap; la PF
+                  interna de fábrica no la entrega el backend).
     Se aplica sobre listas (respuesta paginada) o un dict (detalle). Fail-safe."""
     try:
         user = get_identity_user() or {}
@@ -349,9 +350,10 @@ def _resolve_fusion_members(matches: list) -> list:
 
     Cuando un expediente tiene `fusion_id`, consulta el backend
     `expedientes/?fusion=<fid>` (filtro añadido 2026-08-19) y expone en cada
-    match `fusion_members: [{expediente_codigo, oc_codigos, sap_codigos,
-    proforma_codigos}]` (proforma solo la ve admin/CEO — el backend ya lo
-    vacía para client_b2b). El `fusion_id` UUID nunca se expone. Fail-safe:
+    match `fusion_members: [{oc_codigos, sap_codigos, proforma_codigos}]`
+    (fix 2026-11-10: la PF solo llega con audience=CLIENT para client_b2b — el
+    backend filtra; la PF interna de fábrica no se expone a nadie más que
+    admin/CEO). El `fusion_id` UUID nunca se expone. Fail-safe:
     si no se puede resolver, conserva solo `fusion_label`.
     """
     out = []
@@ -373,7 +375,8 @@ def _resolve_fusion_members(matches: list) -> list:
                         "proforma_codigos": e.get("proforma_codigos"),
                         "estado": e.get("estado"),
                     })
-                # Redactar por rol cada miembro (proforma interna solo admin).
+                # Redactar por rol cada miembro (el backend ya filtró la PF
+                # interna; para client_b2b solo quedan PF audience=CLIENT).
                 user = get_identity_user() if _has_identity() else None
                 if members:
                     members = _present_codigos(members)
@@ -615,7 +618,7 @@ def _resolve_expediente_id(identificador: str) -> str | None:
     """Resuelve un identificador de expediente (UUID, EXP-…, OC, SAP o proforma) al UUID.
 
     Fix 2026-08-19 · tras ocultar los UUIDs, los expedientes se encadenan por
-    `referencia_cliente` (proforma para admin/CEO, OC/SAP para todos). Este
+    `referencia_cliente` (PF/OC/SAP — el cliente también encadena por su PF). Este
     helper busca el expediente por proforma/OC/SAP/codigo y devuelve su UUID
     (uso interno, nunca se expone).
     - UUID canónico o EXP-XXXX → se pasa directo (el backend los resuelve).
@@ -638,7 +641,6 @@ def _resolve_expediente_id(identificador: str) -> str | None:
     except Exception:  # noqa: BLE001
         return None
     tn = _norm_num(v)
-    tn_pf = low
     _res = None
     for e in _as_rows(data):
         if tn and tn in [_norm_num(x) for x in (e.get("oc_codigos") or [])]:
@@ -647,12 +649,19 @@ def _resolve_expediente_id(identificador: str) -> str | None:
         if tn and tn in [_norm_num(x) for x in (e.get("sap_codigos") or [])]:
             _res = e.get("id")
             break
-        # El listado para client_b2b trae sap_codigos vacío pero el SAP real
-        # en el campo legacy `sap` (ej. "282507"). Matchear ambos.
+        # El listado para client_b2b puede traer sap_codigos vacío pero el SAP
+        # real en el campo legacy `sap` (ej. "282507"). Matchear ambos.
         if tn and tn == _norm_num(e.get("sap")):
             _res = e.get("id")
             break
-        if tn_pf and tn_pf in [(x or "").strip().lower() for x in (e.get("proforma_codigos") or [])]:
+        # Proforma: comparación normalizada (acepta "2487-2026", "PF 2487-2026",
+        # "PF-2487/2026"). Para CLIENT_* el backend solo entrega las PF con
+        # audience=CLIENT (su proforma), así que esto resuelve sin filtrar la
+        # proforma interna de fábrica.
+        _pfs = e.get("proforma_codigos") or (
+            [e.get("proforma_codigo")] if e.get("proforma_codigo") else []
+        )
+        if tn and tn in [_norm_num(x) for x in _pfs]:
             _res = e.get("id")
             break
         # Ola 5 · búsqueda parcial por el número de proforma: "2405" debe
@@ -660,7 +669,7 @@ def _resolve_expediente_id(identificador: str) -> str | None:
         # el listado devolvía vacío).
         if tn and any(
             _norm_num(str(pf).split("-")[0]) == tn
-            for pf in (e.get("proforma_codigos") or [])
+            for pf in _pfs
             if pf
         ):
             _res = e.get("id")
@@ -760,9 +769,10 @@ def _params(**kwargs) -> dict:
 
 def _norm_num(s: str | None) -> str:
     """Normaliza un número de OC/proforma/SAP para comparar: minúsculas, quita
-    prefijos 'po'/'oc' y todo lo no alfanumérico. '504960' == 'PO 504960' == 'PO-504960'."""
+    prefijos 'po'/'oc'/'pf' y todo lo no alfanumérico.
+    '504960' == 'PO 504960' == 'PO-504960'; '2487-2026' == 'PF 2487-2026'."""
     s = re.sub(r"[^0-9a-z]", "", (s or "").strip().lower())
-    return re.sub(r"^(po|oc)(?=\d)", "", s)
+    return re.sub(r"^(po|oc|pf)(?=\d)", "", s)
 
 
 # Sprint 2026-11-08 · plazo de pago BASE del negocio (días de crédito).
@@ -1672,7 +1682,7 @@ def expediente_obtener(expediente_id: str, campos: str | None = None) -> Any:
     resolved = _resolve_expediente_id(expediente_id) or expediente_id
     if not resolved:
         return {"error": True, "detail": "Expediente no encontrado para el identificador dado.",
-                "hint": "Pasa `expediente_codigo` (EXP-…) o la `referencia_cliente` (OC/SAP)."}
+                "hint": "Pasa `expediente_codigo` (EXP-…) o la `referencia_cliente` (PF/OC/SAP)."}
     expediente_id = resolved
     data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/"), "expediente_obtener", {"expediente_id": expediente_id})
     # Ola 3.8 · adjunta el resumen de envío (ART-05 AWB/BL) cuando existe.
@@ -1696,10 +1706,14 @@ def expediente_buscar(
     """⚠️ ANTI-DUPLICADOS — ÚSALA SIEMPRE ANTES DE `expediente_crear`.
 
     Busca expedientes que YA existen por **número de OC del cliente** (ej. "504960"
-    o "PO 504960"), **número de proforma** (ej. "2468-2026") y/o **número de SAP**.
-    El `q` normal NO sirve: solo matchea el código autogenerado (EXP-…). Esta tool
-    compara contra `oc_codigos` / `proforma_codigos` / `sap_codigos` de cada expediente,
-    normalizando prefijos 'PO'/'OC' y separadores.
+    o "PO 504960"), **número de proforma** (ej. "2487-2026", "PF 2487-2026" o solo
+    "2487") y/o **número de SAP**. El `q` normal NO sirve: solo matchea el código
+    autogenerado (EXP-…). Esta tool compara contra `oc_codigos` /
+    `proforma_codigos` / `sap_codigos` de cada expediente, normalizando prefijos
+    'PO'/'OC'/'PF' y separadores.
+
+    Cualquier rol puede buscar por PF: al cliente B2B el backend le entrega su
+    proforma (audience=CLIENT); la proforma interna de fábrica sigue oculta.
 
     Recomendado pasar `client_id` para acotar la búsqueda. Devuelve
     `{existe, total, matches:[{codigos_presentacion, referencia_cliente,
@@ -1707,24 +1721,37 @@ def expediente_buscar(
     fusion_members}]}`.
     El código interno EXP- y los UUIDs (id/expediente_id/oc_id/fusion_id)
     NUNCA se exponen: para encadenar `expediente_obtener` usá
-    `referencia_cliente` (proforma para admin/CEO; OC o SAP para el cliente),
-    que el resolvedor acepta igual que el EXP-….
+    `referencia_cliente` (PF, si no OC, si no SAP), que el resolvedor acepta
+    igual que el EXP-….
     Si `existe=true` → **NO crees**, edita el existente."""
-    params = _params(client=client_id, oc_number=oc_number, proforma=proforma)  # oc_number/proforma los usa el backend si está parcheado
+    # `limit=200`: el matching es en memoria; sin esto la paginación por defecto
+    # podía dejar fuera el expediente buscado en clientes con muchos pedidos.
+    params = _params(client=client_id, oc_number=oc_number, proforma=proforma,
+                     limit=200)  # oc_number/proforma los usa el backend si está parcheado
     raw = api.get("expedientes/", params)
     data = _safe_role(lambda: raw)
     if isinstance(data, dict) and data.get("error"):
         return data
     rows = _as_rows(raw)
     tn_oc = _norm_num(oc_number) if oc_number else None
-    tn_pf = (proforma or "").strip().lower() if proforma else None
+    tn_pf = _norm_num(proforma) if proforma else None
     tn_sap = _norm_num(sap) if sap else None
     matches = []
     for e in rows:
         oc_cs = [_norm_num(x) for x in (e.get("oc_codigos") or [])]
-        pf_cs = [(x or "").strip().lower() for x in (e.get("proforma_codigos") or [])]
+        pfs_raw = e.get("proforma_codigos") or (
+            [e.get("proforma_codigo")] if e.get("proforma_codigo") else []
+        )
+        pf_cs = [_norm_num(x) for x in pfs_raw]
         sap_cs = [_norm_num(x) for x in (e.get("sap_codigos") or [])]
-        if (tn_oc and tn_oc in oc_cs) or (tn_pf and tn_pf in pf_cs) or (tn_sap and tn_sap in sap_cs):
+        if e.get("sap"):
+            sap_cs.append(_norm_num(e.get("sap")))
+        # PF: número completo ("2487-2026") o parcial ("2487").
+        pf_hit = bool(tn_pf) and (
+            tn_pf in pf_cs
+            or any(_norm_num(str(pf).split("-")[0]) == tn_pf for pf in pfs_raw if pf)
+        )
+        if (tn_oc and tn_oc in oc_cs) or pf_hit or (tn_sap and tn_sap in sap_cs):
             matches.append({
                 "oc_codigos": e.get("oc_codigos"),
                 "proforma_codigos": e.get("proforma_codigos"),
@@ -1761,7 +1788,7 @@ def expediente_lineas(expediente_id: str, campos: str | None = None) -> Any:
     resolved = _resolve_expediente_id(expediente_id) or expediente_id
     if not resolved:
         return {"error": True, "detail": "Expediente no encontrado para el identificador dado.",
-                "hint": "Pasa `expediente_codigo` (EXP-…) o la `referencia_cliente` (OC/SAP)."}
+                "hint": "Pasa `expediente_codigo` (EXP-…) o la `referencia_cliente` (PF/OC/SAP)."}
     expediente_id = resolved
     data = _safe_role_read(lambda: api.get(f"expedientes/{expediente_id}/lineas/"), "expediente_lineas", {"expediente_id": expediente_id})
     # Ola 3.8 · adjunta producto_nombre/marca_nombre legibles por línea.

@@ -290,10 +290,11 @@ def _annotate_line_refs(rows, user=None):
     """Sprint 2026-07-31 (CEO) · refs role-aware por línea.
 
     La columna "Expediente" del modal de artefacto no debe mostrar el
-    código interno EXP-YYYY-NNNN: admin/CEO/staff ven la proforma
-    (proforma_codigos[]) y CLIENT_* ve su OC (oc_codigos[]), misma
-    política R3 que el listado de expedientes (POL_VISIBILIDAD).
-    El FE elige cuál renderizar; aquí solo anotamos ambos arrays.
+    código interno EXP-YYYY-NNNN: admin/CEO/staff ven todas las proformas
+    (proforma_codigos[]) y CLIENT_* ve su OC (oc_codigos[]) y su PF con
+    audience=CLIENT (fix 2026-11-10), misma política R3 que el listado de
+    expedientes (POL_VISIBILIDAD). El FE elige cuál renderizar; aquí solo
+    anotamos ambos arrays.
     """
     from apps.expedientes.models import Expediente
     from apps.expedientes.serializers import (
@@ -313,8 +314,8 @@ def _annotate_line_refs(rows, user=None):
         batches = {"batch_proformas": {}, "batch_ocs": {}}
     for r in rows:
         eid = str(r.get("expediente_id") or "")
-        r["proforma_codigos"] = ([] if is_client
-                                 else batches["batch_proformas"].get(eid, []))
+        # El batch ya viene filtrado por audience=CLIENT cuando is_client.
+        r["proforma_codigos"] = batches["batch_proformas"].get(eid, [])
         r["oc_codigos"] = batches["batch_ocs"].get(eid, [])
 
 

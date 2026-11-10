@@ -10,6 +10,24 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/).
 
 ## [Unreleased]
 
+### Corregido — el client_b2b puede preguntar por PF y por SAP (no solo OC)
+- El cliente B2B resuelve su expediente por **número de proforma** (`2487-2026`,
+  `PF 2487-2026`, `PF-2487/2026` o solo `2487`), por **PO/OC** y por **SAP**.
+  Antes `proforma_codigos[]` y `sap_codigos[]` llegaban vacíos al rol cliente y
+  `expediente_buscar(proforma=…)` devolvía `existe=false` para una PF real.
+- Backend (`apps/expedientes/serializers.py`): para `CLIENT_*`
+  `proforma_codigos[]` / `proforma_codigo` ahora traen **solo las proformas con
+  `audience=CLIENT`** (la PF que MWT le emitió al cliente). La proforma INTERNA
+  (fábrica: `MWT_INTERNAL` / `ADMIN_ONLY`) sigue siendo CEO/ADMIN-only y no sale
+  del servidor. `sap_codigos[]` se entrega al cliente (es la referencia de su
+  pedido, ya visible en el campo legacy `sap`).
+- `redact.py`: la PF dejó de estar en `B2B_FORBIDDEN_KEYS`; la frontera real la
+  aplica el backend por `audience`.
+- `codigos_presentacion` / `referencia_cliente` incluyen la PF para todos los
+  roles (PF → OC → SAP).
+- `_norm_num` normaliza el prefijo `PF`; `expediente_buscar` acepta PF completa o
+  parcial y el SAP legacy.
+
 ### Corregido — nunca exponer UUIDs de expediente
 - `documento_listar` y `expediente_documentos_completos`: el saneo de UUIDs
   internos (`expediente_id`/`oc_id`) ahora aplica a TODOS los roles, no solo a

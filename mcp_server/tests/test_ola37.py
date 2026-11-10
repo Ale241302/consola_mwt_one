@@ -171,8 +171,12 @@ def test_mwt_health_ok_false_si_token_invalido(monkeypatch):
 # ─────────────────────────────────────────────────────────────────────── #
 # C6 · Privacidad: el código interno EXP-XXXXXX no se expone al client_b2b
 # ─────────────────────────────────────────────────────────────────────── #
-def test_present_codigos_client_no_expone_codigo_interno(monkeypatch):
-    """Un client_b2b ve codigos_presentacion (OC/SAP) pero NO IDs internos."""
+def test_present_codigos_client_ve_su_pf_pero_no_ids_internos(monkeypatch):
+    """Un client_b2b ve su PF + OC + SAP (fix 2026-11-10) y NO IDs internos.
+
+    El backend solo entrega en `proforma_codigos[]` las PF audience=CLIENT, así
+    que el MCP puede mostrarlas: son el documento con el que el cliente pide.
+    """
     row = {
         "id": "exp-1",
         "codigo": "EXP-504302",
@@ -202,8 +206,8 @@ def test_present_codigos_client_no_expone_codigo_interno(monkeypatch):
     out = server._present_codigos({"results": [row]})
     fila = out["results"][0]
     assert "codigos_presentacion" in fila
-    assert fila["codigos_presentacion"] == "504302 · 257021"  # sin proforma interna
-    assert fila["referencia_cliente"] == "504302"  # identificador legible (PO)
+    assert fila["codigos_presentacion"] == "2393-2025 · 504302 · 257021"
+    assert fila["referencia_cliente"] == "2393-2025"  # encadena por su PF
     assert "id" not in fila            # UUID oculto
     assert "codigo" not in fila        # interno oculto
     assert "codigo_interno" not in fila

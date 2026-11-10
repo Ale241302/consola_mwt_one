@@ -159,11 +159,17 @@ def build_expediente_ref_batches(expedientes, *, is_client=False):
     ocs_docs  = out["batch_ocs"]
     saps      = out["batch_saps"]
 
-    pf_rows = (Documento.objects
-               .filter(expediente_id__in=exp_ids, kind="PROFORMA", is_active=True)
-               .exclude(codigo__isnull=True).exclude(codigo__exact="")
-               .order_by("-created_at")
-               .values_list("expediente_id", "codigo"))
+    pf_qs = (Documento.objects
+             .filter(expediente_id__in=exp_ids, kind="PROFORMA", is_active=True)
+             .exclude(codigo__isnull=True).exclude(codigo__exact=""))
+    # Fix 2026-11-10 · R3: el cliente SÍ tiene su proforma (es el documento con
+    # el que pide y consulta el pedido: PF 2487-2026 → PO 505244 → SAP 282479),
+    # así que se resuelve igual que la OC: audience=CLIENT. Las proformas
+    # internas (MWT_INTERNAL / ADMIN_ONLY: PF de fábrica, costos) siguen
+    # siendo CEO-only y no salen del servidor.
+    if is_client:
+        pf_qs = pf_qs.filter(audience="CLIENT")
+    pf_rows = pf_qs.order_by("-created_at").values_list("expediente_id", "codigo")
     for eid, cod in pf_rows:
         lst = proformas.setdefault(str(eid), [])
         if cod not in lst:
@@ -318,9 +324,11 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
       Soporta múltiples proformas/OCs/SAPs por expediente para la columna REF
       de la pantalla `/expedientes`. POL_VISIBILIDAD (R3):
         · ADMIN/CEO/staff → ve proformas[] + ocs[] + saps[]
-        · CLIENT_*        → ve solo ocs[] (sus propias OCs); proformas y saps
-                            devuelven listas vacías (no se filtra el endpoint
-                            entero por compat — el front aplica role gating).
+        · CLIENT_*        → ve sus ocs[] y sus proformas con audience=CLIENT
+                            (la PF que MWT le emitió; las PF internas de
+                            fábrica siguen ocultas) + saps[]. Excepción
+                            2026-11-10: el cliente identifica su pedido por
+                            PF o SAP, no solo por OC.
 
     Legacy: `proforma_codigo` (1 string) se conserva para compatibilidad con
     consumidores antiguos. `sap` (legacy varchar) idem.
@@ -374,19 +382,18 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
 
     # ── legacy proforma_codigo (string único, el más reciente) ─
     def get_proforma_codigo(self, obj):
-        # R3 (POL_VISIBILIDAD): el codigo de proforma es CEO/ADMIN-only.
-        # Fix Fable5-QA 2026-06-11: este campo legacy no tenia el gate
-        # _is_client() que si tienen proforma_codigos[]/sap_codigos[] —
-        # el codigo llegaba al rol cliente en el listado (leak R3).
-        if self._is_client():
-            return None
+        # R3 (POL_VISIBILIDAD): la proforma INTERNA (MWT_INTERNAL/ADMIN_ONLY,
+        # p. ej. la PF de fábrica) es CEO/ADMIN-only. El cliente sí ve la PF que
+        # MWT le emitió (audience=CLIENT): es su documento de pedido. Fix
+        # 2026-11-10 · antes el gate devolvía None para TODO cliente y el B2B no
+        # podía identificar su expediente por número de proforma.
         # Fable5 · atajo batch (un query para todo el listado).
         pre = (self.context or {}).get("batch_proformas")
         if pre is not None:
             lst = pre.get(str(obj.id), [])
             return lst[0] if lst else None
         try:
-            doc = (
+            qs = (
                 Documento.objects
                 .filter(expediente_id=obj.id, kind="PROFORMA", is_active=True)
                 .exclude(codigo__isnull=True)
@@ -397,31 +404,31 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
                 # mismo string, asi que cualquiera sirve — el orden por
                 # created_at desc deja arriba el más reciente.
                 .order_by("-created_at")
-                .values_list("codigo", flat=True)
-                .first()
             )
-            return doc or None
+            if self._is_client():
+                qs = qs.filter(audience="CLIENT")
+            return qs.values_list("codigo", flat=True).first() or None
         except Exception:  # noqa: BLE001 — defensivo en serializer de listado
             return None
 
     # ── proformas[] ────────────────────────────────────────────
     def get_proforma_codigos(self, obj):
-        """Todas las proformas (kind=PROFORMA). CLIENT_* → []."""
-        if self._is_client():
-            return []
-        # Fable5 · atajo batch.
+        """Proformas del expediente. CLIENT_* → solo audience=CLIENT."""
+        # Fable5 · atajo batch (ya viene filtrado por audience para CLIENT_*).
         pre = (self.context or {}).get("batch_proformas")
         if pre is not None:
             return pre.get(str(obj.id), [])
         try:
-            codes = list(
+            qs = (
                 Documento.objects
                 .filter(expediente_id=obj.id, kind="PROFORMA", is_active=True)
                 .exclude(codigo__isnull=True)
                 .exclude(codigo__exact="")
                 .order_by("-created_at")
-                .values_list("codigo", flat=True)
             )
+            if self._is_client():
+                qs = qs.filter(audience="CLIENT")
+            codes = list(qs.values_list("codigo", flat=True))
             seen, out = set(), []
             for c in codes:
                 if c and c not in seen:
@@ -502,9 +509,12 @@ class ExpedienteListSerializer(serializers.ModelSerializer):
 
     # ── saps[] ─────────────────────────────────────────────────
     def get_sap_codigos(self, obj):
-        """Todos los SAPs distintos de las líneas. CEO-ONLY (R3)."""
-        if self._is_client():
-            return []
+        """SAPs distintos del expediente (los mismos que cita el cliente).
+
+        Fix 2026-11-10 · antes CLIENT_* recibía [] y el B2B no podía resolver su
+        expediente por SAP (el número que aparece en su factura/packing list),
+        aunque el campo legacy `sap` ya viajaba al cliente. No hay dato de
+        costo en el SAP: es solo la referencia de la orden de fábrica."""
         # Fable5 · atajo batch (con el mismo fallback al sap legacy).
         pre = (self.context or {}).get("batch_saps")
         if pre is not None:
@@ -712,10 +722,12 @@ class ExpedienteSerializer(serializers.ModelSerializer):
     viewer_can_see_financials = serializers.SerializerMethodField()
 
     # Sprint 2026-07-31 (CEO) · refs role-aware en el DETALLE (retrieve).
-    # El header del ExpedienteDetail debe titularse con la proforma
-    # (admin/CEO/staff) o la OC (CLIENT_*), no con el código EXP interno.
-    # Misma política R3 que ExpedienteListSerializer: proformas/SAPs son
-    # CEO-only (CLIENT_* recibe []), OCs filtradas por audience=CLIENT.
+    # El header del ExpedienteDetail se titula con la proforma cuando existe.
+    # POL_VISIBILIDAD (R3): la PF INTERNA (audience MWT_INTERNAL/ADMIN_ONLY) es
+    # CEO-only; el cliente ve la PF que MWT le emitió (audience=CLIENT) — es su
+    # documento de pedido. Las OCs se filtran igual por audience=CLIENT.
+    # Fix 2026-11-10 · antes CLIENT_* recibía [] en proforma_codigos/sap_codigos
+    # y no podía preguntar por su PF (2487-2026) ni por su SAP (282479).
     # Se computan UNA vez por instancia vía build_expediente_ref_batches
     # y se cachean en el serializer para no repetir queries por campo.
     proforma_codigos = serializers.SerializerMethodField()
@@ -736,9 +748,7 @@ class ExpedienteSerializer(serializers.ModelSerializer):
         return cache
 
     def get_proforma_codigos(self, obj):
-        """Todas las proformas (kind=PROFORMA). CLIENT_* → []."""
-        if self._is_client_viewer():
-            return []
+        """Proformas del expediente (CLIENT_* → solo audience=CLIENT)."""
         return self._ref_batches(obj)["batch_proformas"].get(str(obj.id), [])
 
     def get_oc_codigos(self, obj):
@@ -746,9 +756,7 @@ class ExpedienteSerializer(serializers.ModelSerializer):
         return self._ref_batches(obj)["batch_ocs"].get(str(obj.id), [])
 
     def get_sap_codigos(self, obj):
-        """SAPs distintos de las líneas. CEO-ONLY (R3)."""
-        if self._is_client_viewer():
-            return []
+        """SAPs distintos de las líneas (referencia de pedido, visible al cliente)."""
         saps = self._ref_batches(obj)["batch_saps"].get(str(obj.id), [])
         # Fallback al campo legacy `sap` si no hay SAP por línea.
         if not saps and getattr(obj, "sap", None):

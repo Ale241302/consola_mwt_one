@@ -150,3 +150,51 @@ def test_expediente_buscar_fusion_expone_label_y_members(monkeypatch):
     assert "codigo" not in member               # EXP- oculto en miembros
     assert member["oc_codigos"] == ["PO 504983"]
     assert member["sap_codigos"] == ["257021"]
+
+
+# ─────────────────────────────────────────────────────────────────────── #
+# Fix 2026-11-10 · el client_b2b también busca por PF y por SAP
+# ─────────────────────────────────────────────────────────────────────── #
+_PF_ROWS = {"results": [
+    {"id": "exp-1", "codigo": "EXP-505244-20", "oc_id": "oc-1",
+     "oc_codigos": ["PO 505244"], "sap_codigos": ["282479"],
+     "proforma_codigos": ["2487-2026"], "estado": "EN_DESTINO",
+     "client_id": "cli-1", "fusion_id": None, "fusion_label": None,
+     "sap": "282479"},
+]}
+
+
+@pytest.mark.parametrize("pf", ["2487-2026", "PF 2487-2026", "PF-2487/2026", "2487"])
+def test_expediente_buscar_client_por_proforma(monkeypatch, pf):
+    """El cliente resuelve su pedido por el número de PF que MWT le emitió."""
+    monkeypatch.setattr(server.api, "get", lambda *a, **k: _PF_ROWS)
+    with mock.patch.object(server, "get_identity_user",
+                           return_value={"role": "client_b2b"}):
+        out = server.expediente_buscar(proforma=pf)
+    assert out["existe"] is True, f"PF {pf!r} no resolvió"
+    assert out["matches"][0]["referencia_cliente"] == "2487-2026"
+
+
+def test_expediente_buscar_client_por_sap(monkeypatch):
+    """El cliente resuelve por SAP aunque `sap_codigos` venga vacío (legacy)."""
+    rows = {"results": [
+        {"id": "exp-1", "codigo": "EXP-505244-20", "oc_id": "oc-1",
+         "oc_codigos": ["PO 505244"], "sap_codigos": [],
+         "proforma_codigos": ["2487-2026"], "estado": "EN_DESTINO",
+         "client_id": "cli-1", "fusion_id": None, "fusion_label": None,
+         "sap": "282479"},
+    ]}
+    monkeypatch.setattr(server.api, "get", lambda *a, **k: rows)
+    with mock.patch.object(server, "get_identity_user",
+                           return_value={"role": "client_b2b"}):
+        out = server.expediente_buscar(sap="282479")
+    assert out["existe"] is True
+    assert out["matches"][0]["referencia_cliente"] == "2487-2026"
+
+
+def test_resolve_expediente_id_por_proforma_con_prefijo(monkeypatch):
+    """`_resolve_expediente_id` acepta "PF 2487-2026" y devuelve el UUID interno."""
+    monkeypatch.setattr(server.api, "get", lambda *a, **k: _PF_ROWS)
+    server._RESOLVE_EXP_CACHE.clear()
+    assert server._resolve_expediente_id("PF 2487-2026") == "exp-1"
+    assert server._resolve_expediente_id("2487-2026") == "exp-1"

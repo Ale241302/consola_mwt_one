@@ -7,7 +7,7 @@ muestre al CEO/Admin un UUID sino "Sondel S.A.".
 
 También normaliza la presentación de los códigos de un expediente según el rol:
   · CEO/Admin  -> `proforma_codigos` + `oc_codigos` + `sap_codigos` (los presentes)
-  · client_b2b -> `oc_codigos` + `sap_codigos` (sin proforma interna)
+  · client_b2b -> `proforma_codigos` (solo audience=CLIENT) + `oc_codigos` + `sap_codigos`
 
 Diseño:
   · Resolución por BATCH con caché en memoria (TTL 30 min): se piden UNA vez los
@@ -162,28 +162,29 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
 
     Añade un campo `codigos_presentacion` con el formato legible:
       CEO/Admin  -> "PF 2393-2025 · PO 504302 · 257021"   (proforma + oc + sap)
-      client_b2b -> "PO 504302 · 257021"                   (oc + sap)
+      client_b2b -> "2487-2026 · PO 505244 · 282479"       (su PF + oc + sap)
 
     Si el backend ya trae `proforma_codigos`/`oc_codigos`/`sap_codigos`
     (listas), se usan esas; si no, se deriva del `codigo` interno.
-    """
-    from .redact import is_ceo_or_admin, is_client
 
+    Fix 2026-11-10 · el cliente B2B también ve su PF: el backend le entrega en
+    `proforma_codigos[]` solo las proformas con audience=CLIENT (las internas de
+    fábrica siguen fuera). El cliente reconoce su pedido por PF, OC o SAP.
+    """
     role = (role or "").strip().lower()
     proformas = row.get("proforma_codigos") or (
         [row["proforma_codigo"]] if row.get("proforma_codigo") else []
     )
     ocs = row.get("oc_codigos") or []
     saps = row.get("sap_codigos") or []
-    # Fix 2026-08-19 · el listado para client_b2b trae `sap_codigos` vacío pero
-    # el SAP real vive en el campo legacy `sap` (ej. "282507"). Se expone para
-    # que el cliente vea y encadene por su SAP. Si NO hay SAP, queda vacío.
+    # Fix 2026-08-19 · el listado trae `sap_codigos` vacío en algunos payloads
+    # pero el SAP real vive en el campo legacy `sap` (ej. "282507"). Se expone
+    # para que el cliente vea y encadene por su SAP. Si NO hay SAP, queda vacío.
     if not saps and row.get("sap"):
         saps = [str(row.get("sap"))]
 
     partes: list[str] = []
-    if is_ceo_or_admin(role):
-        partes.extend(proformas)  # proforma interna solo para CEO/Admin
+    partes.extend(proformas)
     partes.extend(ocs)
     partes.extend(saps)
 
@@ -206,8 +207,8 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
     # Fix 2026-08-19 · los UUIDs internos del expediente (id, expediente_id,
     # oc_id, fusion_id, operating_company_id, brand_id) NUNCA se exponen, a
     # NINGÚN rol. El identificador de encadenamiento es `referencia_cliente`
-    # (para admin/CEO prioriza proforma; para client_b2b OC o SAP). Las tools
-    # (expediente_obtener/editar/lineas) resuelven por esa referencia.
+    # (PF → OC → SAP; fix 2026-11-10: el cliente también encadena por su PF).
+    # Las tools (expediente_obtener/editar/lineas) resuelven por esa referencia.
     for key in (
         "id",
         "expediente_id",
@@ -218,10 +219,10 @@ def present_expediente_codigos(row: dict, role: str) -> dict:
         "client_id",
     ):
         out.pop(key, None)
-    if is_ceo_or_admin(role):
-        ref = (proformas[0] if proformas else (ocs[0] if ocs else (saps[0] if saps else None)))
-    else:
-        ref = (ocs[0] if ocs else (saps[0] if saps else None))
+    # Fix 2026-11-10 · la PF es el identificador natural del pedido para todos
+    # los roles (para el cliente es la PF que MWT le emitió); si no hay PF
+    # visible se cae a OC y luego SAP.
+    ref = (proformas[0] if proformas else (ocs[0] if ocs else (saps[0] if saps else None)))
     if ref:
         out["referencia_cliente"] = ref
     return out
