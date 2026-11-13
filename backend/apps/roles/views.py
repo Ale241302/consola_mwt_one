@@ -27,8 +27,10 @@ Endpoints:
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
+from django.db import connection
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -41,6 +43,34 @@ from .serializers import (
     RoleMatrixInputSerializer,
 )
 from .permissions import deny_non_admin
+
+log = logging.getLogger(__name__)
+
+
+def _upsert_core_role(role: RoleCat) -> None:
+    """M5 · garantiza la fila del rol en `core.roles`.
+
+    Esa tabla es la que leen el login (JWT → permissions), el enforcement
+    RBAC y el token del MCP. El trigger de `users.role_permission` sólo
+    hace UPSERT cuando se guarda la matriz, así que un rol recién creado
+    en /roles y todavía sin celdas no existía para el login (fail-closed).
+    Idempotente y fail-safe: nunca rompe el CRUD de roles.
+    """
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO core.roles (slug, name, description, permissions, is_system)
+                VALUES (%s, %s, %s, '{}'::jsonb, %s)
+                ON CONFLICT (slug) DO UPDATE
+                   SET name        = EXCLUDED.name,
+                       description = EXCLUDED.description,
+                       is_system   = EXCLUDED.is_system
+                """,
+                [role.slug, role.nombre, role.descripcion or "", bool(role.is_system)],
+            )
+    except Exception:  # noqa: BLE001 - el CRUD de roles no debe caerse por esto
+        log.exception("No se pudo sincronizar el rol %r con core.roles", role.slug)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -71,6 +101,14 @@ class RoleCatViewSet(viewsets.ModelViewSet):
         if not (include_inactive and include_inactive.lower() in ("1", "true", "yes")):
             qs = qs.filter(is_active=True)
         return qs.order_by("orden", "slug")
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        _upsert_core_role(instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        _upsert_core_role(instance)
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()

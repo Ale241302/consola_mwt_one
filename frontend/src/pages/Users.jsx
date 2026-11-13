@@ -19,7 +19,7 @@ import { createPortal } from "react-dom";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiFetch, getToken, ApiError } from "../lib/api.js";
-import { ROLES_DEMO } from "../lib/usersRolesMock.js";
+import { ROLES_FALLBACK, fetchRoles, withCurrentRole } from "../lib/roles.js";
 import { IconPlus, IconRefresh, IconLock, IconX, IconCheck } from "../lib/icons.jsx";
 import ConfirmActionModal, { ACTION_META } from "../components/users/ConfirmActionModal.jsx";
 // Ola 3 · 3.25 · Accesibilidad — Field compartido (cablea htmlFor/id).
@@ -29,6 +29,7 @@ export default function Users() {
   const { lang } = useOutletContext() || { lang: "es" };
   const navigate = useNavigate();
   const [users, setUsers] = useState([]);
+  const [roles, setRoles] = useState(ROLES_FALLBACK);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
   const [q, setQ] = useState("");
@@ -57,6 +58,13 @@ export default function Users() {
   }, [q, roleFilter, includeInactive]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Catálogo real de roles (incluye los creados en /roles).
+  useEffect(() => {
+    let alive = true;
+    fetchRoles().then((r) => { if (alive) setRoles(r); });
+    return () => { alive = false; };
+  }, []);
 
   // Sprint 2026-09-12 · paginación (default 20, tamaño configurable).
   const {
@@ -193,7 +201,7 @@ export default function Users() {
         />
         <select className="select" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
           <option value="">{lang === "es" ? "Todos los roles" : "All roles"}</option>
-          {ROLES_DEMO.map((r) => <option key={r.slug} value={r.slug}>{r.nombre}</option>)}
+          {roles.map((r) => <option key={r.slug} value={r.slug}>{r.nombre}</option>)}
         </select>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--text-secondary)" }}>
           <input
@@ -228,6 +236,7 @@ export default function Users() {
                    onToggleActive={() => askToggleActive(u)}
                    onResetPassword={() => askResetPassword(u)}
                    onDelete={() => askDelete(u)}
+                   roles={roles}
                    lang={lang}/>
         ))}
       </div>
@@ -273,6 +282,7 @@ export default function Users() {
           }
           closeDrawer();
         }}
+        roles={roles}
         lang={lang}
       />
 
@@ -329,8 +339,8 @@ function TableHeader({ lang, sticky }) {
   );
 }
 
-function UserRow({ user, onEdit, onToggleActive, onResetPassword, onDelete, lang }) {
-  const role = ROLES_DEMO.find((r) => r.slug === user.role_default)
+function UserRow({ user, onEdit, onToggleActive, onResetPassword, onDelete, roles, lang }) {
+  const role = (roles || ROLES_FALLBACK).find((r) => r.slug === user.role_default)
     || { nombre: user.role_default, color: "#64748B" };
   const fmtDate = (iso) => {
     if (!iso) return "—";
@@ -428,7 +438,7 @@ function UserRow({ user, onEdit, onToggleActive, onResetPassword, onDelete, lang
 // ─────────────────────────────────────────────────────────────────────
 // UserDrawer · Create/Edit
 // ─────────────────────────────────────────────────────────────────────
-function UserDrawer({ open, user, onClose, onSaved, lang }) {
+function UserDrawer({ open, user, onClose, onSaved, roles = ROLES_FALLBACK, lang }) {
   const isEdit = !!user;
   const [form, setForm] = useState({
     email_plain: "", full_name: "", contact_email: "",
@@ -578,7 +588,7 @@ function UserDrawer({ open, user, onClose, onSaved, lang }) {
                 {({ id }) => (
                   <select id={id} className="select" value={form.role_default}
                           onChange={(e) => setForm({ ...form, role_default: e.target.value })}>
-                    {ROLES_DEMO.map((r) => <option key={r.slug} value={r.slug}>{r.nombre}</option>)}
+                    {withCurrentRole(roles, form.role_default).map((r) => <option key={r.slug} value={r.slug}>{r.nombre}</option>)}
                   </select>
                 )}
               </Field>

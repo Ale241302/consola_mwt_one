@@ -25,7 +25,9 @@ import { createPortal } from "react-dom";
 import { useNavigate, useParams, useOutletContext } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiFetch, getToken, clientesApi, ApiError } from "../lib/api.js";
-import { ROLES_DEMO } from "../lib/usersRolesMock.js";
+import {
+  ROLES_FALLBACK, fetchRoles, withCurrentRole, isClientRoleSlug,
+} from "../lib/roles.js";
 
 // ── Normalización clientes → shape del selector de empresa ─────────────
 // El backend de /api/clientes/ devuelve {id, razon_social, nombre_comercial,
@@ -82,6 +84,7 @@ export default function UserFormView() {
   const [error, setError]       = useState(null);
   const [toast, setToast]       = useState(null);
   const [companies, setCompanies] = useState([]);
+  const [roles, setRoles] = useState(ROLES_FALLBACK);
   const [companySearch, setCompanySearch] = useState("");
   const [companyOpen, setCompanyOpen] = useState(false);
   const companyBoxRef = useRef(null);
@@ -116,6 +119,15 @@ export default function UserFormView() {
           .then((d) => alive && setCompanies(Array.isArray(d) ? d : (d?.results || [])))
           .catch(() => {});
       });
+    return () => { alive = false; };
+  }, []);
+
+  // ── Cargar catálogo real de roles (users.role_cat vía /permissions/roles/) ──
+  // Fuente única: los roles creados en /roles aparecen aquí (antes se usaba
+  // una lista hardcodeada y los roles nuevos quedaban invisibles).
+  useEffect(() => {
+    let alive = true;
+    fetchRoles().then((r) => { if (alive) setRoles(r); });
     return () => { alive = false; };
   }, []);
 
@@ -303,11 +315,15 @@ export default function UserFormView() {
     return ids;
   }, [user.legal_entity_ids, user.legal_entity_id]);
 
-  // Sprint 2026-05-06 · validación R3: para roles CLIENT_* es
-  // OBLIGATORIO al menos una empresa asignada (de lo contrario el
-  // backend filtra todo a 0 expedientes y el portal queda vacío).
-  const isClientRoleSelected = String(user.role_default || '').toLowerCase().startsWith('client');
+  // Sprint 2026-05-06 · validación R3: SOLO roles de cliente requieren
+  // empresa asignada (de lo contrario el backend filtra todo a 0). Cualquier
+  // otro rol — incluido uno nuevo creado en /roles — no pide cliente.
+  const isClientRoleSelected = isClientRoleSlug(user.role_default);
   const companyMissing = isClientRoleSelected && selectedIds.length === 0;
+  const roleOptions = useMemo(
+    () => withCurrentRole(roles, user.role_default),
+    [roles, user.role_default]
+  );
   const selectedCompanies = useMemo(
     () => selectedIds.map((id) => companies.find((c) => c.id === id)).filter(Boolean),
     [selectedIds, companies]
@@ -554,7 +570,7 @@ export default function UserFormView() {
             <select value={user.role_default}
                     onChange={(e) => patch({ role_default: e.target.value })}
                     style={styles.input}>
-              {ROLES_DEMO.map((r) => (
+              {roleOptions.map((r) => (
                 <option key={r.slug} value={r.slug}>{r.nombre}</option>
               ))}
             </select>
@@ -574,11 +590,11 @@ export default function UserFormView() {
       {/* C · Empresa(s) asignada(s) — multi-empresa.
           Sprint 2026-05-06 · la primera empresa se persiste tambien como
           legal_entity_id (singular) por retrocompat con codigo legacy. */}
-      <Section title="C · Empresas asignadas"
+      <Section title={isClientRoleSelected ? "C · Empresas asignadas *" : "C · Empresas asignadas (opcional)"}
                hint={
                  isClientRoleSelected
                    ? "OBLIGATORIO para rol CLIENT — el cliente solo verá expedientes/OCs/documentos de las empresas asignadas. La primera es la empresa primaria."
-                   : "Opcional. Para roles internos de MWT no asigna empresa (quedan con scope global). Los datos corporativos vienen del módulo Clientes."
+                   : "Opcional. Este rol no es de cliente: no hace falta asignar empresa para guardar el usuario. Los datos corporativos vienen del módulo Clientes."
                }>
         {companyMissing && (
           <div style={{
