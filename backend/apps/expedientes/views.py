@@ -1686,6 +1686,20 @@ class ExpedienteViewSet(viewsets.ViewSet):
         s = ExpedienteSerializer(e, data=request.data, partial=True)
         s.is_valid(raise_exception=True)
         s.save()
+        # G26 · el lugar del código de OC depende del transporte: si el PATCH
+        # fijó/cambió el modo, se ajusta el segmento (país ↔ aeropuerto IATA).
+        # Nunca toca un PO del cliente; fail-safe dentro del helper.
+        if any(k in request.data for k in ("freight_mode", "transport_mode")):
+            try:
+                from .codigo_expediente import resegmentar_codigo_oc
+
+                resegmentar_codigo_oc(
+                    s.instance,
+                    freight_mode=getattr(s.instance, "freight_mode", None),
+                    transport_mode=request.data.get("transport_mode"),
+                )
+            except Exception:  # noqa: BLE001 - el PATCH no se cae por esto
+                log.exception("[expediente.update] re-segmentación falló")
         return Response(s.data)
     partial_update = update
 

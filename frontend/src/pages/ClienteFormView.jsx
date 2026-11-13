@@ -33,7 +33,7 @@ import {
 import { useRole } from "../context/RoleContext.jsx";
 import { CLIENTS } from "../data/mockData.js";
 import { clientesApi, marcasApi, apiFetch, getToken, storageUrl } from "../lib/api.js";
-import { clienteCorto, prvDeMarca, formatearCodigoOc, siguienteCodigoOc } from "../lib/ocCodigo.js";
+import { clienteCorto, prvDeMarca, formatearCodigoOc, parsearCodigoOc } from "../lib/ocCodigo.js";
 import FileUploader from "../components/common/FileUploader.jsx";
 import FilePreview  from "../components/common/FilePreview.jsx";
 import ComisionesFamiliaSection from "../components/clientes/ComisionesFamiliaSection.jsx";
@@ -706,13 +706,16 @@ export default function ScreenClienteFormView() {
 
           {/* Sprint 2026-11-09 · correlativo de OC por marca (G25).
               El código se ve completo: MAR-UMMIE-GT-04-25. La próxima OC
-              del portal usa el consecutivo + 1. */}
+              del portal usa el consecutivo + 1.
+              G26 · el lugar del código depende del transporte:
+                marítimo → país ISO-2 (MAR-SONDEL-CR-505516-26)
+                aéreo    → aeropuerto IATA (MAR-SONDEL-SJO-505516-26) */}
           <div style={{ marginTop: 20 }}>
             <Label>{lang === "es" ? "Correlativo OC por marca" : "OC sequence by brand"}</Label>
             <div className="caption" style={{ marginTop: 4 }}>
               {lang === "es"
-                ? "Último código asignado. La próxima OC sin PO será el siguiente."
-                : "Last assigned code. The next PO-less OC will be the following one."}
+                ? "Último código asignado. La próxima OC sin PO será el siguiente. En marítimo el lugar es el país; en aéreo, el aeropuerto."
+                : "Last assigned code. The next PO-less OC will be the following one. Sea uses the country; air uses the airport."}
             </div>
             <div style={{ display: "grid", gap: 12, marginTop: 10 }}>
               {marcas.map((m) => {
@@ -724,7 +727,16 @@ export default function ScreenClienteFormView() {
                   nn: 1,
                   anio: new Date().getFullYear(),
                 });
-                const proximo = valor.trim() ? (siguienteCodigoOc(valor) || sugerido) : sugerido;
+                // G26 · el consecutivo es el mismo; el lugar cambia con el
+                // transporte: país (marítimo) vs aeropuerto IATA (aéreo).
+                const partes = parsearCodigoOc(valor) || parsearCodigoOc(sugerido);
+                const nnProx = (partes?.nn || 0) + 1;
+                const proximo = partes
+                  ? formatearCodigoOc({ ...partes, nn: nnProx, pais: form.pais_iso2 })
+                  : sugerido;
+                const proximoAereo = partes && form.airport_iata
+                  ? formatearCodigoOc({ ...partes, nn: nnProx, pais: form.airport_iata })
+                  : "";
                 return (
                   <div
                     key={m.id}
@@ -748,11 +760,33 @@ export default function ScreenClienteFormView() {
                       <div className="caption" style={{ marginTop: 4 }}>
                         {lang === "es" ? `Próximo: ${proximo}` : `Next: ${proximo}`}
                       </div>
+                      {proximoAereo && (
+                        <div className="caption" style={{ marginTop: 2 }}>
+                          {lang === "es" ? `Próximo aéreo: ${proximoAereo}` : `Next (air): ${proximoAereo}`}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
             </div>
+          </div>
+          <div style={{ marginTop: 14, maxWidth: 320 }}>
+            <Field
+              label={lang === "es" ? "Aeropuerto destino (IATA)" : "Destination airport (IATA)"}
+              hint={lang === "es"
+                ? "3 letras (SJO, GUA, BOG…). Se usa en el código cuando el envío es aéreo; si es marítimo va el país."
+                : "3 letters (SJO, GUA, BOG…). Used in the code for air shipments; sea uses the country."}
+              error={showError("airport_iata")}
+            >
+              <Input
+                value={form.airport_iata}
+                onChange={v => update("airport_iata", String(v || "").toUpperCase().slice(0, 3))}
+                onBlur={() => blur("airport_iata")}
+                placeholder="SJO"
+                mono
+              />
+            </Field>
           </div>
         </Section>
 
@@ -1135,6 +1169,8 @@ function defaultsFrom(initial) {
     pais_iso2:         (i.pais_iso2 || i.country_code || i.country || "MX").toUpperCase().slice(0, 2),
     ciudad:            i.ciudad            || i.city            || "",
     direccion_entrega: i.direccion_entrega || i.address         || "",
+    // G26 · aeropuerto IATA de destino (código de OC aéreo).
+    airport_iata:      (i.airport_iata || "").toUpperCase().slice(0, 3),
     contacto_nombre:   i.contacto_nombre   || "",
     contacto_tel:      i.contacto_tel      || i.phone           || "",
     contacto_email:    i.contacto_email    || i.email           || "",

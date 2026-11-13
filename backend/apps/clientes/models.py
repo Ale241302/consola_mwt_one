@@ -61,6 +61,11 @@ class Cliente(models.Model):
     # usa para auto-numerar OCs sin PO en vez de OC-AUTO-XXXX.
     oc_correlativo    = models.BigIntegerField(null=True, blank=True)
 
+    # Extensión G26_clientes_airport_iata.sql (sprint 2026-11-13):
+    # aeropuerto IATA de destino (SJO, GUA, BOG…). El segmento de lugar del
+    # código de OC es el país en marítimo y este aeropuerto en aéreo.
+    airport_iata      = models.CharField(max_length=3, null=True, blank=True)
+
     is_active        = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)

@@ -9,8 +9,11 @@ Reglas (decisión del CEO, 07/11/2026; ver `harness_alejandro/03_REGLAS_DE_CODIG
   · Si el cliente emitió OC con número, manda ese número.
   · Si el cliente tiene serie configurada (`clientes.cliente.oc_correlativo`),
     se consume el siguiente de esa serie (la que administra Álvaro).
-  · Si no, se arma `{PRV}-{CLIENTE}-{PAÍS}-{NN}-{AA}` con NN de dos dígitos
-    por cliente, país y año, sin reutilizar los ya usados.
+  · Si no, se arma `{PRV}-{CLIENTE}-{LUGAR}-{NN}-{AA}` con NN de uno a seis
+    dígitos por cliente, país y año, sin reutilizar los ya usados. LUGAR es el
+    país ISO-2 del cliente en marítimo y el aeropuerto IATA de destino en
+    aéreo (G26, 13/11/2026): `MAR-SONDEL-CR-505516-26` vs
+    `MAR-SONDEL-SJO-505516-26`. El consecutivo es el mismo para ambos modos.
   · El código interno del expediente es `EXP-` + lo anterior; si hay proforma
     conocida, `EXP-{PRV}-{CLIENTE}-{DES}-{proforma}`.
   · Límite duro: `expedientes.expediente.codigo` y `expedientes.oc.codigo`
@@ -66,8 +69,8 @@ _NO_SIRVEN = {
 }
 
 PATRON_OC = re.compile(
-    r"^(?P<prv>[A-Z]{3})-(?P<cliente>[A-Z0-9]+)-(?P<pais>[A-Z]{2})-"
-    r"(?P<nn>\d{2})-(?P<aa>\d{2})$"
+    r"^(?P<prv>[A-Z]{3})-(?P<cliente>[A-Z0-9]+)-(?P<pais>[A-Z]{2,3})-"
+    r"(?P<nn>\d{1,6})-(?P<aa>\d{2})$"
 )
 
 # Un `po_number` que ya viene armado como código interno
@@ -76,12 +79,17 @@ PATRON_OC = re.compile(
 PATRON_CODIGO_ARMADO = re.compile(r"^(MAR|TEC|BAN)-[A-Z0-9]+-[A-Z0-9]{2,4}-[A-Z0-9\-]+$")
 PATRON_PROFORMA = re.compile(r"^\d{3,4}-\d{4}$")
 
-# Consecutivo de OC por marca: `MAR-UMMIE-GT-04-25`. El NN admite de 1 a 6
-# dígitos (Sondel usa 505515; Ummie, 04).
+# Consecutivo de OC por marca: `MAR-UMMIE-GT-04-25` (marítimo) o
+# `MAR-SONDEL-SJO-505516-26` (aéreo: IATA en lugar del país). El NN admite de
+# 1 a 6 dígitos (Sondel usa 505515; Ummie, 04).
 PATRON_CODIGO_MARCA = re.compile(
-    r"^(?P<prv>[A-Z]{3})-(?P<cliente>[A-Z0-9]+)-(?P<pais>[A-Z]{2})-"
+    r"^(?P<prv>[A-Z]{3})-(?P<cliente>[A-Z0-9]+)-(?P<pais>[A-Z]{2,3})-"
     r"(?P<nn>\d{1,6})-(?P<aa>\d{2})$"
 )
+
+# Modos que cuentan como aéreo (vienen como `freight_mode` SEA/AIR o como
+# `transport_mode` MARITIMO/AEREO/TERRESTRE, según el módulo).
+_MODOS_AEREOS = frozenset({"AIR", "AEREO", "AVION", "PLANE"})
 
 
 def ya_es_codigo(po: Any) -> bool:
@@ -157,6 +165,47 @@ def pais_de(cliente: Any = None, pais_iso2: Any = None) -> str:
     return (_normalizar(pais_iso2) or PAIS_POR_DEFECTO)[:2]
 
 
+def _lugar_norm(valor: Any) -> str:
+    """Segmento de lugar del código: país ISO-2 o aeropuerto IATA (2-3 letras)."""
+    s = (_normalizar(valor) or "").replace(" ", "")
+    return (s or PAIS_POR_DEFECTO)[:3]
+
+
+def es_aereo(freight_mode: Any = None, transport_mode: Any = None) -> bool:
+    """True si el envío es aéreo, venga como `freight_mode` (AIR) o como
+    `transport_mode` (AEREO / "aéreo"). Cualquier otro valor cae a marítimo."""
+    for valor in (freight_mode, transport_mode):
+        s = (_normalizar(valor) or "").replace(" ", "")
+        if not s:
+            continue
+        if s in _MODOS_AEREOS or s.startswith("AER") or s.startswith("AIR"):
+            return True
+        if s in {"SEA", "MARITIMO", "MAR", "OCEAN", "TERRESTRE", "LAND"}:
+            return False
+    return False
+
+
+def lugar_de(cliente: Any = None, freight_mode: Any = None,
+             transport_mode: Any = None, iata: Any = None) -> str:
+    """Segmento de LUGAR del código de OC según el tipo de transporte.
+
+      · marítimo (o desconocido) → país ISO-2 del cliente (`CR`)
+      · aéreo                    → aeropuerto IATA de destino (`SJO`)
+
+    El aeropuerto sale de `iata` (payload) o de `clientes.cliente.airport_iata`
+    (ficha del cliente). Si no hay aeropuerto configurado NO se inventa uno:
+    cae al país.
+    """
+    pais = pais_de(cliente)
+    if not es_aereo(freight_mode, transport_mode):
+        return pais
+    for valor in (iata, _attr(cliente, "airport_iata")):
+        code = (_normalizar(valor) or "").replace(" ", "")
+        if 3 == len(code) and code.isalnum():
+            return code
+    return pais
+
+
 def _dos_digitos_anio(anio: Any) -> str:
     """2026 · `2026` · date(2026-11-09) → `26`."""
     if anio is None:
@@ -170,11 +219,14 @@ def _dos_digitos_anio(anio: Any) -> str:
 
 
 def formatear_oc(prv: str, cliente: str, pais: str, nn: int, anio: Any) -> str:
-    """`MAR`, `UMMIE`, `GT`, 4, 2026 → `MAR-UMMIE-GT-04-26`."""
+    """`MAR`, `UMMIE`, `GT`, 4, 2026 → `MAR-UMMIE-GT-04-26`.
+
+    `pais` es el lugar: país ISO-2 (marítimo) o IATA de 3 letras (aéreo).
+    """
     return (
         f"{_normalizar(prv).replace(' ', '')[:3]}-"
         f"{_normalizar(cliente).replace(' ', '')[:14]}-"
-        f"{pais_de(pais_iso2=pais)}-"
+        f"{_lugar_norm(pais)}-"
         f"{int(nn):02d}-{_dos_digitos_anio(anio)}"
     )
 
@@ -321,20 +373,37 @@ def _attr(obj: Any, nombre: str):
 def _cliente_row(client_id) -> dict:
     if not client_id:
         return {}
+    iata = None
     try:
         with connection.cursor() as c:
             c.execute(
                 """
-                SELECT razon_social, nombre_comercial, pais_iso2, oc_correlativo
+                SELECT razon_social, nombre_comercial, pais_iso2, oc_correlativo,
+                       airport_iata
                   FROM clientes.cliente
                  WHERE id = %s::uuid
                 """,
                 [str(client_id)],
             )
             row = c.fetchone()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("[codigo_expediente] cliente %s ilegible: %s", client_id, exc)
-        return {}
+    except Exception:  # noqa: BLE001
+        # Antes del SQL G26 la columna no existe: se sigue con el resto.
+        try:
+            with connection.cursor() as c:
+                c.execute(
+                    """
+                    SELECT razon_social, nombre_comercial, pais_iso2, oc_correlativo
+                      FROM clientes.cliente
+                     WHERE id = %s::uuid
+                    """,
+                    [str(client_id)],
+                )
+                row = c.fetchone()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[codigo_expediente] cliente %s ilegible: %s", client_id, exc)
+            return {}
+    else:
+        iata = row[4] if len(row) > 4 else None
     if not row:
         return {}
     return {
@@ -342,6 +411,7 @@ def _cliente_row(client_id) -> dict:
         "nombre_comercial": row[1],
         "pais_iso2": row[2],
         "oc_correlativo": row[3],
+        "airport_iata": iata,
     }
 
 
@@ -506,10 +576,12 @@ def filas_correlativo_marca(client_id) -> dict:
 
 
 def _formatear_para(cliente: dict, marca: dict, nn: Optional[int],
-                    anio: Any) -> str:
+                    anio: Any, lugar: Any = None) -> str:
+    """Arma el código con el lugar indicado (país o IATA). Sin `lugar`, usa el
+    país del cliente (marítimo)."""
     prv = prv_de_marca(marca.get("slug"), marca.get("nombre"), marca.get("brand_code"))
     return formatear_oc(
-        prv, cliente_corto(cliente), pais_de(cliente),
+        prv, cliente_corto(cliente), lugar or pais_de(cliente),
         int(nn or 1), anio or date.today().year,
     )
 
@@ -518,12 +590,17 @@ def siguiente_codigo_marca(
     client_id,
     brand_id=None,
     anio: Any = None,
+    freight_mode: Any = None,
+    transport_mode: Any = None,
+    destino_iata: Any = None,
 ) -> Optional[str]:
     """Consume el siguiente consecutivo del cliente para esa marca.
 
-    Devuelve el código completo (`MAR-SONDEL-CR-505516-26`) o None si no
-    se pudo leer/escribir la tabla. La primera vez parte de
-    `clientes.cliente.oc_correlativo` (siembra) o de 1.
+    Devuelve el código completo (`MAR-SONDEL-CR-505516-26` en marítimo,
+    `MAR-SONDEL-SJO-505516-26` en aéreo) o None si no se pudo leer/escribir la
+    tabla. El consecutivo es el mismo para ambos modos: lo único que cambia es
+    el segmento de lugar (país ISO-2 vs aeropuerto IATA). La primera vez parte
+    de `clientes.cliente.oc_correlativo` (siembra) o de 1.
     """
     brand_id = brand_id or _marca_default_id()
     if not client_id or not brand_id:
@@ -565,11 +642,17 @@ def siguiente_codigo_marca(
     marca = _marca_row(brand_id)
     if not cliente or not marca:
         return None
-    return _formatear_para(cliente, marca, nn, anio_db)
+    lugar = lugar_de(cliente, freight_mode, transport_mode, destino_iata)
+    return _formatear_para(cliente, marca, nn, anio_db, lugar)
 
 
 def previsualizar_codigos_marca(client_id, anio: Any = None) -> list:
-    """Código vigente y próximo por marca, sin consumir el consecutivo."""
+    """Código vigente y próximo por marca, sin consumir el consecutivo.
+
+    Devuelve ambas variantes del lugar: `codigo`/`siguiente` (marítimo, país
+    ISO-2) y `codigo_aereo`/`siguiente_aereo` (aéreo, aeropuerto IATA del
+    cliente). El consecutivo es el mismo.
+    """
     marcas = marcas_activas()
     if not marcas:
         return []
@@ -585,8 +668,12 @@ def previsualizar_codigos_marca(client_id, anio: Any = None) -> list:
         if nn is None and cliente.get("oc_correlativo") is not None:
             # Aún sin fila: la siembra es el número que ya estaba en la ficha.
             nn = int(cliente["oc_correlativo"])
-        codigo = _formatear_para(cliente, marca, nn, fila.get("anio") or anio) if nn else ""
-        siguiente = _formatear_para(cliente, marca, (nn or 0) + 1, anio)
+        anio_fila = fila.get("anio") or anio
+        lugar_mar = pais_de(cliente)
+        lugar_air = lugar_de(cliente, freight_mode="AIR")
+        codigo = (_formatear_para(cliente, marca, nn, anio_fila, lugar_mar)
+                  if nn else "")
+        siguiente = _formatear_para(cliente, marca, (nn or 0) + 1, anio, lugar_mar)
         salida.append({
             "brand_id": marca["id"],
             "brand_nombre": marca["nombre"],
@@ -595,8 +682,86 @@ def previsualizar_codigos_marca(client_id, anio: Any = None) -> list:
             "nn": nn,
             "anio": fila.get("anio"),
             "siguiente": siguiente,
+            # Variante aérea (mismo NN, lugar = aeropuerto IATA).
+            "codigo_aereo": (_formatear_para(cliente, marca, nn, anio_fila, lugar_air)
+                             if nn else ""),
+            "siguiente_aereo": _formatear_para(cliente, marca, (nn or 0) + 1, anio, lugar_air),
+            "lugar_aereo": lugar_air if lugar_air != lugar_mar else None,
+            "airport_iata": cliente.get("airport_iata"),
         })
     return salida
+
+
+def resegmentar_codigo_oc(expediente, freight_mode: Any = None,
+                          transport_mode: Any = None) -> bool:
+    """Ajusta el segmento de LUGAR del código de OC cuando cambia el transporte.
+
+    Regla G26: marítimo → país ISO-2; aéreo → aeropuerto IATA del cliente.
+    El consecutivo (NN) y el año (AA) no se tocan.
+
+    Solo actúa sobre códigos que generó la política (`MAR-CLIENTE-LUGAR-NN-AA`).
+    Un PO del cliente (`504960`, `PO 504960`, `IyC 004-2026`) NUNCA se toca.
+    Devuelve True si reescribió el código. Fail-safe: ante cualquier error deja
+    el código como estaba y devuelve False.
+    """
+    oc_id = getattr(expediente, "oc_id", None)
+    client_id = getattr(expediente, "client_id", None)
+    if not oc_id or not client_id:
+        return False
+    try:
+        with connection.cursor() as c:
+            c.execute(
+                "SELECT codigo FROM expedientes.oc WHERE id = %s::uuid",
+                [str(oc_id)],
+            )
+            row = c.fetchone()
+        if not row or not row[0]:
+            return False
+        actual = str(row[0]).strip()
+        partes = parsear_codigo_marca(actual)
+        if not partes:
+            return False
+        cliente = _cliente_row(client_id)
+        if not cliente:
+            return False
+        lugar = lugar_de(cliente, freight_mode, transport_mode)
+        if lugar == partes["pais"]:
+            return False
+        nuevo = formatear_oc(
+            partes["prv"], partes["cliente"], lugar,
+            partes["nn"], partes["anio"],
+        )
+        if nuevo == actual:
+            return False
+        with connection.cursor() as c:
+            c.execute(
+                "UPDATE expedientes.oc SET codigo = %s, updated_at = now() "
+                "WHERE id = %s::uuid",
+                [nuevo, str(oc_id)],
+            )
+            # El código del expediente sigue al de la OC cuando es su espejo
+            # exacto (`EXP-<OC>`); si tiene proforma/destino, no se toca.
+            viejo_exp = f"{PREFIJO_EXP}{actual}"
+            c.execute(
+                """
+                UPDATE expedientes.expediente
+                   SET codigo = %s, updated_at = now()
+                 WHERE oc_id = %s::uuid
+                   AND codigo = %s
+                """,
+                [f"{PREFIJO_EXP}{nuevo}"[:LARGO_MAX_CODIGO], str(oc_id), viejo_exp],
+            )
+        log.info(
+            "[codigo_expediente] OC %s re-segmentada: %s → %s",
+            oc_id, actual, nuevo,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - nunca romper el PATCH
+        log.warning(
+            "[codigo_expediente] no se pudo re-segmentar la OC %s: %s",
+            oc_id, exc,
+        )
+        return False
 
 
 def guardar_codigo_marca(client_id, brand_id, nn, anio) -> bool:

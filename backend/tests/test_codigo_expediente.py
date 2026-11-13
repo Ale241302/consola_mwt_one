@@ -51,7 +51,7 @@ class TestFormatoOc:
         assert c.siguiente_nn(codigos, "MAR", "GT", 2025) == 3
 
 
-class TestCodigoMarca:
+class TestMarca:
     def test_parsea_codigo_completo(self):
         partes = c.parsear_codigo_marca("MAR-UMMIE-GT-04-25")
         assert partes == {
@@ -64,12 +64,59 @@ class TestCodigoMarca:
         assert partes["nn"] == 505515
         assert partes["anio"] == 2026
 
+    def test_acepta_lugar_iata_de_tres_letras(self):
+        partes = c.parsear_codigo_marca("MAR-SONDEL-SJO-505516-26")
+        assert partes["pais"] == "SJO"
+        assert partes["nn"] == 505516
+
     def test_acepta_prefijo_po(self):
         assert c.parsear_codigo_marca("PO MAR-UMMIE-GT-04-25")["nn"] == 4
 
     @pytest.mark.parametrize("codigo", ["MAR-UMMIE-GT-04", "505515", "", None])
     def test_rechaza_lo_que_no_cumple(self, codigo):
         assert c.parsear_codigo_marca(codigo) is None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# G26 · el lugar del código depende del tipo de transporte
+# ─────────────────────────────────────────────────────────────────────
+class TestLugarPorTransporte:
+    SONDEL = {"pais_iso2": "CR", "airport_iata": "SJO"}
+
+    @pytest.mark.parametrize("fm,tm", [
+        ("AIR", None), (None, "AEREO"), (None, "aéreo"), ("air", "AEREO"),
+    ])
+    def test_es_aereo(self, fm, tm):
+        assert c.es_aereo(fm, tm) is True
+
+    @pytest.mark.parametrize("fm,tm", [
+        ("SEA", None), (None, "MARITIMO"), (None, "TERRESTRE"), (None, None),
+        ("", ""),
+    ])
+    def test_no_es_aereo(self, fm, tm):
+        assert c.es_aereo(fm, tm) is False
+
+    def test_maritimo_usa_pais(self):
+        assert c.lugar_de(self.SONDEL, freight_mode="SEA") == "CR"
+        assert c.lugar_de(self.SONDEL, transport_mode="MARITIMO") == "CR"
+
+    def test_aereo_usa_iata_del_cliente(self):
+        assert c.lugar_de(self.SONDEL, freight_mode="AIR") == "SJO"
+        assert c.lugar_de(self.SONDEL, transport_mode="AEREO") == "SJO"
+
+    def test_aereo_sin_iata_cae_al_pais(self):
+        cliente = {"pais_iso2": "CR", "airport_iata": None}
+        assert c.lugar_de(cliente, freight_mode="AIR") == "CR"
+
+    def test_iata_del_payload_manda(self):
+        assert c.lugar_de(self.SONDEL, freight_mode="AIR", iata="sjo") == "SJO"
+        assert c.lugar_de(self.SONDEL, freight_mode="AIR", iata="PTY") == "PTY"
+
+    def test_formatea_con_iata(self):
+        assert c.formatear_oc("MAR", "SONDEL", "SJO", 505516, 2026) == \
+            "MAR-SONDEL-SJO-505516-26"
+        assert c.formatear_oc("MAR", "SONDEL", "CR", 505516, 2026) == \
+            "MAR-SONDEL-CR-505516-26"
 
 
 class TestNombreCorto:

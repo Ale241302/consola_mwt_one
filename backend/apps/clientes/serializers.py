@@ -138,6 +138,8 @@ class ClienteSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
             "subsidiarias_count",
             # Ubicación
             "pais_iso2", "ciudad", "direccion", "direccion_entrega",
+            # G26 · aeropuerto IATA de destino (se usa en el código de OC aéreo)
+            "airport_iata",
             # Contacto
             "contacto_nombre", "contacto_email", "contacto_tel",
             # Comercial
@@ -200,6 +202,23 @@ class ClienteSerializer(StorageNormalizeMixin, serializers.ModelSerializer):
                 "Ya existe un cliente ACTIVO con ese codigo_marluvas."
             )
         return value
+
+    def validate_airport_iata(self, value):
+        """G26 · aeropuerto IATA de 3 letras (SJO, GUA, BOG…) o vacío.
+
+        Se usa en el segmento de lugar del código de OC cuando el envío es
+        aéreo. Vacío = no configurado (el código cae al país).
+        """
+        if value is None:
+            return None
+        v = str(value).strip().upper()
+        if not v:
+            return None
+        if not re.fullmatch(r"[A-Z]{3}", v):
+            raise serializers.ValidationError(
+                "airport_iata debe ser un código IATA de 3 letras (ej. SJO)."
+            )
+        return v
 
     def validate_dias_credito(self, value):
         """Rango 0..180."""

@@ -1052,8 +1052,25 @@ def create_from_oc_impl(request):
     #   1) el que trae el cliente (payload u OCR),
     #   2) el consecutivo de la marca para ese cliente
     #      (`MAR-UMMIE-GT-05-26`, tabla G25),
-    #   3) `{PRV}-{CLIENTE}-{PAÍS}-{NN}-{AA}` calculado de los OCs previos,
+    #   3) `{PRV}-{CLIENTE}-{LUGAR}-{NN}-{AA}` calculado de los OCs previos,
     #   4) OC-AUTO-… solo si no se pudo leer el cliente (no debería pasar).
+    # El LUGAR del código depende del transporte (G26): marítimo → país ISO-2
+    # (`MAR-SONDEL-CR-505516-26`), aéreo → IATA de destino
+    # (`MAR-SONDEL-SJO-505516-26`). Para CLIENT el modo llega NULL por el
+    # HARD SHIELD, así que se busca la pista en el OCR antes de caer a país.
+    _modo_flete = freight_mode or request.data.get("freight_mode") or po.get("freight_mode")
+    _modo_transp = (
+        transport_mode
+        or request.data.get("transport_mode")
+        or po.get("transport_mode")
+        or po.get("transport")
+        or (ocr_payload.get("shipping") or {}).get("transport_mode")
+    )
+    _destino_iata = (
+        request.data.get("destino_iata")
+        or (ocr_payload.get("shipping") or {}).get("destino_iata")
+        or po.get("destino_iata")
+    )
     po_number = str(
         request.data.get("po_number") or po.get("number") or ""
     ).strip()
@@ -1061,6 +1078,9 @@ def create_from_oc_impl(request):
     if not po_number:
         _sig = codigos.siguiente_codigo_marca(
             client_id, brand_id, _safe_date(po.get("date")),
+            freight_mode=_modo_flete,
+            transport_mode=_modo_transp,
+            destino_iata=_destino_iata,
         )
         if _sig:
             po_number = _sig

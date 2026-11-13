@@ -2,10 +2,11 @@
 // MWT.ONE · lib/ocCodigo.js
 //
 // Código de OC con la nomenclatura de POL_CODIGO_OC:
-//   {PRV}-{CLIENTE}-{PAÍS}-{NN}-{AA}   →  MAR-UMMIE-GT-04-25
+//   {PRV}-{CLIENTE}-{LUGAR}-{NN}-{AA}   →  MAR-UMMIE-GT-04-25
 //     PRV     marca (MAR Marluvas, TEC Tecmater, BAN Bangni)
 //     CLIENTE nombre corto de la empresa
-//     PAÍS    ISO-2 del cliente
+//     LUGAR   marítimo: ISO-2 del país (GT)
+//             aéreo:    IATA del aeropuerto destino (GUA, SJO, BOG)  ← G26
 //     NN      consecutivo de la marca para ese cliente (1 a 6 dígitos)
 //     AA      año del código
 //
@@ -70,7 +71,8 @@ export function formatearCodigoOc({ prv, cliente, pais, nn, anio }) {
   return [
     String(prv || "MAR").toUpperCase().slice(0, 3),
     String(cliente || "CLIENTE").toUpperCase().slice(0, 14),
-    String(pais || "XX").toUpperCase().slice(0, 2),
+    // Lugar: 2 letras = país (marítimo), 3 = IATA (aéreo).
+    String(pais || "XX").toUpperCase().slice(0, 3),
     String(Number(nn) || 1).padStart(2, "0"),
     aa,
   ].join("-");
@@ -82,7 +84,7 @@ export function parsearCodigoOc(codigo) {
     .toUpperCase()
     .replace(/^PO[\s\-_]*/, "")
     .replace(/\s+/g, "");
-  const m = s.match(/^([A-Z]{3})-([A-Z0-9]+)-([A-Z]{2})-(\d{1,6})-(\d{2})$/);
+  const m = s.match(/^([A-Z]{3})-([A-Z0-9]+)-([A-Z]{2,3})-(\d{1,6})-(\d{2})$/);
   if (!m) return null;
   return {
     prv: m[1],
