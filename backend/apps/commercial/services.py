@@ -185,11 +185,27 @@ def resolve_client_price(
         return out
 
     # ── Determinar banda vigente ─────────────────────────────────────
-    banda_id = banda_for_tc(tc_usd_brl) if tc_usd_brl is not None else None
-    used_fallback = False
-    if banda_id is None:
+    # Orden de precedencia (2026-11-20): la banda PACTADA del cliente
+    # (`pricing.marluvas_client_band_policy.banda_vigente`) manda sobre el
+    # TC. Antes el portal resolvía siempre por TC, así que un cliente con
+    # banda 5,40–5,60 veía el precio de 5,80–6,00 mientras el simulador le
+    # mostraba otra cosa. Sin política configurada se mantiene el TC.
+    banda_pol = None
+    try:
+        from .engine import politica_cliente
+        banda_pol = (politica_cliente(bid, cid) or {}).get("banda_vigente")
+    except Exception as exc:  # noqa: BLE001 — sin política: se usa el TC
+        log.warning("resolve_client_price · política de banda no disponible: %s", exc)
+
+    if banda_pol:
+        banda_id = int(banda_pol)
+        fuente = "cliente_band_policy"
+    elif tc_usd_brl is not None:
+        banda_id = banda_for_tc(tc_usd_brl)
+        fuente = "marluvas_client_sku_pricing"
+    else:
         banda_id = 6  # fallback central — banda 5.00–5.20
-        used_fallback = True
+        fuente = "fallback_band_default"
 
     # ── Buscar precio en la matriz, con vecino más cercano si falta ──
     price_str = None
@@ -235,9 +251,8 @@ def resolve_client_price(
         "final_price": final_price,
         "banda_id":    found_banda,
         "plazo":       90,
-        "source":      ("marluvas_client_sku_pricing"
-                        if not used_fallback
-                        else "fallback_band_default"),
+        "source":      fuente,
+        "banda_origen": ("CLIENTE" if banda_pol else "TC"),
     })
     return out
 
@@ -322,8 +337,18 @@ def get_client_price_matrix(
         out["reason"] = "empty_prices_matrix"
         return out
 
-    # Banda vigente — TC del día o fallback central
-    banda_id = banda_for_tc(tc_usd_brl) if tc_usd_brl is not None else None
+    # Banda vigente — política del cliente, TC del día o fallback central
+    banda_pol = None
+    try:
+        from .engine import politica_cliente
+        banda_pol = (politica_cliente(bid, cid) or {}).get("banda_vigente")
+    except Exception as exc:  # noqa: BLE001 — sin política: se usa el TC
+        log.warning("get_client_price_matrix · política de banda no disponible: %s", exc)
+
+    if banda_pol:
+        banda_id = int(banda_pol)
+    else:
+        banda_id = banda_for_tc(tc_usd_brl) if tc_usd_brl is not None else None
     used_fallback = banda_id is None
     if banda_id is None:
         banda_id = 6  # fallback central (5.00–5.20)

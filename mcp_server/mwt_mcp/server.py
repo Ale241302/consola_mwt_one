@@ -1477,9 +1477,11 @@ def producto_precio_cliente(
 
     Comportamiento:
       · `plazo_dias` (8/15/30/60/90; default 90) → precio de ese plazo.
-      · Banda: usa la VIGENTE según el TC USD/BRL actual (ej. TC 5.08 → banda 6,
-        rango 5,00–5,20) salvo que pases `banda_id` explícito.
-      · `usar_tc_actual=true` (default) consulta el TC en vivo para elegir banda.
+      · Banda: la PACTADA del cliente (`pricing.marluvas_client_band_policy`,
+        ej. UMMIE #8 · 5,40–5,60). Si el cliente no tiene política, se usa la
+        vigente por TC USD/BRL. `banda_id` explícito gana sobre ambas.
+      · `usar_tc_actual=true` (default) consulta el TC en vivo para los
+        clientes SIN política de banda.
       · Rol: CEO/Admin ve TODOS los clientes; client_b2b solo sus empresas;
         staff no-CEO NO ve precios por cliente (solo la banda/plazo).
 

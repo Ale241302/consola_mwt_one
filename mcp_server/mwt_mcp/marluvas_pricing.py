@@ -144,8 +144,18 @@ def resolve_precio_cliente(matrix_payload: dict, *, user: dict | None = None,
         else:
             continue  # staff no-CEO: sin precios por cliente
 
+        # Banda del cliente (2026-11-20): la PACTADA en su política manda
+        # sobre la del TC. Si el usuario pide una banda explícita, esa gana.
+        banda_cli = banda
+        if banda_id is None:
+            pol_id = cli.get("banda_vigente")
+            if pol_id:
+                banda_cli = next(
+                    (b for b in BANDAS_MARLUVAS if b["id"] == int(pol_id)), None
+                ) or banda
+
         matrix = cli.get("prices_matrix") or {}
-        row = matrix.get(str(banda["id"])) or {}
+        row = matrix.get(str(banda_cli["id"])) or {}
         precio = _pick(row, plazo)
         precio_por_plazos = {
             str(p): _pick(row, p) for p in sorted(PLAZOS_VALIDOS)
@@ -157,7 +167,9 @@ def resolve_precio_cliente(matrix_payload: dict, *, user: dict | None = None,
             "nombre_comercial": cli.get("nombre_comercial"),
             "com_pct": cli.get("com_pct"),
             "sobreprecio_pct": cli.get("sobreprecio_pct"),
-            "banda": banda["id"],
+            "banda": banda_cli["id"],
+            "banda_rango": banda_cli["rango"],
+            "banda_origen": "CLIENTE" if banda_cli.get("id") != banda.get("id") or cli.get("banda_vigente") else "TC",
             "plazo_dias": plazo,
             "precio": precio,
             "precio_por_plazos": precio_por_plazos,

@@ -3053,13 +3053,38 @@ class MarluvasProductClientsMatrixView(APIView):
                 log.warning("MarluvasProductClientsMatrixView clientes lookup failed: %s", exc)
 
         clients_out = []
+        # Banda pactada de cada cliente (política). La UI del producto y el
+        # MCP marcan la banda VIGENTE con este dato, no con la del TC: un
+        # cliente con banda 5,40–5,60 debe ver su precio aunque el TC caiga
+        # en 5,80–6,00.
+        pol_map: dict[str, dict] = {}
+        if cliente_ids:
+            try:
+                with connection.cursor() as cur:
+                    cur.execute("""
+                        SELECT cliente_id::text, banda_vigente, plazo_dias
+                          FROM pricing.marluvas_client_band_policy
+                         WHERE is_active = TRUE
+                           AND cliente_id::text = ANY(%s)
+                    """, [cliente_ids])
+                    for cid_pol, vig, plazo in cur.fetchall():
+                        pol_map[str(cid_pol)] = {
+                            "banda_vigente": int(vig) if vig else None,
+                            "plazo_dias":    int(plazo or 90),
+                        }
+            except Exception as exc:  # noqa: BLE001 — sin política: TC
+                log.warning("MarluvasProductClientsMatrixView política banda failed: %s", exc)
+
         for r in rows:
             cli = clientes_map.get(str(r.cliente_id), {})
+            pol = pol_map.get(str(r.cliente_id)) or {}
             clients_out.append({
                 "cliente_id":       str(r.cliente_id),
                 "razon_social":     cli.get("razon_social"),
                 "nombre_comercial": cli.get("nombre_comercial"),
                 "pais_iso2":        cli.get("pais_iso2"),
+                "banda_vigente":    pol.get("banda_vigente"),
+                "banda_plazo_dias": pol.get("plazo_dias"),
                 "brl_override":     str(r.brl_override) if r.brl_override is not None else None,
                 "com_pct":          str(r.com_pct),
                 "ajuste_usd":       str(r.ajuste_usd),

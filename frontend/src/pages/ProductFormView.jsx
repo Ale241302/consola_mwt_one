@@ -380,6 +380,16 @@ export default function ScreenProductFormView() {
   const { tc: tcVigente } = useExchangeRateUSDBRL(getToken());
   const bandaVigente = useMemo(() => bandaForTC(tcVigente), [tcVigente]);
 
+  // Banda VIGENTE por cliente: la pactada en su política manda sobre la del
+  // TC (2026-11-20). Antes todas las cards usaban la banda del TC, así que un
+  // cliente con banda 5,40–5,60 veía resaltada la 5,80–6,00 y un precio que
+  // no era el suyo.
+  const bandaDeCliente = (c) => {
+    const id = Number(c?.banda_vigente) || null;
+    if (!id) return bandaVigente;
+    return BANDAS_MARLUVAS.find((b) => b.id === id) || bandaVigente;
+  };
+
   useEffect(() => {
     if (!isEdit || !existing?.sku) return;
     let cancelled = false;
@@ -2780,7 +2790,7 @@ export default function ScreenProductFormView() {
                   <span>● USD/BRL</span>
                   <strong style={{ fontWeight: 700 }}>{tcVigente.toFixed(4)}</strong>
                   <span style={{ opacity: 0.6 }}>·</span>
-                  <span>{lang === 'es' ? 'Banda' : 'Band'} #{bandaVigente.id}</span>
+                  <span>{lang === 'es' ? 'Banda TC' : 'TC band'} #{bandaVigente.id}</span>
                   <strong style={{ fontWeight: 700 }}>{bandaVigente.rango}</strong>
                 </span>
               )}
@@ -2992,7 +3002,7 @@ export default function ScreenProductFormView() {
                     matrix={c.prices_matrix}
                     onCellChange={(bandaId, plazoDias, newValue) =>
                       handleMatrixCellChange(c.cliente_id, bandaId, plazoDias, newValue)}
-                    bandaVigente={bandaVigente}
+                    bandaVigente={bandaDeCliente(c)}
                     customPlazos={c.custom_plazos}
                     maxHeight="40vh"
                   />
@@ -3009,7 +3019,7 @@ export default function ScreenProductFormView() {
                           anchor:        { bandaId: 1, plazoDias: 90 },
                         }}
                         skuIdx={0}
-                        bandaVigente={bandaVigente}
+                        bandaVigente={bandaDeCliente(c)}
                         globalAnchor={{ bandaId: 1, plazoDias: 90 }}
                         customPlazos={c.custom_plazos}
                         onSizeMatrixCell={(_, tallaUuid, bandaId, plazoDias, value) =>
