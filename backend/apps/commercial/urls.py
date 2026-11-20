@@ -54,6 +54,8 @@ from .views import (
     MarluvasEngineImportView, MarluvasEngineSnapshotView,
     # Motor de precios · re-anclar todo a la banda vigente (registra historial)
     MarluvasEngineRefreshVigenteView,
+    # Motor de precios · banda vigente POR CLIENTE (techo/piso/plazo)
+    MarluvasClientBandPolicyView,
 )
 # F6 · Sprint 2026-05-20 · Bitácora histórica de cambios de precios.
 from .views_price_history import (
@@ -160,6 +162,10 @@ urlpatterns = [
     path("commercial/marluvas/engine-refresh-vigente/",
          MarluvasEngineRefreshVigenteView.as_view(),
          name="commercial-marluvas-engine-refresh-vigente"),
+    # Motor de precios · banda vigente/techo/piso POR CLIENTE
+    path("commercial/marluvas/client-band-policy/",
+         MarluvasClientBandPolicyView.as_view(),
+         name="commercial-marluvas-client-band-policy"),
     # F6 · Bitácora histórica (CEO-ONLY)
     path("commercial/marluvas/price-history/",
          PriceHistoryListView.as_view(),

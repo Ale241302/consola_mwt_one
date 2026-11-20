@@ -137,7 +137,7 @@ function useClientEnabledSkus(clienteId, brandId, accessToken) {
 // Devuelve SkuInput[] hidratable + fechas + source.
 // Si source === "empty" → skus=[] (fallback a localStorage en el caller).
 // ═════════════════════════════════════════════════════════════
-function useLoadSimulation(clienteId, brandId, accessToken) {
+function useLoadSimulation(clienteId, brandId, accessToken, reloadToken = 0) {
   const [data, setData] = useState({
     skus: [], fechaInicio: null, fechaFin: null,
     loading: true, source: "empty", cells: 0,
@@ -199,6 +199,9 @@ function useLoadSimulation(clienteId, brandId, accessToken) {
           // Fase 4 · custom_plazos viene top-level del response
           customPlazos: (r?.custom_plazos && typeof r.custom_plazos === "object")
             ? r.custom_plazos : {},
+          // Banda vigente/techo/piso configurada para este cliente.
+          bandPolicy: (r?.band_policy && typeof r.band_policy === "object")
+            ? r.band_policy : null,
         });
       })
       .catch(() => {
@@ -211,7 +214,7 @@ function useLoadSimulation(clienteId, brandId, accessToken) {
         }
       });
     return () => { cancelled = true; };
-  }, [clienteId, brandId, accessToken]);
+  }, [clienteId, brandId, accessToken, reloadToken]);
   return data;
 }
 
@@ -305,13 +308,88 @@ export default function ScreenBrandClientPricingForm() {
 
   const { tc, loading: tcLoading, error: tcError, ts: tcTs, source: tcSource, reload: reloadTC } =
     useExchangeRateUSDBRL(accessToken);
-  const bandaVigente = useMemo(() => bandaForTC(tc), [tc]);
+
+  // ── Banda vigente POR CLIENTE (configurable) ──────────────────────
+  // `loaded.bandPolicy` viene del backend (load-simulation). Si el cliente
+  // tiene banda configurada manda esa; si no, la del TC del día.
+  const [policyReload, setPolicyReload] = useState(0);
+  const [bandPolicy, setBandPolicy] = useState({
+    banda_vigente: "", banda_techo: 1, banda_piso: 12, plazo_dias: 90,
+  });
+  const [policySaving, setPolicySaving] = useState(false);
+  const [policyMsg, setPolicyMsg] = useState(null);  // {type, msg}
 
   // SKUs habilitados del cliente (Producto.especificaciones.visibility).
   const enabled = useClientEnabledSkus(clienteId, brandId, accessToken);
 
   // Simulación persistida en backend (precedencia sobre localStorage).
-  const loaded = useLoadSimulation(clienteId, brandId, accessToken);
+  const loaded = useLoadSimulation(clienteId, brandId, accessToken, policyReload);
+
+  useEffect(() => {
+    const bp = loaded.bandPolicy;
+    if (!bp) return;
+    setBandPolicy({
+      banda_vigente: bp.banda_vigente == null ? "" : Number(bp.banda_vigente),
+      banda_techo:   Number(bp.banda_techo || 1),
+      banda_piso:    Number(bp.banda_piso || 12),
+      plazo_dias:    Number(bp.plazo_dias || 90),
+    });
+  }, [loaded.bandPolicy]);
+
+  const bandaCliente = useMemo(() => {
+    const id = Number(bandPolicy.banda_vigente);
+    return id ? (BANDAS_MARLUVAS.find((b) => b.id === id) || null) : null;
+  }, [bandPolicy.banda_vigente]);
+  const bandaVigente = useMemo(
+    () => bandaCliente || bandaForTC(tc), [bandaCliente, tc]);
+  const bandaTecho = useMemo(
+    () => BANDAS_MARLUVAS.find((b) => b.id === Number(bandPolicy.banda_techo)) || BANDAS_MARLUVAS[0],
+    [bandPolicy.banda_techo]);
+  const bandaPiso = useMemo(
+    () => BANDAS_MARLUVAS.find((b) => b.id === Number(bandPolicy.banda_piso)) || BANDAS_MARLUVAS[11],
+    [bandPolicy.banda_piso]);
+
+  // Guarda la banda del cliente y refresca matriz + precios del producto.
+  const saveBandPolicy = async () => {
+    if (!brandId || !clienteId || policySaving) return;
+    setPolicySaving(true);
+    setPolicyMsg(null);
+    try {
+      const body = {
+        brand_id: brandId,
+        cliente_id: clienteId,
+        banda_vigente: bandPolicy.banda_vigente === "" ? null : Number(bandPolicy.banda_vigente),
+        banda_techo: Number(bandPolicy.banda_techo),
+        banda_piso: Number(bandPolicy.banda_piso),
+        plazo_dias: Number(bandPolicy.plazo_dias),
+      };
+      const res = await apiFetch("/commercial/marluvas/client-band-policy/", {
+        method: "POST", body, token: accessToken,
+      });
+      const bp = res?.banda_policy || {};
+      setPolicyMsg({
+        type: "ok",
+        msg: (lang === "es"
+          ? `Banda del cliente guardada: #${bp.banda_efectiva} · ${bp.plazo_dias}d. `
+          : `Client band saved: #${bp.banda_efectiva} · ${bp.plazo_dias}d. `)
+          + (res?.refresh?.productos_actualizados != null
+            ? (lang === "es"
+                ? `${res.refresh.productos_actualizados} producto(s) actualizados.`
+                : `${res.refresh.productos_actualizados} product(s) updated.`)
+            : ""),
+      });
+      setPolicyReload((k) => k + 1);
+    } catch (e) {
+      setPolicyMsg({
+        type: "error",
+        msg: (lang === "es" ? "No se pudo guardar: " : "Could not save: ")
+          + (e?.body?.detail || e?.message || ""),
+      });
+    } finally {
+      setPolicySaving(false);
+    }
+  };
+
 
   // Referencia (nombre comercial) por SKU — el snapshot de precios no guarda
   // la referencia, la traemos de /productos/ para mostrarla en las tablas.
@@ -338,19 +416,26 @@ export default function ScreenBrandClientPricingForm() {
   const hydratedRef = useRef(false);
 
   // Bandas filtradas para la matriz · reduce densidad visual sin perder info.
+  // El techo/piso se marcan según la configuración del CLIENTE (no siempre 1/12).
   const filteredBands = useMemo(() => {
-    if (bandFilter === "all") return BANDAS_MARLUVAS;
+    const mark = (b) => ({
+      ...b,
+      techo: b.id === bandaTecho.id,
+      piso:  b.id === bandaPiso.id,
+    });
+    if (bandFilter === "all") return BANDAS_MARLUVAS.map(mark);
     if (bandFilter === "current") {
-      return bandaVigente ? [bandaVigente] : [BANDAS_MARLUVAS[0]];
+      return [mark(bandaVigente || BANDAS_MARLUVAS[0])];
     }
     // essentials: techo + vigente (si no coincide con techo/piso) + piso
-    const out = [BANDAS_MARLUVAS[0]];
-    if (bandaVigente && bandaVigente.id !== 1 && bandaVigente.id !== 12) {
+    const out = [bandaTecho];
+    if (bandaVigente && bandaVigente.id !== bandaTecho.id
+        && bandaVigente.id !== bandaPiso.id) {
       out.push(bandaVigente);
     }
-    out.push(BANDAS_MARLUVAS[11]);
-    return out;
-  }, [bandFilter, bandaVigente]);
+    if (bandaPiso.id !== bandaTecho.id) out.push(bandaPiso);
+    return out.map(mark);
+  }, [bandFilter, bandaVigente, bandaTecho, bandaPiso]);
 
   // Comisión por defecto = la del cliente (* 100). Si no existe, 0.
   const comDefault = useMemo(() => {
@@ -1080,6 +1165,18 @@ export default function ScreenBrandClientPricingForm() {
         onReload={reloadTC} lang={lang}
       />
 
+      {/* Banda vigente POR CLIENTE · vigente / techo / piso / plazo */}
+      <BandPolicyBar
+        policy={bandPolicy}
+        onChange={setBandPolicy}
+        onSave={saveBandPolicy}
+        saving={policySaving}
+        msg={policyMsg}
+        bandaVigente={bandaVigente}
+        bandaCliente={bandaCliente}
+        lang={lang}
+      />
+
       <AnimatePresence>
         {banner && (
           <motion.div
@@ -1782,7 +1879,9 @@ export default function ScreenBrandClientPricingForm() {
             }}>
               <LegendDot color="#F5B895" label={lang === "es" ? "Banda techo (USD↑)" : "Top band"}/>
               <LegendDot color="#34D399" label={lang === "es" ? "Banda piso (USD↓)" : "Floor band"}/>
-              <LegendDot color={AMBER}    label={lang === "es" ? "Banda vigente (TC del día)" : "Active band"}/>
+              <LegendDot color={AMBER}    label={lang === "es"
+                ? `Banda vigente ${bandaCliente ? "(cliente)" : "(TC del día)"}`
+                : `Active band ${bandaCliente ? "(client)" : "(today's FX)"}`}/>
               <span>· <strong style={{ color: NAVY }}>{lang === "es" ? "base" : "base"}</strong> {lang === "es" ? "es el precio ancla" : "is the anchor price"} · {lang === "es"
                 ? "los demás plazos son ± % sobre la base"
                 : "other terms are ± % over base"} · <button type="button"
@@ -2207,6 +2306,121 @@ export default function ScreenBrandClientPricingForm() {
 // ═════════════════════════════════════════════════════════════
 // Sub-componentes
 // ═════════════════════════════════════════════════════════════
+function BandPolicyBar({ policy, onChange, onSave, saving, msg,
+                         bandaVigente, bandaCliente, lang }) {
+  const es = lang === "es";
+  const fieldLbl = {
+    font: "700 9.5px/1 var(--font-body)", color: MUTED,
+    textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4,
+  };
+  const selectStyle = {
+    padding: "7px 9px", borderRadius: 7,
+    border: "1px solid var(--border)", background: "var(--surface-raised)",
+    color: INK, font: "600 11.5px/1 var(--font-body)", cursor: "pointer",
+    minWidth: 150,
+  };
+  const setBanda = (key) => (e) => {
+    const raw = e.target.value;
+    onChange({ ...policy, [key]: raw === "" ? "" : Number(raw) });
+  };
+
+  return (
+    <div style={{
+      background: "var(--surface-raised)", border: "1px solid var(--border)",
+      borderRadius: 10, padding: "10px 14px", marginBottom: 14,
+      display: "flex", flexDirection: "column", gap: 10,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+                    alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ maxWidth: 420 }}>
+          <div style={{ font: "700 12px/1.2 var(--font-body)", color: INK }}>
+            {es ? "Banda del cliente · vigente / techo / piso"
+                : "Client band · active / ceiling / floor"}
+          </div>
+          <div style={{ font: "500 10.5px/1.4 var(--font-body)", color: MUTED, marginTop: 3 }}>
+            {es
+              ? "Se usa al crear expedientes y productos de este cliente. \"Automática\" toma la banda del TC del día."
+              : "Used when creating this client's expedientes and products. \"Automatic\" follows today's FX band."}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <div style={fieldLbl}>{es ? "Banda vigente" : "Active band"}</div>
+            <select value={policy.banda_vigente ?? ""} onChange={setBanda("banda_vigente")}
+              style={selectStyle}>
+              <option value="">{es ? "Automática (TC)" : "Automatic (FX)"}</option>
+              {BANDAS_MARLUVAS.map((b) => (
+                <option key={b.id} value={b.id}>#{b.id} · {b.rango}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div style={fieldLbl}>{es ? "Techo" : "Ceiling"}</div>
+            <select value={policy.banda_techo} onChange={setBanda("banda_techo")}
+              style={selectStyle}>
+              {BANDAS_MARLUVAS.map((b) => (
+                <option key={b.id} value={b.id}>#{b.id} · {b.rango}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div style={fieldLbl}>{es ? "Piso" : "Floor"}</div>
+            <select value={policy.banda_piso} onChange={setBanda("banda_piso")}
+              style={selectStyle}>
+              {BANDAS_MARLUVAS.map((b) => (
+                <option key={b.id} value={b.id}>#{b.id} · {b.rango}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div style={fieldLbl}>{es ? "Plazo" : "Term"}</div>
+            <select value={policy.plazo_dias} onChange={setBanda("plazo_dias")}
+              style={{ ...selectStyle, minWidth: 90 }}>
+              {PLAZOS_MARLUVAS.map((p) => (
+                <option key={p.dias} value={p.dias}>{p.dias}d</option>
+              ))}
+            </select>
+          </div>
+          <button type="button" onClick={onSave} disabled={saving}
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: "none",
+              background: saving ? "#CBD5E1" : "var(--brand-primary)",
+              color: "#FFFFFF", font: "700 11.5px/1 var(--font-body)",
+              cursor: saving ? "wait" : "pointer",
+              display: "inline-flex", alignItems: "center", gap: 6,
+            }}>
+            <IconCheck size={12}/>
+            {saving ? (es ? "Guardando…" : "Saving…") : (es ? "Guardar banda" : "Save band")}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{
+          font: "600 10.5px/1 var(--font-body)",
+          color: bandaCliente ? "#065F46" : "#075985",
+          background: bandaCliente ? "#D1FAE5" : "#E0F2FE",
+          border: `1px solid ${bandaCliente ? "#34D399" : "#7DD3FC"}`,
+          borderRadius: 999, padding: "4px 10px",
+        }}>
+          {es ? "Precio vigente" : "Current price"} · #{bandaVigente?.id} {bandaVigente?.rango}
+          {" · "}{bandaCliente ? (es ? "cliente" : "client") : (es ? "TC del día" : "today's FX")}
+        </span>
+        {msg && (
+          <span style={{
+            font: "600 10.5px/1.3 var(--font-body)",
+            color: msg.type === "ok" ? "#065F46" : "#991B1B",
+          }}>
+            {msg.msg}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function ExchangeRateBar({ tc, loading, error, ts, source, bandaVigente, vista, onVistaChange, onReload, lang }) {
   return (
     <div style={{

@@ -128,6 +128,8 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "producto_editar": ("productos", "update"),
     # Motor de precios · gobernanza (import del Excel + aplicar a un producto)
     "motor_precios_estado": ("productos", "view"),
+    "cliente_banda_precios": ("productos", "view"),
+    "cliente_banda_precios_configurar": ("productos", "update"),
     "motor_precios_importar": ("productos", "update"),
     "motor_precios_actualizar_vigente": ("productos", "update"),
     "producto_motor_precios_aplicar": ("productos", "update"),

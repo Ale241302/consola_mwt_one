@@ -150,6 +150,140 @@ def precio_en(matrix: dict, banda_id: int, plazo_dias: int) -> float | None:
 
 
 # =====================================================================
+# Banda vigente POR CLIENTE
+# =====================================================================
+def politica_cliente(brand_id, cliente_id) -> dict | None:
+    """Política de banda configurada para (marca, cliente), si existe."""
+    try:
+        with connection.cursor() as cur:
+            cur.execute("""
+                SELECT banda_vigente, banda_techo, banda_piso, plazo_dias,
+                       updated_at
+                  FROM pricing.marluvas_client_band_policy
+                 WHERE brand_id = %s AND cliente_id = %s AND is_active = TRUE
+                 LIMIT 1
+            """, [str(brand_id), str(cliente_id)])
+            row = cur.fetchone()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("engine.politica_cliente failed: %s", exc)
+        return None
+    if not row:
+        return None
+    return {
+        "banda_vigente": int(row[0]) if row[0] else None,
+        "banda_techo": int(row[1] or 1),
+        "banda_piso": int(row[2] or 12),
+        "plazo_dias": int(row[3] or PLAZO_DEFAULT),
+        "updated_at": row[4].isoformat() if row[4] else None,
+    }
+
+
+def politicas_de_clientes(brand_id, clientes: list[dict], *,
+                        tc: float | None = None) -> dict[str, dict]:
+    """Resuelve la banda/plazo efectivos de cada cliente en UNA query.
+
+    Devuelve {cliente_id: {banda, plazo_dias, fuente, banda_vigente,
+    banda_techo, banda_piso}}. `fuente` es "CLIENTE" si la banda viene de la
+    política configurada o "TC" si es automática.
+    """
+    tc = tc if tc is not None else tc_usd_brl()
+    ids = [str(c["cliente_id"]) for c in clientes]
+    politicas: dict[str, dict] = {}
+    if ids:
+        try:
+            with connection.cursor() as cur:
+                cur.execute("""
+                    SELECT cliente_id::text, banda_vigente, banda_techo,
+                           banda_piso, plazo_dias
+                      FROM pricing.marluvas_client_band_policy
+                     WHERE brand_id = %s AND is_active = TRUE
+                       AND cliente_id::text = ANY(%s)
+                """, [str(brand_id), ids])
+                for cid, vig, techo, piso, plazo in cur.fetchall():
+                    politicas[str(cid)] = {
+                        "banda_vigente": int(vig) if vig else None,
+                        "banda_techo": int(techo or 1),
+                        "banda_piso": int(piso or 12),
+                        "plazo_dias": int(plazo or PLAZO_DEFAULT),
+                    }
+        except Exception as exc:  # noqa: BLE001
+            log.warning("engine.politicas failed: %s", exc)
+
+    out: dict[str, dict] = {}
+    for cli in clientes:
+        cid = str(cli["cliente_id"])
+        pol = politicas.get(cid) or {}
+        vig = pol.get("banda_vigente")
+        if vig:
+            banda = next((b for b in BANDAS_MARLUVAS if b["id"] == vig),
+                         None) or banda_para_tc(tc)
+            fuente = "CLIENTE"
+        else:
+            banda = banda_para_tc(tc)
+            fuente = "TC"
+        out[cid] = {
+            "banda": banda,
+            "plazo_dias": int(pol.get("plazo_dias") or PLAZO_DEFAULT),
+            "fuente": fuente,
+            "banda_vigente": vig,
+            "banda_techo": int(pol.get("banda_techo") or 1),
+            "banda_piso": int(pol.get("banda_piso") or 12),
+        }
+    return out
+
+
+def guardar_politica_cliente(brand_id, cliente_id, *, banda_vigente=None,
+                             banda_techo=1, banda_piso=12, plazo_dias=90,
+                             user_id=None) -> dict:
+    """Upsert de la política de banda del cliente (desactiva la anterior)."""
+    def _banda(value, field):
+        if value in (None, "", "auto", "AUTO"):
+            return None
+        try:
+            num = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{field} debe ser 1..12 o null") from None
+        if not 1 <= num <= 12:
+            raise ValueError(f"{field} debe ser 1..12 o null")
+        return num
+
+    vig = _banda(banda_vigente, "banda_vigente")
+    techo = _banda(banda_techo, "banda_techo") or 1
+    piso = _banda(banda_piso, "banda_piso") or 12
+    try:
+        plazo = int(plazo_dias or PLAZO_DEFAULT)
+    except (TypeError, ValueError):
+        plazo = PLAZO_DEFAULT
+    if plazo not in {p[0] for p in PLAZOS_MARLUVAS}:
+        plazo = PLAZO_DEFAULT
+
+    with transaction.atomic():
+        with connection.cursor() as cur:
+            cur.execute("""
+                UPDATE pricing.marluvas_client_band_policy
+                   SET is_active = FALSE, updated_at = now()
+                 WHERE brand_id = %s AND cliente_id = %s AND is_active = TRUE
+            """, [str(brand_id), str(cliente_id)])
+            cur.execute("""
+                INSERT INTO pricing.marluvas_client_band_policy
+                    (id, brand_id, cliente_id, banda_vigente, banda_techo,
+                     banda_piso, plazo_dias, updated_by, is_active,
+                     created_at, updated_at)
+                VALUES (gen_random_uuid(), %s, %s, %s, %s, %s, %s, %s,
+                        TRUE, now(), now())
+            """, [str(brand_id), str(cliente_id), vig, techo, piso, plazo,
+                  str(user_id) if user_id else None])
+    return {
+        "brand_id": str(brand_id),
+        "cliente_id": str(cliente_id),
+        "banda_vigente": vig,
+        "banda_techo": techo,
+        "banda_piso": piso,
+        "plazo_dias": plazo,
+    }
+
+
+# =====================================================================
 # Tipo de cambio USD/BRL (cache compartida con MarluvasExchangeRateView)
 # =====================================================================
 def tc_usd_brl() -> float | None:
@@ -326,19 +460,31 @@ def snapshot_todos(brand_id, skus: list[str] | None = None) -> dict[str, dict]:
 # Materialización por cliente (marluvas_client_sku_pricing)
 # =====================================================================
 def materializar_clientes(brand_id, rows: list[dict], clientes: list[dict], *,
-                          anchor: dict, fecha_inicio=None, fecha_fin=None,
-                          user_id=None, notas: str | None = None) -> dict:
-    """Upsert (merge) de la matriz por cliente para los SKUs del Excel."""
+                          anchor: dict | None = None, fecha_inicio=None,
+                          fecha_fin=None, user_id=None,
+                          notas: str | None = None) -> dict:
+    """Upsert (merge) de la matriz por cliente para los SKUs del Excel.
+
+    El ancla de cada cliente es:
+      · `anchor` explícita (import / override), o
+      · su política de banda configurada (`banda_vigente` + `plazo_dias`),
+      · o la banda del TC si el cliente no tiene política.
+    """
     from .views import MarluvasSaveSimulationView, _bulk_upsert_bcpa
 
-    banda_id = (anchor.get("banda") or {}).get("id")
-    plazo = anchor.get("plazo_dias") or PLAZO_DEFAULT
+    tc = (anchor or {}).get("tc_usd_brl")
+    politicas = politicas_de_clientes(brand_id, clientes, tc=tc)
+    forced_banda = (anchor or {}).get("banda") or None
+    forced_plazo = (anchor or {}).get("plazo_dias")
     resultados = []
     total_skus = 0
     total_cells = 0
     for cli in clientes:
         cid = cli["cliente_id"]
         com = cli["com_pct"]
+        pol = politicas.get(str(cid)) or {}
+        banda_id = (forced_banda or {}).get("id") or (pol.get("banda") or {}).get("id") or BANDA_DEFAULT_ID
+        plazo = forced_plazo or pol.get("plazo_dias") or PLAZO_DEFAULT
         skus_payload = []
         for row in rows:
             sku = str(row.get("sku") or "").strip()
@@ -353,7 +499,7 @@ def materializar_clientes(brand_id, rows: list[dict], clientes: list[dict], *,
                 "ajuste_usd": 0,
                 "sobreprecio_pct": 0,
                 "prices_matrix": matrix,
-                "anchor": {"bandaId": int(banda_id or BANDA_DEFAULT_ID),
+                "anchor": {"bandaId": int(banda_id),
                            "plazoDias": int(plazo)},
                 "activo": True,
             })
@@ -365,7 +511,7 @@ def materializar_clientes(brand_id, rows: list[dict], clientes: list[dict], *,
                 cliente_id=uuid.UUID(str(cid)),
                 skus_payload=skus_payload,
                 custom_plazos={},
-                banda_vigente_id=int(banda_id or BANDA_DEFAULT_ID),
+                banda_vigente_id=int(banda_id),
                 fecha_ini=fecha_inicio,
                 fecha_fin=fecha_fin,
                 notas=notas or f"[motor precios {len(skus_payload)} SKUs]",
@@ -398,14 +544,25 @@ def materializar_clientes(brand_id, rows: list[dict], clientes: list[dict], *,
 # Gobernanza del producto
 # =====================================================================
 def _precios_por_cliente(rows: list[dict], clientes: list[dict], *,
-                         banda_id: int, plazo: int) -> dict[str, float]:
-    """{cliente_id: precio} para el SKU, en la banda/plazo pedidos."""
+                         politicas: dict[str, dict],
+                         banda_id: int | None = None,
+                         plazo: int | None = None) -> dict[str, float]:
+    """{cliente_id: precio} del SKU, en la banda/plazo de cada cliente.
+
+    Si se pasa `banda_id`/`plazo` explícitos, se fuerzan para todos
+    (import/override). Si no, se usa la política del cliente.
+    """
     out: dict[str, float] = {}
     for cli in clientes:
+        cid = str(cli["cliente_id"])
+        pol = politicas.get(cid) or {}
+        banda_ef = int(banda_id or (pol.get("banda") or {}).get("id")
+                       or BANDA_DEFAULT_ID)
+        plazo_ef = int(plazo or pol.get("plazo_dias") or PLAZO_DEFAULT)
         matrix = compute_matrix(rows[0]["brl"], cli["com_pct"])
-        price = precio_en(matrix, banda_id, plazo)
+        price = precio_en(matrix, banda_ef, plazo_ef)
         if price is not None:
-            out[cli["cliente_id"]] = price
+            out[cid] = price
     return out
 
 
@@ -416,7 +573,8 @@ def aplicar_gobernanza_producto(producto, *, anchor: dict | None = None,
                                 fecha_inicio=None, fecha_fin=None) -> dict:
     """Aplica el precio del motor a UN producto (gobernanza de precios).
 
-    Deja en el producto:
+    Cada cliente usa SU banda vigente configurada (o la del TC si es
+    automática). Deja en el producto:
       · `especificaciones.client_prices[cliente_id]` (lo que lee la
         creación de expedientes al congelar `unit_price_client`),
       · `precio_lista` / `precio_mwt` (= precio base sin comisión),
@@ -426,8 +584,6 @@ def aplicar_gobernanza_producto(producto, *, anchor: dict | None = None,
     Devuelve {applied, reason?, ...}. Nunca lanza: si el SKU no está en el
     último Excel, deja el producto intacto y explica por qué.
     """
-    from apps.productos.models import Producto
-
     sku = (getattr(producto, "sku", None) or "").strip()
     brand_id = getattr(producto, "marca_id", None)
     if not sku or not brand_id:
@@ -442,18 +598,30 @@ def aplicar_gobernanza_producto(producto, *, anchor: dict | None = None,
             "sku": sku,
         }
 
-    anchor = anchor or anchor_actual()
-    banda_id = int((anchor.get("banda") or {}).get("id") or BANDA_DEFAULT_ID)
-    plazo = int(anchor.get("plazo_dias") or PLAZO_DEFAULT)
     clientes = clientes if clientes is not None else clientes_activos()
-
-    row = {"sku": sku, "brl": snap["brl"]}
-    precios = _precios_por_cliente([row], clientes, banda_id=banda_id,
-                                   plazo=plazo)
-    if not precios:
+    if not clientes:
         return {"applied": False, "reason": "sin clientes activos", "sku": sku}
 
-    base_com0 = precio_en(compute_matrix(snap["brl"], 0), banda_id, plazo)
+    forced_banda = (anchor or {}).get("banda") or None
+    forced_plazo = (anchor or {}).get("plazo_dias")
+    tc = (anchor or {}).get("tc_usd_brl")
+    politicas = politicas_de_clientes(brand_id, clientes, tc=tc)
+
+    row = {"sku": sku, "brl": snap["brl"]}
+    precios = _precios_por_cliente(
+        [row], clientes, politicas=politicas,
+        banda_id=(forced_banda or {}).get("id"),
+        plazo=forced_plazo)
+
+    mwt_pol = politicas.get(MWT_OPERATING_CLIENT_ID) or next(
+        iter(politicas.values()), {})
+    banda_mwt = int((forced_banda or {}).get("id")
+                    or (mwt_pol.get("banda") or {}).get("id")
+                    or BANDA_DEFAULT_ID)
+    plazo_mwt = int(forced_plazo or mwt_pol.get("plazo_dias")
+                    or PLAZO_DEFAULT)
+    base_com0 = precio_en(compute_matrix(snap["brl"], 0), banda_mwt,
+                          plazo_mwt)
     mwt_price = precios.get(MWT_OPERATING_CLIENT_ID) or base_com0
 
     espec = dict(getattr(producto, "especificaciones", None) or {})
@@ -463,8 +631,13 @@ def aplicar_gobernanza_producto(producto, *, anchor: dict | None = None,
     espec["precio_motor"] = {
         "sku": sku,
         "brl": round(snap["brl"], 4),
-        "banda": banda_id,
-        "plazo_dias": plazo,
+        "banda": banda_mwt,
+        "plazo_dias": plazo_mwt,
+        "bandas_clientes": {
+            cid: int(((politicas.get(cid) or {}).get("banda") or {}).get("id")
+                     or banda_mwt)
+            for cid in precios
+        },
         "source_file": snap.get("source_file"),
         "model": MODEL_VERSION,
         "applied_at": timezone.now().isoformat(),
@@ -494,8 +667,8 @@ def aplicar_gobernanza_producto(producto, *, anchor: dict | None = None,
         "applied": True,
         "sku": sku,
         "brl": round(snap["brl"], 4),
-        "banda": banda_id,
-        "plazo_dias": plazo,
+        "banda": banda_mwt,
+        "plazo_dias": plazo_mwt,
         "source_file": snap.get("source_file"),
         "precio_lista": float(producto.precio_lista or 0),
         "precio_mwt": float(producto.precio_mwt or 0),
@@ -534,10 +707,17 @@ def refrescar_vigente(brand_id, *, banda_id: int | None = None,
     Idempotente: si el TC no cambió, los precios quedan igual (y el evento
     de historial se registra igual).
     """
-    anchor = anchor_actual(banda_id, plazo_dias)
-    banda = anchor.get("banda") or {}
-    banda_id_eff = int(banda.get("id") or BANDA_DEFAULT_ID)
-    plazo = int(anchor.get("plazo_dias") or PLAZO_DEFAULT)
+    anchor = anchor_actual(banda_id, plazo_dias) if (
+        banda_id not in (None, "") or plazo_dias not in (None, "")
+    ) else None
+    if anchor:
+        banda = anchor.get("banda") or {}
+        banda_id_eff = int(banda.get("id") or BANDA_DEFAULT_ID)
+        plazo = int(anchor.get("plazo_dias") or PLAZO_DEFAULT)
+    else:
+        banda = {}
+        banda_id_eff = None
+        plazo = None
 
     snaps = snapshot_todos(brand_id)
     if not snaps:
@@ -565,11 +745,12 @@ def refrescar_vigente(brand_id, *, banda_id: int | None = None,
     matrices = {"clientes": 0, "clientes_ok": 0, "skus_guardados": 0,
                 "cells": 0, "results": []}
     if rows:
+        nota_anchor = (f"banda {banda_id_eff} · {plazo}d"
+                       if anchor else "politica por cliente")
         matrices = materializar_clientes(
             brand_id, rows, clientes, anchor=anchor,
             user_id=user_id,
-            notas=f"[banda vigente {banda_id_eff} · {plazo}d · "
-                   f"{len(rows)} SKUs]",
+            notas=f"[banda vigente {nota_anchor} · {len(rows)} SKUs]",
         )
 
     # 2) Productos: client_prices + precio_lista/mwt (sin reescribir matrices).
@@ -603,18 +784,26 @@ def refrescar_vigente(brand_id, *, banda_id: int | None = None,
                      plazo_dias, tc_usd_brl, source, created_by)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, [str(brand_id), "refresh banda vigente", len(rows),
-                  matrices.get("clientes_ok") or 0, banda_id_eff, plazo,
-                  anchor.get("tc_usd_brl"), "REFRESH",
+                  matrices.get("clientes_ok") or 0, banda_id_eff,
+                  plazo or PLAZO_DEFAULT,
+                  (anchor or {}).get("tc_usd_brl"), "REFRESH",
                   str(user_id) if user_id else None])
     except Exception as exc:  # noqa: BLE001
         log.warning("engine.refrescar bitácora falló: %s", exc)
 
+    politicas = politicas_de_clientes(brand_id, clientes,
+                                      tc=(anchor or {}).get("tc_usd_brl"))
+    bandas_config = {
+        cid: (p.get("banda") or {}).get("id") for cid, p in politicas.items()
+    }
     return {
         "ok": True,
         "banda": banda_id_eff,
         "rango": banda.get("rango"),
         "plazo_dias": plazo,
-        "tc_usd_brl": anchor.get("tc_usd_brl"),
+        "tc_usd_brl": (anchor or {}).get("tc_usd_brl"),
+        "modo": "forzada" if anchor else "politica por cliente",
+        "bandas_clientes": bandas_config,
         "productos_marca": len(productos),
         "productos_actualizados": applied,
         "productos_sin_excel": len(sin_excel),
@@ -626,6 +815,87 @@ def refrescar_vigente(brand_id, *, banda_id: int | None = None,
             "cells": matrices.get("cells"),
         },
         "muestra": muestra,
+    }
+
+
+def refrescar_cliente(brand_id, cliente_id, *, user_id=None) -> dict:
+    """Recalcula matriz y precios de UN cliente con SU banda configurada.
+
+    Se ejecuta al guardar la política de banda del cliente: deja la matriz
+    anclada a esa banda (con evento de historial) y actualiza su precio en
+    `especificaciones.client_prices` de cada producto.
+    """
+    cliente_id = str(cliente_id)
+    cli = [c for c in clientes_activos() if c["cliente_id"] == cliente_id]
+    if not cli:
+        return {"ok": False,
+                "detail": "Cliente no activo o inexistente.",
+                "cliente_id": cliente_id}
+
+    snaps = snapshot_todos(brand_id)
+    if not snaps:
+        return {"ok": False,
+                "detail": "La marca no tiene Excel del motor cargado.",
+                "cliente_id": cliente_id}
+
+    rows = [{"sku": sku, "brl": s["brl"]} for sku, s in snaps.items()]
+    try:
+        mats = materializar_clientes(
+            brand_id, rows, cli, anchor=None, user_id=user_id,
+            notas=f"[politica banda cliente {cliente_id}]",
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("engine.refrescar_cliente matrices: %s", exc)
+        mats = {}
+
+    pol = politicas_de_clientes(brand_id, cli).get(cliente_id, {})
+    banda_ef = int((pol.get("banda") or {}).get("id") or BANDA_DEFAULT_ID)
+    plazo_ef = int(pol.get("plazo_dias") or PLAZO_DEFAULT)
+    com = cli[0]["com_pct"]
+
+    from apps.productos.models import Producto
+    productos = (Producto.objects.filter(marca_id=brand_id, is_active=True)
+                 .exclude(sku__isnull=True).exclude(sku=""))
+    actualizados = 0
+    for producto in productos:
+        snap = snaps.get(str(producto.sku))
+        if not snap:
+            continue
+        price = precio_en(compute_matrix(snap["brl"], com), banda_ef, plazo_ef)
+        if price is None:
+            continue
+        espec = dict(getattr(producto, "especificaciones", None) or {})
+        cp = dict(espec.get("client_prices") or {})
+        cp[cliente_id] = round(price, 2)
+        espec["client_prices"] = cp
+        producto.especificaciones = espec
+        producto.save(update_fields=["especificaciones", "updated_at"])
+        actualizados += 1
+
+    try:
+        with connection.cursor() as cur:
+            cur.execute("""
+                INSERT INTO pricing.marluvas_engine_import
+                    (brand_id, file_name, skus, clientes, banda_id,
+                     plazo_dias, tc_usd_brl, source, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, [str(brand_id), f"politica banda cliente {cliente_id}",
+                  len(rows), 1, banda_ef, plazo_ef, tc_usd_brl(),
+                  "POLICY", str(user_id) if user_id else None])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("engine.refrescar_cliente bitácora: %s", exc)
+
+    return {
+        "ok": True,
+        "cliente_id": cliente_id,
+        "banda": banda_ef,
+        "plazo_dias": plazo_ef,
+        "fuente": pol.get("fuente"),
+        "productos_actualizados": actualizados,
+        "matrices": {
+            "skus": (mats or {}).get("skus_guardados"),
+            "cells": (mats or {}).get("cells"),
+        },
     }
 
 

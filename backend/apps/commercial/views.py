@@ -2877,6 +2877,27 @@ class MarluvasSaveSimulationBulkView(APIView):
 #   → { brand_id, cliente_id, fecha_inicio, fecha_fin,
 #       skus: [...], source: "db"|"empty", count }
 # =====================================================================
+def _band_policy_payload(brand_id, cliente_id) -> dict:
+    """Banda/plazo efectivos del cliente para el simulador y el detalle."""
+    from . import engine
+
+    pol = engine.politica_cliente(brand_id, cliente_id) or {}
+    tc = engine.tc_usd_brl()
+    vig = pol.get("banda_vigente")
+    banda = (next((b for b in engine.BANDAS_MARLUVAS if b["id"] == vig), None)
+             if vig else None) or engine.banda_para_tc(tc)
+    return {
+        "banda_vigente": vig,
+        "banda_efectiva": banda["id"],
+        "rango": banda["rango"],
+        "fuente": "CLIENTE" if vig else "TC",
+        "banda_techo": int(pol.get("banda_techo") or 1),
+        "banda_piso": int(pol.get("banda_piso") or 12),
+        "plazo_dias": int(pol.get("plazo_dias") or engine.PLAZO_DEFAULT),
+        "tc_usd_brl": tc,
+    }
+
+
 class MarluvasLoadSimulationView(APIView):
     """GET · último snapshot vigente de pricing Marluvas para (brand, cliente)."""
     permission_classes = [IsAuthenticated]
@@ -2925,6 +2946,7 @@ class MarluvasLoadSimulationView(APIView):
                 "fecha_inicio": None,
                 "fecha_fin":    None,
                 "skus":         [],
+                "band_policy":  _band_policy_payload(brand_id, cliente_id),
                 "source":       "empty",
                 "count":        0,
             }, status=200)
@@ -2964,6 +2986,7 @@ class MarluvasLoadSimulationView(APIView):
             "fecha_fin":    first.fecha_fin.isoformat()    if first.fecha_fin    else None,
             "skus":         skus_out,
             "custom_plazos": custom_plazos_out,
+            "band_policy":  _band_policy_payload(brand_id, cliente_id),
             "source":       "db",
             "count":        len(rows),
             "cells":        total_cells,   # típicamente N_skus × 48
@@ -3378,3 +3401,96 @@ class MarluvasEngineRefreshVigenteView(APIView):
                 {"detail": f"No se pudo actualizar: {exc}"}, status=500)
 
         return Response(res, status=200 if res.get("ok") else 400)
+
+
+# =====================================================================
+# Motor de precios · banda vigente POR CLIENTE
+# ---------------------------------------------------------------------
+# GET  /api/commercial/marluvas/client-band-policy/?brand_id=&cliente_id=
+#   → { banda_vigente, banda_efectiva, rango, fuente, banda_techo,
+#       banda_piso, plazo_dias, tc_usd_brl }
+# POST /api/commercial/marluvas/client-band-policy/
+#   body: { brand_id, cliente_id, banda_vigente?, banda_techo?, banda_piso?,
+#           plazo_dias?, refrescar? }
+#   → { policy, refresh, banda_policy }
+#
+# `banda_vigente = null` = automática (la del TC del día).
+# Al guardar se reescribe la matriz del cliente con esa banda (historial del
+# motor) y se actualiza su precio en cada producto, para que la próxima
+# creación de expediente/producto tome esa banda.
+# =====================================================================
+class MarluvasClientBandPolicyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        brand_raw = request.query_params.get("brand_id")
+        cli_raw = request.query_params.get("cliente_id")
+        try:
+            brand_id = uuid.UUID(str(brand_raw))
+            cliente_id = uuid.UUID(str(cli_raw))
+        except (ValueError, AttributeError, TypeError):
+            return Response(
+                {"detail": "brand_id y cliente_id deben ser UUIDs."},
+                status=400,
+            )
+        return Response(_band_policy_payload(brand_id, cliente_id),
+                        status=200)
+
+    def post(self, request):
+        from . import engine
+
+        if not _is_admin(request.user):
+            return Response(
+                {"detail": "Solo CEO/Admin puede configurar la banda."},
+                status=403,
+            )
+
+        data = request.data or {}
+        try:
+            brand_id = MarluvasSaveSimulationView._parse_uuid(
+                data.get("brand_id"), "brand_id")
+            cliente_id = MarluvasSaveSimulationView._parse_uuid(
+                data.get("cliente_id"), "cliente_id")
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+
+        user_id = None
+        raw_id = getattr(request.user, "id", None) or getattr(
+            request.user, "pk", None)
+        if raw_id:
+            try:
+                user_id = uuid.UUID(str(raw_id))
+            except (ValueError, TypeError):
+                user_id = None
+
+        try:
+            policy = engine.guardar_politica_cliente(
+                brand_id,
+                cliente_id,
+                banda_vigente=data.get("banda_vigente"),
+                banda_techo=data.get("banda_techo", 1),
+                banda_piso=data.get("banda_piso", 12),
+                plazo_dias=data.get("plazo_dias", 90),
+                user_id=user_id,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("band-policy save failed: %s", exc)
+            return Response(
+                {"detail": f"No se pudo guardar la banda: {exc}"}, status=500)
+
+        refresh = None
+        if data.get("refrescar", True):
+            try:
+                refresh = engine.refrescar_cliente(
+                    brand_id, cliente_id, user_id=user_id)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("band-policy refresh failed: %s", exc)
+                refresh = {"ok": False, "detail": str(exc)}
+
+        return Response({
+            "policy": policy,
+            "refresh": refresh,
+            "banda_policy": _band_policy_payload(brand_id, cliente_id),
+        }, status=200)

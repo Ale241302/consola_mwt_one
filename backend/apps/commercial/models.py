@@ -363,6 +363,40 @@ class PaymentIndex(models.Model):
         return f"PaymentIndex({self.dias}d → MI={self.factor_mi} · ME={self.factor_me})"
 
 
+class MarluvasClientBandPolicy(models.Model):
+    """Banda vigente POR CLIENTE en el motor de precios Marluvas.
+
+    La banda vigente deja de ser siempre "la del TC del día": cada cliente
+    puede tener una banda pactada (techo/piso/vigente). `banda_vigente = NULL`
+    significa automática (la que marca el tipo de cambio).
+
+    La consumen la gobernanza de productos, el refresh de precios y el
+    simulador del cliente. Tabla: N4_marluvas_client_band_policy.sql.
+    """
+
+    id            = models.UUIDField(primary_key=True, default=uuid.uuid4,
+                                     editable=False)
+    brand_id      = models.UUIDField()                        # ⛔ sin FK
+    cliente_id    = models.UUIDField()                        # ⛔ sin FK
+    banda_vigente = models.SmallIntegerField(null=True, blank=True)
+    banda_techo   = models.SmallIntegerField(default=1)
+    banda_piso    = models.SmallIntegerField(default=12)
+    plazo_dias    = models.SmallIntegerField(default=90)
+    updated_by    = models.UUIDField(null=True, blank=True)
+    is_active     = models.BooleanField(default=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+    updated_at    = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed  = False
+        db_table = 'pricing"."marluvas_client_band_policy'
+        ordering = ("brand_id", "cliente_id")
+
+    def __str__(self):
+        return (f"MarluvasClientBandPolicy(brand={self.brand_id} "
+                f"cliente={self.cliente_id} vigente={self.banda_vigente})")
+
+
 class MarluvasClientSkuPricing(models.Model):
     """Override de precio por (brand, cliente, SKU) — específico para Marluvas.
 

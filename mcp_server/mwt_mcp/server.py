@@ -1471,6 +1471,53 @@ def motor_precios_estado(brand_id: str, sku: str | None = None) -> Any:
 
 
 @mcp.tool()
+def cliente_banda_precios(brand_id: str, cliente_id: str) -> Any:
+    """Banda vigente/techo/piso configurada para un cliente en una marca.
+
+    Devuelve `{banda_vigente, banda_efectiva, rango, fuente, banda_techo,
+    banda_piso, plazo_dias, tc_usd_brl}`. `banda_vigente = null` significa
+    automática (la del TC del día)."""
+    return _safe_role(lambda: api.get(
+        "commercial/marluvas/client-band-policy/",
+        _params(brand_id=brand_id, cliente_id=cliente_id)))
+
+
+@mcp.tool()
+@write_tool
+def cliente_banda_precios_configurar(
+    brand_id: str,
+    cliente_id: str,
+    banda_vigente: int | None = None,
+    banda_techo: int = 1,
+    banda_piso: int = 12,
+    plazo_dias: int = 90,
+) -> Any:
+    """Configura la banda de precios de UN cliente (CEO/Admin).
+
+    `banda_vigente`: 1..12 o null (null = automática según TC del día).
+    `banda_techo` / `banda_piso`: bandas de referencia (default 1 y 12).
+    `plazo_dias`: 8/15/30/60/90 (default 90).
+
+    Al guardar se reescribe la matriz del cliente con esa banda (queda el
+    evento en el historial del motor) y se actualiza su precio en cada
+    producto, así la próxima creación de expediente o producto toma esa
+    banda. Devuelve `{policy, refresh, banda_policy}`."""
+    g = _wguard()
+    if g:
+        return g
+    body = {
+        "brand_id": brand_id,
+        "cliente_id": cliente_id,
+        "banda_vigente": banda_vigente,
+        "banda_techo": banda_techo,
+        "banda_piso": banda_piso,
+        "plazo_dias": plazo_dias,
+    }
+    return _safe_role(lambda: api.post(
+        "commercial/marluvas/client-band-policy/", body))
+
+
+@mcp.tool()
 @write_tool
 def motor_precios_importar(
     brand_id: str,
@@ -1570,8 +1617,9 @@ def producto_crear(datos: dict) -> Any:
 
     GOBERNANZA DE PRECIOS (automática): al crear, el backend busca el SKU en el
     último Excel del motor de precios (`pricing.marluvas_engine_sku`). Si está,
-    completa `precio_lista`, `precio_mwt` y `especificaciones.client_prices` con la
-    banda vigente × plazo 90 y la comisión de cada cliente, y devuelve
+    completa `precio_lista`, `precio_mwt` y `especificaciones.client_prices` con
+    la banda vigente configurada para cada cliente (o la del TC si es
+    automática) × su plazo, y devuelve
     `gobernanza:{applied:true, banda, plazo_dias, precio_lista, clientes_con_precio}`.
     NO hace falta mandar `precio_lista` ni `precio_mwt`: si el SKU existe en el
     Excel, el motor manda. Si `gobernanza.applied=false`, el SKU no está en el
