@@ -459,6 +459,19 @@ def snapshot_todos(brand_id, skus: list[str] | None = None) -> dict[str, dict]:
 # =====================================================================
 # Materialización por cliente (marluvas_client_sku_pricing)
 # =====================================================================
+def _as_matrix(value) -> dict:
+    """Normaliza una matriz que puede venir como dict o como JSON string."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip().startswith("{"):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+    return {}
+
+
 def matrices_activas(brand_id, cliente_ids: list[str],
                      skus: list[str]) -> dict[tuple[str, str], dict]:
     """{(cliente_id, sku): {matrix, com_pct, ajuste_usd, sobreprecio_pct}}.
@@ -484,7 +497,7 @@ def matrices_activas(brand_id, cliente_ids: list[str],
             """, [str(brand_id), cids, sku_list])
             for cid, sku, matrix, com, ajuste, sobre in cur.fetchall():
                 out[(str(cid), str(sku))] = {
-                    "matrix": matrix or {},
+                    "matrix": _as_matrix(matrix),
                     "com_pct": float(com or 0),
                     "ajuste_usd": float(ajuste or 0),
                     "sobreprecio_pct": float(sobre or 0),
@@ -537,8 +550,8 @@ def materializar_clientes(brand_id, rows: list[dict], clientes: list[dict], *,
             if not sku or not brl:
                 continue
             prev = existentes.get((str(cid), sku))
-            if prev and prev.get("matrix"):
-                matrix = prev["matrix"]
+            if prev and _as_matrix(prev.get("matrix")):
+                matrix = _as_matrix(prev.get("matrix"))
                 com_use = prev.get("com_pct", com)
                 ajuste_use = prev.get("ajuste_usd", 0)
                 sobre_use = prev.get("sobreprecio_pct", 0)
@@ -615,8 +628,8 @@ def _precios_por_cliente(rows: list[dict], clientes: list[dict], *,
                        or BANDA_DEFAULT_ID)
         plazo_ef = int(plazo or pol.get("plazo_dias") or PLAZO_DEFAULT)
         prev = (matrices or {}).get((cid, sku)) or {}
-        matrix = prev.get("matrix") or compute_matrix(rows[0]["brl"],
-                                                      cli["com_pct"])
+        matrix = _as_matrix(prev.get("matrix")) or compute_matrix(
+            rows[0]["brl"], cli["com_pct"])
         price = precio_en(matrix, banda_ef, plazo_ef)
         if price is None:
             price = precio_en(compute_matrix(rows[0]["brl"], cli["com_pct"]),
@@ -682,8 +695,9 @@ def aplicar_gobernanza_producto(producto, *, anchor: dict | None = None,
                     or BANDA_DEFAULT_ID)
     plazo_mwt = int(forced_plazo or mwt_pol.get("plazo_dias")
                     or PLAZO_DEFAULT)
-    mwt_matrix = ((matrices_prev.get((MWT_OPERATING_CLIENT_ID, sku)) or {})
-                  .get("matrix")) or compute_matrix(snap["brl"], 0)
+    mwt_matrix = _as_matrix(
+        (matrices_prev.get((MWT_OPERATING_CLIENT_ID, sku)) or {}).get("matrix")
+    ) or compute_matrix(snap["brl"], 0)
     base_com0 = precio_en(mwt_matrix, banda_mwt, plazo_mwt)
     mwt_price = precios.get(MWT_OPERATING_CLIENT_ID) or base_com0
 
@@ -927,7 +941,8 @@ def refrescar_cliente(brand_id, cliente_id, *, user_id=None) -> dict:
         if not snap:
             continue
         prev = previas.get((cliente_id, str(producto.sku))) or {}
-        matrix = prev.get("matrix") or compute_matrix(snap["brl"], com)
+        matrix = _as_matrix(prev.get("matrix")) or compute_matrix(
+            snap["brl"], com)
         price = precio_en(matrix, banda_ef, plazo_ef)
         if price is None:
             price = precio_en(compute_matrix(snap["brl"], com),
