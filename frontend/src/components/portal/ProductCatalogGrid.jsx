@@ -24,7 +24,7 @@ import { useNavigate } from "react-router-dom";
 
 import { apiFetch, getToken, storageUrl } from "../../lib/api.js";
 import { fmtMoney, fmtMoneyDetail } from "../../lib/i18n.js";
-import { bandaForTC } from "../../constants/marluvas.js";
+import { bandaForTC, BANDAS_MARLUVAS } from "../../constants/marluvas.js";
 import { useExchangeRateUSDBRL } from "../../hooks/useExchangeRateUSDBRL.js";
 
 
@@ -348,9 +348,18 @@ function ProductCard({
   // texto fallback "Consultar precio" para que el cliente sepa que
   // todavia no esta disponible.
   const precioUsdBase = Number(precio_venta) || 0;
-  const tieneBanda    = !!banda && !!banda.div;
+  // Banda realmente aplicada al precio: la que devolvió el backend para este
+  // SKU (banda pactada del cliente). Antes se rotulaba siempre con la del TC,
+  // así que un cliente con banda 5,40–5,60 veía "Banda 5,80 – 6,00".
+  const bandaSku = useMemo(() => {
+    const id = Number(product?.banda_id) || null;
+    if (!id) return banda;
+    return BANDAS_MARLUVAS.find((b) => b.id === id) || banda;
+  }, [product?.banda_id, banda]);
+
+  const tieneBanda    = !!bandaSku && !!bandaSku.div;
   const precioBrl     = (tieneBanda && precioUsdBase > 0)
-    ? precioUsdBase * Number(banda.div)
+    ? precioUsdBase * Number(bandaSku.div)
     : null;
 
   return (
@@ -423,7 +432,7 @@ function ProductCard({
                     color: "var(--text-tertiary)", marginTop: 2,
                     letterSpacing: 0.3,
                   }}>
-                    {(lang === "es" ? "Banda " : "Band ") + (banda?.rango || "") +
+                    {(lang === "es" ? "Banda " : "Band ") + (bandaSku?.rango || "") +
                       " · 90d"}
                   </span>
                 )}

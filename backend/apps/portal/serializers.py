@@ -72,6 +72,8 @@ class ProductPortalListSerializer(StorageNormalizeMixin, serializers.ModelSerial
     """
     precio_venta = serializers.SerializerMethodField()
     marca_label  = serializers.SerializerMethodField()
+    banda_id     = serializers.SerializerMethodField()
+    banda_rango  = serializers.SerializerMethodField()
 
     class Meta:
         model  = Producto
@@ -89,6 +91,8 @@ class ProductPortalListSerializer(StorageNormalizeMixin, serializers.ModelSerial
             "imagen_url",
             "estado",
             "precio_venta",
+            "banda_id",
+            "banda_rango",
         )
         read_only_fields = fields  # API read-only 100%
 
@@ -117,6 +121,33 @@ class ProductPortalListSerializer(StorageNormalizeMixin, serializers.ModelSerial
     def get_marca_label(self, obj) -> str | None:
         """Atributo inyectado por el ViewSet (LEFT JOIN en SQL)."""
         return getattr(obj, "_marca_label", None)
+
+    def get_banda_id(self, obj) -> int | None:
+        """Banda con la que se resolvió `precio_venta` (2026-11-20).
+
+        Puede ser la banda pactada del cliente, no la del TC: la card del
+        portal rotula con este id para no mostrar una banda distinta a la
+        que corresponde al precio.
+        """
+        bid = getattr(obj, "_resolved_banda_id", None)
+        try:
+            return int(bid) if bid is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def get_banda_rango(self, obj) -> str | None:
+        """Rango legible ("5,40 – 5,60") de la banda aplicada."""
+        bid = self.get_banda_id(obj)
+        if bid is None:
+            return None
+        try:
+            from apps.commercial.engine import BANDAS_MARLUVAS
+            for b in BANDAS_MARLUVAS:
+                if int(b.get("id")) == bid:
+                    return b.get("rango")
+        except Exception:  # noqa: BLE001 — sin catálogo de bandas: sin label
+            pass
+        return None
 
 
 class ProductPortalDetailSerializer(ProductPortalListSerializer):
