@@ -56,6 +56,14 @@ def _run(server: FastMCP) -> None:
         server.settings.transport_security = TransportSecuritySettings(
             enable_dns_rebinding_protection=False,
         )
+        # Sesiones en memoria → "Session not found" tras cada reinicio.
+        # El transporte streamable-http guarda la sesión en el proceso: al
+        # recrear el contenedor (deploy, restart, OOM) todas mueren, y los
+        # clientes que siguen mandando el `Mcp-Session-Id` viejo reciben
+        # 404 hasta que reconectan. Con stateless no hay sesión que perder:
+        # cada POST se atiende solo. Este server es solo de tools (no usa
+        # notificaciones servidor→cliente), así que no se pierde nada.
+        server.settings.stateless_http = True
         app = server.streamable_http_app()
         wrapped = IdentityPropagationMiddleware(app)
         print(
