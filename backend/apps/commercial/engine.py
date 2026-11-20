@@ -459,16 +459,57 @@ def snapshot_todos(brand_id, skus: list[str] | None = None) -> dict[str, dict]:
 # =====================================================================
 # Materialización por cliente (marluvas_client_sku_pricing)
 # =====================================================================
+def matrices_activas(brand_id, cliente_ids: list[str],
+                     skus: list[str]) -> dict[tuple[str, str], dict]:
+    """{(cliente_id, sku): {matrix, com_pct, ajuste_usd, sobreprecio_pct}}.
+
+    Son las matrices congeladas (contrato). La gobernanza y los refrescos
+    deben leer el precio de aquí, no recalcularlo, para no pisar ajustes
+    manuales pactados con el cliente.
+    """
+    out: dict[tuple[str, str], dict] = {}
+    cids = [str(c) for c in (cliente_ids or []) if c]
+    sku_list = [str(s) for s in (skus or []) if s]
+    if not cids or not sku_list:
+        return out
+    try:
+        with connection.cursor() as cur:
+            cur.execute("""
+                SELECT cliente_id::text, sku, prices_matrix, com_pct,
+                       ajuste_usd, sobreprecio_pct
+                  FROM pricing.marluvas_client_sku_pricing
+                 WHERE brand_id = %s AND is_active = TRUE
+                   AND cliente_id::text = ANY(%s)
+                   AND sku = ANY(%s)
+            """, [str(brand_id), cids, sku_list])
+            for cid, sku, matrix, com, ajuste, sobre in cur.fetchall():
+                out[(str(cid), str(sku))] = {
+                    "matrix": matrix or {},
+                    "com_pct": float(com or 0),
+                    "ajuste_usd": float(ajuste or 0),
+                    "sobreprecio_pct": float(sobre or 0),
+                }
+    except Exception as exc:  # noqa: BLE001
+        log.warning("engine.matrices_activas failed: %s", exc)
+    return out
+
+
 def materializar_clientes(brand_id, rows: list[dict], clientes: list[dict], *,
                           anchor: dict | None = None, fecha_inicio=None,
                           fecha_fin=None, user_id=None,
-                          notas: str | None = None) -> dict:
+                          notas: str | None = None,
+                          preservar_matriz: bool = True) -> dict:
     """Upsert (merge) de la matriz por cliente para los SKUs del Excel.
 
     El ancla de cada cliente es:
       · `anchor` explícita (import / override), o
       · su política de banda configurada (`banda_vigente` + `plazo_dias`),
       · o la banda del TC si el cliente no tiene política.
+
+    `preservar_matriz=True` (default): si el cliente+SKU ya tiene una fila
+    activa, se conserva su matriz congelada (precio pactado / editado a
+    mano) y solo se actualiza el ancla. Sin esto, cualquier recálculo pisaba
+    los precios acordados con el cliente.
     """
     from .views import MarluvasSaveSimulationView, _bulk_upsert_bcpa
 
@@ -476,6 +517,10 @@ def materializar_clientes(brand_id, rows: list[dict], clientes: list[dict], *,
     politicas = politicas_de_clientes(brand_id, clientes, tc=tc)
     forced_banda = (anchor or {}).get("banda") or None
     forced_plazo = (anchor or {}).get("plazo_dias")
+    existentes = matrices_activas(
+        brand_id, [str(c["cliente_id"]) for c in clientes],
+        [str(r.get("sku") or "") for r in rows],
+    ) if preservar_matriz else {}
     resultados = []
     total_skus = 0
     total_cells = 0
@@ -491,13 +536,21 @@ def materializar_clientes(brand_id, rows: list[dict], clientes: list[dict], *,
             brl = row.get("brl")
             if not sku or not brl:
                 continue
-            matrix = compute_matrix(brl, com)
+            prev = existentes.get((str(cid), sku))
+            if prev and prev.get("matrix"):
+                matrix = prev["matrix"]
+                com_use = prev.get("com_pct", com)
+                ajuste_use = prev.get("ajuste_usd", 0)
+                sobre_use = prev.get("sobreprecio_pct", 0)
+            else:
+                matrix = compute_matrix(brl, com)
+                com_use, ajuste_use, sobre_use = com, 0, 0
             skus_payload.append({
                 "sku": sku,
                 "brl_override": float(brl),
-                "com_pct": com,
-                "ajuste_usd": 0,
-                "sobreprecio_pct": 0,
+                "com_pct": com_use,
+                "ajuste_usd": ajuste_use,
+                "sobreprecio_pct": sobre_use,
                 "prices_matrix": matrix,
                 "anchor": {"bandaId": int(banda_id),
                            "plazoDias": int(plazo)},
@@ -545,22 +598,29 @@ def materializar_clientes(brand_id, rows: list[dict], clientes: list[dict], *,
 # =====================================================================
 def _precios_por_cliente(rows: list[dict], clientes: list[dict], *,
                          politicas: dict[str, dict],
+                         matrices: dict[tuple[str, str], dict] | None = None,
                          banda_id: int | None = None,
                          plazo: int | None = None) -> dict[str, float]:
     """{cliente_id: precio} del SKU, en la banda/plazo de cada cliente.
 
-    Si se pasa `banda_id`/`plazo` explícitos, se fuerzan para todos
-    (import/override). Si no, se usa la política del cliente.
+    Si el cliente ya tiene una matriz congelada para el SKU, el precio sale
+    de esa matriz (contrato). Si no, se calcula con el motor.
     """
     out: dict[str, float] = {}
+    sku = str(rows[0].get("sku") or "")
     for cli in clientes:
         cid = str(cli["cliente_id"])
         pol = politicas.get(cid) or {}
         banda_ef = int(banda_id or (pol.get("banda") or {}).get("id")
                        or BANDA_DEFAULT_ID)
         plazo_ef = int(plazo or pol.get("plazo_dias") or PLAZO_DEFAULT)
-        matrix = compute_matrix(rows[0]["brl"], cli["com_pct"])
+        prev = (matrices or {}).get((cid, sku)) or {}
+        matrix = prev.get("matrix") or compute_matrix(rows[0]["brl"],
+                                                      cli["com_pct"])
         price = precio_en(matrix, banda_ef, plazo_ef)
+        if price is None:
+            price = precio_en(compute_matrix(rows[0]["brl"], cli["com_pct"]),
+                              banda_ef, plazo_ef)
         if price is not None:
             out[cid] = price
     return out
@@ -608,8 +668,10 @@ def aplicar_gobernanza_producto(producto, *, anchor: dict | None = None,
     politicas = politicas_de_clientes(brand_id, clientes, tc=tc)
 
     row = {"sku": sku, "brl": snap["brl"]}
+    matrices_prev = matrices_activas(
+        brand_id, [str(c["cliente_id"]) for c in clientes], [sku])
     precios = _precios_por_cliente(
-        [row], clientes, politicas=politicas,
+        [row], clientes, politicas=politicas, matrices=matrices_prev,
         banda_id=(forced_banda or {}).get("id"),
         plazo=forced_plazo)
 
@@ -620,8 +682,9 @@ def aplicar_gobernanza_producto(producto, *, anchor: dict | None = None,
                     or BANDA_DEFAULT_ID)
     plazo_mwt = int(forced_plazo or mwt_pol.get("plazo_dias")
                     or PLAZO_DEFAULT)
-    base_com0 = precio_en(compute_matrix(snap["brl"], 0), banda_mwt,
-                          plazo_mwt)
+    mwt_matrix = ((matrices_prev.get((MWT_OPERATING_CLIENT_ID, sku)) or {})
+                  .get("matrix")) or compute_matrix(snap["brl"], 0)
+    base_com0 = precio_en(mwt_matrix, banda_mwt, plazo_mwt)
     mwt_price = precios.get(MWT_OPERATING_CLIENT_ID) or base_com0
 
     espec = dict(getattr(producto, "especificaciones", None) or {})
@@ -856,12 +919,19 @@ def refrescar_cliente(brand_id, cliente_id, *, user_id=None) -> dict:
     from apps.productos.models import Producto
     productos = (Producto.objects.filter(marca_id=brand_id, is_active=True)
                  .exclude(sku__isnull=True).exclude(sku=""))
+    skus_prod = [str(p.sku) for p in productos if str(p.sku) in snaps]
+    previas = matrices_activas(brand_id, [cliente_id], skus_prod)
     actualizados = 0
     for producto in productos:
         snap = snaps.get(str(producto.sku))
         if not snap:
             continue
-        price = precio_en(compute_matrix(snap["brl"], com), banda_ef, plazo_ef)
+        prev = previas.get((cliente_id, str(producto.sku))) or {}
+        matrix = prev.get("matrix") or compute_matrix(snap["brl"], com)
+        price = precio_en(matrix, banda_ef, plazo_ef)
+        if price is None:
+            price = precio_en(compute_matrix(snap["brl"], com),
+                              banda_ef, plazo_ef)
         if price is None:
             continue
         espec = dict(getattr(producto, "especificaciones", None) or {})
