@@ -646,7 +646,7 @@ def importar(brand_id, rows: list[dict], *, file_name: str | None = None,
         "brand_id": str(brand_id),
         "file_name": file_name,
         "anchor": {
-            "banda_id": (anchor.get("banda") or {}).get("id"),
+            "banda": (anchor.get("banda") or {}).get("id"),
             "rango": (anchor.get("banda") or {}).get("rango"),
             "plazo_dias": anchor.get("plazo_dias"),
             "tc_usd_brl": anchor.get("tc_usd_brl"),

@@ -3317,7 +3317,7 @@ class MarluvasEngineSnapshotView(APIView):
             "source_file": source_file,
             "updated_at": updated_at.isoformat() if updated_at else None,
             "anchor": {
-                "banda_id": (anchor.get("banda") or {}).get("id"),
+                "banda": (anchor.get("banda") or {}).get("id"),
                 "rango": (anchor.get("banda") or {}).get("rango"),
                 "plazo_dias": anchor.get("plazo_dias"),
                 "tc_usd_brl": anchor.get("tc_usd_brl"),
