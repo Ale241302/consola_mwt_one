@@ -1304,6 +1304,56 @@ def cliente_kpis_pool(cliente_id: str) -> Any:
 # =========================================================================== #
 # B) PRODUCTOS
 # =========================================================================== #
+def _catalogo_cliente() -> Any:
+    """Catálogo del cliente B2B: `portal/products/`.
+
+    Es el ÚNICO endpoint que aplica la gobernanza producto↔cliente
+    (`productos.producto.especificaciones.visibility`). `/api/productos/`
+    responde 200 también a un token de cliente, pero devuelve el MAESTRO
+    completo: usarlo con un client_b2b entrega SKUs que la empresa no tiene
+    habilitados (UMMIE: 61 en vez de sus 12).
+
+    Se envía `tc` como el frontend del portal para que el backend resuelva la
+    banda Marluvas vigente; sin él el precio cae a la banda por defecto.
+    """
+    params: dict = {"limit": 500}
+    try:
+        from .marluvas_pricing import _tc_usd_brl
+        tc = _tc_usd_brl()
+        if tc is not None:
+            params["tc"] = tc
+    except Exception:  # noqa: BLE001 — sin TC: el backend usa su banda default
+        pass
+    return api.get("portal/products/", params)
+
+
+def _filtrar_catalogo_cliente(
+    rows: list, *, q: str | None, marca: str | None,
+    categoria: str | None, estado: str | None,
+    limit: int | None, offset: int | None,
+) -> list:
+    """Filtros locales sobre el catálogo del cliente (ya viene acotado)."""
+    if q:
+        qq = q.strip().lower()
+        rows = [
+            r for r in rows
+            if qq in str(r.get("sku") or "").lower()
+            or qq in str(r.get("nombre") or "").lower()
+            or qq in str(r.get("descripcion") or "").lower()
+        ]
+    if marca:
+        rows = [r for r in rows if str(r.get("marca_id") or "") == str(marca)]
+    if categoria:
+        cc = categoria.strip().lower()
+        rows = [r for r in rows if str(r.get("categoria") or "").lower() == cc]
+    if estado:
+        ee = estado.strip().lower()
+        rows = [r for r in rows if str(r.get("estado") or "").lower() == ee]
+    off = max(int(offset or 0), 0)
+    lim = min(int(limit) if limit else 200, 2000)
+    return rows[off:off + lim]
+
+
 @mcp.tool()
 def producto_listar(
     q: str | None = None,
@@ -1317,7 +1367,21 @@ def producto_listar(
     """Lista productos (SKU, nombre, precios). Filtros: q (busca en nombre+sku+desc),
     marca (UUID), categoria, estado, proveedor (UUID), limit, offset.
     Las tallas se devuelven resueltas a su nombre (33, 35, ...) con equivalencias,
-    y `client_prices` se filtra por rol (CEO/Admin: todos; client_b2b: solo sus empresas)."""
+    y `client_prices` se filtra por rol (CEO/Admin: todos; client_b2b: solo sus empresas).
+
+    Un client_b2b recibe SOLO los SKUs habilitados para su empresa
+    (`portal/products/`); el staff recibe el catálogo maestro (`productos/`).
+    `proveedor` no aplica al catálogo del cliente (el portal no lo expone)."""
+    if is_client(_current_role()):
+        def _cliente() -> Any:
+            data = _catalogo_cliente()
+            rows = data if isinstance(data, list) else (data or {}).get("results") or []
+            return _filtrar_catalogo_cliente(
+                rows, q=q, marca=marca, categoria=categoria,
+                estado=estado, limit=limit, offset=offset,
+            )
+        return _safe_role_producto(_cliente)
+
     return _safe_role_producto(
         lambda: api.get(
             "productos/",
@@ -1332,7 +1396,14 @@ def producto_obtener(producto_id: str, campos: str | None = None) -> Any:
     """Detalle completo de un producto, incluyendo `especificaciones`
     (tallas resueltas a nombre+equivalencias, client_prices filtrado por rol, ncm)
     y precios (precio_lista, precio_distribuidor, costo_estandar).
-    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17)."""
+    `campos`: lista separada por comas para proyectar solo esos atributos (Ola 2 · 2.17).
+    Un client_b2b solo puede abrir productos habilitados para su empresa: el
+    detalle sale de `portal/products/{id}/` (404 si no está en su catálogo)."""
+    if is_client(_current_role()):
+        return _project(
+            campos,
+            _safe_role_producto(lambda: api.get(f"portal/products/{producto_id}/")),
+        )
     return _project(campos, _safe_role_producto(lambda: api.get(f"productos/{producto_id}/")))
 
 
