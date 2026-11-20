@@ -868,6 +868,14 @@ def refrescar_cliente(brand_id, cliente_id, *, user_id=None) -> dict:
         cp = dict(espec.get("client_prices") or {})
         cp[cliente_id] = round(price, 2)
         espec["client_prices"] = cp
+        # Trazabilidad: la banda de ESTE cliente dentro de precio_motor.
+        pm = dict(espec.get("precio_motor") or {})
+        bandas = dict(pm.get("bandas_clientes") or {})
+        bandas[cliente_id] = banda_ef
+        pm["bandas_clientes"] = bandas
+        pm.setdefault("sku", producto.sku)
+        pm["applied_at"] = timezone.now().isoformat()
+        espec["precio_motor"] = pm
         producto.especificaciones = espec
         producto.save(update_fields=["especificaciones", "updated_at"])
         actualizados += 1
