@@ -23,7 +23,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 
 import { apiFetch, getToken, storageUrl } from "../../lib/api.js";
-import { fmtMoney } from "../../lib/i18n.js";
+import { fmtMoney, fmtMoneyDetail } from "../../lib/i18n.js";
 import { bandaForTC } from "../../constants/marluvas.js";
 import { useExchangeRateUSDBRL } from "../../hooks/useExchangeRateUSDBRL.js";
 
@@ -413,7 +413,10 @@ function ProductCard({
           <div className="catalog-card-price tabular-nums">
             {precioUsdBase > 0 ? (
               <>
-                <span>{fmtMoney(precioUsdBase, "USD")}</span>
+                {/* El precio del motor lleva 4 decimales (ej. 20,0499):
+                    se muestra con 2 para que el cliente vea la cifra que
+                    realmente se le cobra, no un entero redondeado. */}
+                <span>{fmtMoneyDetail(precioUsdBase, "USD")}</span>
                 {tieneBanda && (
                   <span style={{
                     display: "block", fontSize: 10, fontWeight: 500,
