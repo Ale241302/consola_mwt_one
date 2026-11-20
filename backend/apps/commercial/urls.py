@@ -52,6 +52,8 @@ from .views import (
     MarluvasProductClientsMatrixView, MarluvasUpsertSkuView,
     # Motor de precios · import del Excel (snapshot marca+SKU) + gobernanza
     MarluvasEngineImportView, MarluvasEngineSnapshotView,
+    # Motor de precios · re-anclar todo a la banda vigente (registra historial)
+    MarluvasEngineRefreshVigenteView,
 )
 # F6 · Sprint 2026-05-20 · Bitácora histórica de cambios de precios.
 from .views_price_history import (
@@ -154,6 +156,10 @@ urlpatterns = [
     path("commercial/marluvas/engine-snapshot/",
          MarluvasEngineSnapshotView.as_view(),
          name="commercial-marluvas-engine-snapshot"),
+    # Motor de precios · re-anclar todos los SKU/productos a la banda vigente
+    path("commercial/marluvas/engine-refresh-vigente/",
+         MarluvasEngineRefreshVigenteView.as_view(),
+         name="commercial-marluvas-engine-refresh-vigente"),
     # F6 · Bitácora histórica (CEO-ONLY)
     path("commercial/marluvas/price-history/",
          PriceHistoryListView.as_view(),

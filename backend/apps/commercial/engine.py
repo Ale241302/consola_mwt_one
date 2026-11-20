@@ -284,29 +284,42 @@ def upsert_snapshot(brand_id, rows: list[dict], *, file_name: str | None = None,
 
 def snapshot_para_sku(brand_id, sku: str) -> dict | None:
     """Precio base BRL del último Excel para un SKU."""
+    return snapshot_todos(brand_id, skus=[sku]).get(str(sku))
+
+
+def snapshot_todos(brand_id, skus: list[str] | None = None) -> dict[str, dict]:
+    """Precio base BRL del último Excel para todos los SKU de una marca.
+
+    Devuelve {sku: {brl, ref, source_file, anchor_banda, anchor_plazo,
+    updated_at}}. Una sola query: lo usan la gobernanza y el refresh de
+    banda vigente.
+    """
+    sql = """
+        SELECT sku, brl, ref, source_file, anchor_banda, anchor_plazo,
+               updated_at
+          FROM pricing.marluvas_engine_sku
+         WHERE brand_id = %s AND is_active = TRUE
+    """
+    params: list[Any] = [str(brand_id)]
+    if skus:
+        sql += " AND sku = ANY(%s)"
+        params.append([str(s) for s in skus])
+    out: dict[str, dict] = {}
     try:
         with connection.cursor() as cur:
-            cur.execute("""
-                SELECT brl, ref, source_file, anchor_banda, anchor_plazo,
-                       updated_at
-                  FROM pricing.marluvas_engine_sku
-                 WHERE brand_id = %s AND sku = %s AND is_active = TRUE
-                 LIMIT 1
-            """, [str(brand_id), str(sku)])
-            row = cur.fetchone()
+            cur.execute(sql, params)
+            for row in cur.fetchall():
+                out[str(row[0])] = {
+                    "brl": float(row[1]),
+                    "ref": row[2],
+                    "source_file": row[3],
+                    "anchor_banda": row[4],
+                    "anchor_plazo": row[5],
+                    "updated_at": row[6].isoformat() if row[6] else None,
+                }
     except Exception as exc:  # noqa: BLE001
-        log.warning("engine.snapshot_para_sku failed: %s", exc)
-        return None
-    if not row:
-        return None
-    return {
-        "brl": float(row[0]),
-        "ref": row[1],
-        "source_file": row[2],
-        "anchor_banda": row[3],
-        "anchor_plazo": row[4],
-        "updated_at": row[5].isoformat() if row[5] else None,
-    }
+        log.warning("engine.snapshot_todos failed: %s", exc)
+    return out
 
 
 # =====================================================================
@@ -429,8 +442,7 @@ def aplicar_gobernanza_producto(producto, *, anchor: dict | None = None,
             "sku": sku,
         }
 
-    anchor = anchor or anchor_actual(snap.get("anchor_banda"),
-                                     snap.get("anchor_plazo"))
+    anchor = anchor or anchor_actual()
     banda_id = int((anchor.get("banda") or {}).get("id") or BANDA_DEFAULT_ID)
     plazo = int(anchor.get("plazo_dias") or PLAZO_DEFAULT)
     clientes = clientes if clientes is not None else clientes_activos()
@@ -501,6 +513,120 @@ def aplicar_gobernanza_por_sku(brand_id, sku: str, **kwargs) -> dict:
     except Producto.DoesNotExist:
         return {"applied": False, "reason": "producto no existe", "sku": sku}
     return aplicar_gobernanza_producto(producto, **kwargs)
+
+
+# =====================================================================
+# Re-anclar a la BANDA VIGENTE (todo un cliente/SKU de la marca)
+# =====================================================================
+def refrescar_vigente(brand_id, *, banda_id: int | None = None,
+                      plazo_dias: int | None = None, user_id=None) -> dict:
+    """Recalcula TODOS los SKU/productos de la marca en la banda vigente.
+
+    Es la operación "actualizar la banda vigente de cada cliente de cada SKU":
+
+      1. Toma el TC USD/BRL actual → banda vigente (o `banda_id` explícita).
+      2. Reescribe la matriz de cada cliente con esa banda como ancla
+         (`pricing.marluvas_client_sku_pricing`), dejando UN evento de
+         historial por cliente con todos los SKUs (`marluvas_price_history`).
+      3. Actualiza cada producto: `especificaciones.client_prices`,
+         `precio_lista`, `precio_mwt` y la trazabilidad `precio_motor`.
+
+    Idempotente: si el TC no cambió, los precios quedan igual (y el evento
+    de historial se registra igual).
+    """
+    anchor = anchor_actual(banda_id, plazo_dias)
+    banda = anchor.get("banda") or {}
+    banda_id_eff = int(banda.get("id") or BANDA_DEFAULT_ID)
+    plazo = int(anchor.get("plazo_dias") or PLAZO_DEFAULT)
+
+    snaps = snapshot_todos(brand_id)
+    if not snaps:
+        return {
+            "ok": False,
+            "detail": "La marca no tiene Excel del motor cargado.",
+            "hint": "Sube la tabla en Marcas → [marca] → Motor de Precios.",
+            "banda": banda_id_eff,
+            "plazo_dias": plazo,
+        }
+
+    from apps.productos.models import Producto
+    productos = list(
+        Producto.objects.filter(marca_id=brand_id, is_active=True)
+        .exclude(sku__isnull=True).exclude(sku="")
+    )
+    con_precio = [p for p in productos if str(p.sku) in snaps]
+    sin_excel = [p.sku for p in productos if str(p.sku) not in snaps]
+
+    clientes = clientes_activos()
+
+    # 1) Matrices: un solo pase por cliente con todos los SKUs con precio.
+    rows = [{"sku": str(p.sku), "brl": snaps[str(p.sku)]["brl"]}
+            for p in con_precio]
+    matrices = {"clientes": 0, "clientes_ok": 0, "skus_guardados": 0,
+                "cells": 0, "results": []}
+    if rows:
+        matrices = materializar_clientes(
+            brand_id, rows, clientes, anchor=anchor,
+            user_id=user_id,
+            notas=f"[banda vigente {banda_id_eff} · {plazo}d · "
+                   f"{len(rows)} SKUs]",
+        )
+
+    # 2) Productos: client_prices + precio_lista/mwt (sin reescribir matrices).
+    applied = 0
+    errores = 0
+    muestra = []
+    for producto in con_precio:
+        try:
+            res = aplicar_gobernanza_producto(
+                producto, anchor=anchor, clientes=clientes,
+                persistir_matrices=False, user_id=user_id)
+            if res.get("applied"):
+                applied += 1
+            if len(muestra) < 5:
+                muestra.append({
+                    "sku": producto.sku,
+                    "lista": res.get("precio_lista"),
+                    "mwt": res.get("precio_mwt"),
+                    "clientes": res.get("clientes_con_precio"),
+                })
+        except Exception as exc:  # noqa: BLE001
+            errores += 1
+            log.warning("engine.refrescar producto=%s: %s", producto.sku, exc)
+
+    # 3) Bitácora del refresh.
+    try:
+        with connection.cursor() as cur:
+            cur.execute("""
+                INSERT INTO pricing.marluvas_engine_import
+                    (brand_id, file_name, skus, clientes, banda_id,
+                     plazo_dias, tc_usd_brl, source, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, [str(brand_id), "refresh banda vigente", len(rows),
+                  matrices.get("clientes_ok") or 0, banda_id_eff, plazo,
+                  anchor.get("tc_usd_brl"), "REFRESH",
+                  str(user_id) if user_id else None])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("engine.refrescar bitácora falló: %s", exc)
+
+    return {
+        "ok": True,
+        "banda": banda_id_eff,
+        "rango": banda.get("rango"),
+        "plazo_dias": plazo,
+        "tc_usd_brl": anchor.get("tc_usd_brl"),
+        "productos_marca": len(productos),
+        "productos_actualizados": applied,
+        "productos_sin_excel": len(sin_excel),
+        "errores": errores,
+        "matrices": {
+            "clientes": matrices.get("clientes"),
+            "clientes_ok": matrices.get("clientes_ok"),
+            "skus": matrices.get("skus_guardados"),
+            "cells": matrices.get("cells"),
+        },
+        "muestra": muestra,
+    }
 
 
 # =====================================================================

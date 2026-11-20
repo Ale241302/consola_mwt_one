@@ -3323,3 +3323,58 @@ class MarluvasEngineSnapshotView(APIView):
                 "tc_usd_brl": anchor.get("tc_usd_brl"),
             },
         }, status=200)
+
+
+class MarluvasEngineRefreshVigenteView(APIView):
+    """POST · re-ancla TODOS los SKU/productos de una marca a la banda vigente.
+
+    body: { brand_id, banda_id?, plazo_dias? }
+
+    Para cada cliente activo reescribe la matriz con la banda del TC actual
+    (dejando el evento de historial del motor) y para cada producto
+    recalcula `client_prices`, `precio_lista` y `precio_mwt`.
+
+    Es la operación "actualizar la banda vigente de cada cliente de cada SKU".
+    Idempotente: correrla dos veces con el mismo TC deja los mismos precios.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from . import engine
+
+        if not _is_admin(request.user):
+            return Response(
+                {"detail": "Solo CEO/Admin puede actualizar la banda vigente."},
+                status=403,
+            )
+
+        data = request.data or {}
+        try:
+            brand_id = MarluvasSaveSimulationView._parse_uuid(
+                data.get("brand_id"), "brand_id")
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+
+        user_id = None
+        raw_id = getattr(request.user, "id", None) or getattr(
+            request.user, "pk", None)
+        if raw_id:
+            try:
+                user_id = uuid.UUID(str(raw_id))
+            except (ValueError, TypeError):
+                user_id = None
+
+        try:
+            res = engine.refrescar_vigente(
+                brand_id,
+                banda_id=data.get("banda_id"),
+                plazo_dias=data.get("plazo_dias"),
+                user_id=user_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("engine-refresh-vigente failed: %s", exc)
+            return Response(
+                {"detail": f"No se pudo actualizar: {exc}"}, status=500)
+
+        return Response(res, status=200 if res.get("ok") else 400)

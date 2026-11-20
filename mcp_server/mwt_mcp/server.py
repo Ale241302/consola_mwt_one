@@ -1515,6 +1515,38 @@ def motor_precios_importar(
 
 @mcp.tool()
 @write_tool
+def motor_precios_actualizar_vigente(
+    brand_id: str,
+    plazo_dias: int = 90,
+    banda_id: int | None = None,
+) -> Any:
+    """Re-ancla TODOS los SKU/productos de la marca a la BANDA VIGENTE (CEO).
+
+    Elige la banda con el TC USD/BRL actual (ej. TC 5,892 → banda 10 · 5,80-6,00),
+    salvo que pases `banda_id` (1..12) para forzarla.
+
+    Qué hace:
+      · Reescribe la matriz 12 bandas × plazos de CADA cliente activo con esa
+        banda como ancla, dejando el evento en el historial del motor
+        (`marluvas_price_history`).
+      · Para cada producto actualiza `especificaciones.client_prices`,
+        `precio_lista` y `precio_mwt` con la banda vigente × `plazo_dias`
+        (default 90) y la comisión de cada cliente.
+
+    Devuelve `{ok, banda, rango, plazo_dias, tc_usd_brl,
+    productos_actualizados, productos_sin_excel, matrices, muestra}`.
+    Idempotente: correrla dos veces con el mismo TC deja los mismos precios."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(
+        "commercial/marluvas/engine-refresh-vigente/",
+        {"brand_id": brand_id, "plazo_dias": plazo_dias,
+         "banda_id": banda_id}))
+
+
+@mcp.tool()
+@write_tool
 def producto_motor_precios_aplicar(producto_id: str) -> Any:
     """Aplica (o re-aplica) la gobernanza de precios del motor a UN producto.
 
