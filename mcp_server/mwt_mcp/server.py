@@ -1408,7 +1408,7 @@ def producto_obtener(producto_id: str, campos: str | None = None) -> Any:
 
 
 @mcp.tool()
-def producto_buscar(q: str, limit: int | None = None) -> Any:
+def producto_buscar(q: str, limit: int | None = None, offset: int | None = None) -> Any:
     """Busca productos por SKU, nombre, alias o característica (parcial,
     insensible a mayúsculas). Ejemplos: "60b29", "700728", "bota alta",
     "suela caucho", "composite", "60B29-CPAP-SRV".
@@ -1417,18 +1417,27 @@ def producto_buscar(q: str, limit: int | None = None) -> Any:
     (por código, nombre, marca o atributo técnico). Busca en el catálogo del
     rol (B2B o completo), indexando también las especificaciones
     (tipo_calzado, suela, color, riesgo, segmento, cierre, puntera...).
-    Devuelve `{productos:[{id, sku, nombre, marca, precio_venta, categoria}]}`
-    (para admin/CEO incluye especificaciones). `limit`: máx de resultados
-    (default 10)."""
+
+    Paginación (2026-11-20): el catálogo puede tener miles de SKU, así que la
+    respuesta NO se trunca en silencio. Devuelve
+    `{productos, total, limit, offset, has_more}`: `total` es cuántos
+    coinciden de verdad y `has_more` dice si hay más allá de esta página.
+    Para recorrer todo, repetir con `offset += limit`.
+      · `limit`: tamaño de página (default 25, máx 500).
+      · `offset`: desde qué coincidencia empezar (default 0)."""
     role = _current_role()
-    lim = max(1, min(int(limit) if limit else 10, 50))
+    lim = max(1, min(int(limit) if limit else 25, 500))
+    off = max(int(offset or 0), 0)
     qq = (q or "").strip()
     if not qq:
         return {"error": True, "detail": "Falta el término de búsqueda (q)."}
 
     if is_client(role):
         # Búsqueda amplia en el catálogo B2B (SKU/nombre/características).
-        hits = search_productos(qq, limit=lim, with_specs=True, allow_aliases=False)
+        hits, total = search_productos(
+            qq, limit=lim, with_specs=True, allow_aliases=False,
+            offset=off, with_total=True,
+        )
         out = []
         for r in hits:
             out.append({
@@ -1439,18 +1448,26 @@ def producto_buscar(q: str, limit: int | None = None) -> Any:
                 "precio_venta": r.get("precio_venta"),
                 "categoria": r.get("categoria"),
             })
-        return {"productos": out, "total": len(out)}
+        return {"productos": out, "total": total, "limit": lim, "offset": off,
+                "has_more": (off + len(out)) < total}
 
     # Admin/CEO/staff: búsqueda amplia sobre el catálogo completo (con specs + aliases).
-    hits = search_productos(qq, limit=lim, with_specs=False, allow_aliases=True)
+    hits, total = search_productos(
+        qq, limit=lim, with_specs=False, allow_aliases=True,
+        offset=off, with_total=True,
+    )
     if hits:
-        return {"productos": hits, "total": len(hits)}
-    data = _safe_role_producto(lambda: api.get("productos/", {"q": qq, "limit": lim}))
+        return {"productos": hits, "total": total, "limit": lim, "offset": off,
+                "has_more": (off + len(hits)) < total}
+    data = _safe_role_producto(
+        lambda: api.get("productos/", {"q": qq, "limit": lim, "offset": off})
+    )
     if isinstance(data, dict) and data.get("error"):
         return data
     rows = data.get("results") if isinstance(data, dict) else data
     rows = rows if isinstance(rows, list) else []
-    return {"productos": rows, "total": len(rows)}
+    return {"productos": rows, "total": len(rows), "limit": lim, "offset": off,
+            "has_more": len(rows) >= lim}
 
 
 @mcp.tool()

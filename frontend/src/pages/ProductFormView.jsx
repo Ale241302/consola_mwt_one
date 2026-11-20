@@ -419,6 +419,10 @@ export default function ScreenProductFormView() {
           // columnas dinámicas en PriceMatrixCompact.
           custom_plazos:    c.custom_plazos && typeof c.custom_plazos === "object"
             ? c.custom_plazos : {},
+          // Banda pactada del cliente (política). Sin esto la matriz se
+          // resalta con la banda del TC y el cliente ve el precio de otra.
+          banda_vigente:    c.banda_vigente != null ? Number(c.banda_vigente) : null,
+          banda_plazo_dias: c.banda_plazo_dias != null ? Number(c.banda_plazo_dias) : null,
           fecha_inicio:     c.fecha_inicio,
           fecha_fin:        c.fecha_fin,
           updated_at:       c.updated_at,

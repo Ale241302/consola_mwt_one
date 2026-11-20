@@ -539,7 +539,8 @@ def _build_search_index(rows: list) -> None:
 
 
 def search_productos(query: str, limit: int = 10, with_specs: bool = False,
-                     allow_aliases: bool = False) -> list[dict]:
+                     allow_aliases: bool = False, offset: int = 0,
+                     with_total: bool = False):
     """Busca productos por SKU/nombre/alias/característica.
 
     Empareja por SUBSTRING (insensible): todos los tokens de la query deben
@@ -548,7 +549,13 @@ def search_productos(query: str, limit: int = 10, with_specs: bool = False,
     "bota alta" matchea tipo_calzado="Bota Alta", y "suela caucho" matchea
     suela="Caucho". `with_specs=True` recarga especificaciones de candidatos
     (portal/products/{id}/). `allow_aliases=True` indexa aliases (staff-only).
-    Fail-safe: lista vacía.
+
+    Paginación: `offset` salta las primeras coincidencias; con
+    `with_total=True` devuelve la tupla `(pagina, total_coincidencias)` para
+    que el llamador pueda informar cuántos hay en realidad (un catálogo de
+    miles de SKU no debe reportar "50" como si fuera el total).
+
+    Fail-safe: lista vacía (o `([], 0)` si `with_total`).
     """
     try:
         _ensure_products_loaded()
@@ -556,7 +563,7 @@ def search_productos(query: str, limit: int = 10, with_specs: bool = False,
         rows = list(_product_cache.values())
         tokens = _norm_tokens(query)
         if not tokens:
-            return []
+            return ([], 0) if with_total else []
         # Scan lineal por substring sobre el texto normalizado de cada producto.
         def _matches(row: dict) -> bool:
             haystack = _norm_tokens(_product_search_text(row))
@@ -573,12 +580,14 @@ def search_productos(query: str, limit: int = 10, with_specs: bool = False,
             2 if qq in str(r.get("nombre") or "").lower() else 3,
             str(r.get("sku") or ""),
         ))
-        out = hits[:limit]
+        total = len(hits)
+        start = max(int(offset or 0), 0)
+        out = hits[start:start + limit]
         if with_specs:
             out = [_with_specs(r) for r in out]
-        return out
+        return (out, total) if with_total else out
     except Exception:  # noqa: BLE001
-        return []
+        return ([], 0) if with_total else []
 
 
 def _with_specs(row: dict) -> dict:
