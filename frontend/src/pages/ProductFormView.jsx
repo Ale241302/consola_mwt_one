@@ -361,6 +361,7 @@ export default function ScreenProductFormView() {
   // Renderizamos una matriz 12×4 editable por cada cliente debajo de
   // la sección "Override por cliente".
   const [clientMatrices, setClientMatrices] = useState([]);
+  const [matrixReloadKey, setMatrixReloadKey] = useState(0);
   const [matricesLoading, setMatricesLoading] = useState(false);
   const [savingClient, setSavingClient] = useState(null);   // cliente_id en vuelo
   const [matrixBanner, setMatrixBanner] = useState(null);   // {type, msg, cliente_id}
@@ -417,7 +418,7 @@ export default function ScreenProductFormView() {
       .catch(() => { if (!cancelled) setClientMatrices([]); })
       .finally(() => { if (!cancelled) setMatricesLoading(false); });
     return () => { cancelled = true; };
-  }, [isEdit, existing?.sku, brandId]);
+  }, [isEdit, existing?.sku, brandId, matrixReloadKey]);
 
   // Editor de celda con dos semánticas:
   //   · Edit 90d (cualquier banda) → derrame global: recalcula sobreprecio%
@@ -1332,6 +1333,52 @@ export default function ScreenProductFormView() {
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
+
+  // ── Motor de precios · aplicar gobernanza a ESTE producto ──────────
+  // POST /productos/<id>/gobernanza-motor/ → recalcula desde el último
+  // Excel del motor (banda vigente × 90d) y deja client_prices/list/mwt.
+  // Es el mismo cálculo que el backend aplica solo al crear el producto,
+  // pero disparable a mano desde la pestaña Gobernanza.
+  const [motorStatus, setMotorStatus] = useState(null); // {type,msg}
+
+  const handleApplyMotorPrice = async () => {
+    if (!isEdit || !productId || motorStatus?.type === 'loading') return;
+    setMotorStatus({ type: 'loading', msg: lang === 'es'
+      ? 'Aplicando precio del motor…'
+      : 'Applying engine price…' });
+    try {
+      const res = await apiFetch(`/productos/${productId}/gobernanza-motor/`, {
+        method: 'POST', body: {}, token: getToken(),
+      });
+      if (res?.applied) {
+        if (res.client_prices && typeof res.client_prices === 'object') {
+          setClientPrices(res.client_prices);
+        }
+        if (res.precio_lista != null) setListPrice(Number(res.precio_lista) || 0);
+        if (res.precio_mwt != null)   setMwtPrice(Number(res.precio_mwt) || 0);
+        setMotorStatus({
+          type: 'ok',
+          msg: lang === 'es'
+            ? `Precio del motor aplicado: banda ${res.banda} · ${res.plazo_dias}d · ${res.clientes_con_precio} cliente(s).`
+            : `Engine price applied: band ${res.banda} · ${res.plazo_dias}d · ${res.clientes_con_precio} client(s).`,
+        });
+        setMatrixReloadKey((k) => k + 1);
+      } else {
+        setMotorStatus({
+          type: 'warn',
+          msg: (lang === 'es'
+            ? 'Sin precio en el último Excel del motor: '
+            : 'No price in the latest engine Excel: ') + (res?.reason || ''),
+        });
+      }
+    } catch (e) {
+      setMotorStatus({
+        type: 'error',
+        msg: (lang === 'es' ? 'No se pudo aplicar: ' : 'Could not apply: ')
+             + (e?.body?.detail || e?.message || ''),
+      });
+    }
+  };
 
   // ── Sync overrides → calculados (waterfall) para todos los clientes ──
   // Estado del botón "Actualizar precios calculados a todos los clientes":
@@ -2737,6 +2784,26 @@ export default function ScreenProductFormView() {
                   <strong style={{ fontWeight: 700 }}>{bandaVigente.rango}</strong>
                 </span>
               )}
+              {isEdit && (
+                <button type="button" onClick={handleApplyMotorPrice}
+                  disabled={motorStatus?.type === 'loading'}
+                  style={{
+                    marginLeft: 'auto',
+                    padding: '5px 12px', borderRadius: 8,
+                    border: '1px solid var(--border)',
+                    background: 'var(--surface-raised)',
+                    color: 'var(--text-primary)',
+                    cursor: motorStatus?.type === 'loading' ? 'wait' : 'pointer',
+                    font: '600 11px/1.2 var(--font-body)',
+                  }}
+                  title={lang === 'es'
+                    ? 'Recalcula precios desde el último Excel del motor de precios'
+                    : 'Recalculate prices from the latest price engine Excel'}>
+                  {motorStatus?.type === 'loading'
+                    ? (lang === 'es' ? 'Aplicando…' : 'Applying…')
+                    : (lang === 'es' ? 'Aplicar precio del motor' : 'Apply engine price')}
+                </button>
+              )}
             </div>
             <div className="caption" style={{
               color: 'var(--text-tertiary)', marginBottom: 12, lineHeight: 1.5,
@@ -2745,6 +2812,31 @@ export default function ScreenProductFormView() {
                 ? <>Precios congelados por contrato (12 bandas cambiales × 4 plazos = 48 precios). Editar una celda <strong>90d</strong> recalcula 60/30/8d con factores originales; editar <strong>60d</strong> recalcula 30/8d sin tocar 90d; <strong>30d</strong> recalcula 8d; <strong>8d</strong> es terminal.</>
                 : <>Prices frozen as contract (12 FX bands × 4 terms = 48 prices). Editing <strong>90d</strong> recalculates 60/30/8d; <strong>60d</strong> recalculates 30/8d; <strong>30d</strong> recalculates 8d; <strong>8d</strong> is terminal.</>}
             </div>
+
+            {motorStatus && (
+              <div style={{
+                marginBottom: 12, padding: '8px 12px', borderRadius: 8,
+                fontSize: 11.5, lineHeight: 1.45,
+                background: motorStatus.type === 'ok'
+                  ? 'rgba(16, 185, 129, 0.10)'
+                  : motorStatus.type === 'error'
+                    ? 'rgba(239, 68, 68, 0.10)'
+                    : motorStatus.type === 'warn'
+                      ? 'rgba(245, 158, 11, 0.10)'
+                      : 'var(--surface-raised)',
+                border: '1px solid '
+                  + (motorStatus.type === 'ok' ? 'rgba(16, 185, 129, 0.35)'
+                    : motorStatus.type === 'error' ? 'rgba(239, 68, 68, 0.35)'
+                      : motorStatus.type === 'warn' ? 'rgba(245, 158, 11, 0.35)'
+                        : 'var(--border)'),
+                color: motorStatus.type === 'ok' ? '#047857'
+                  : motorStatus.type === 'error' ? '#B91C1C'
+                    : motorStatus.type === 'warn' ? '#92400E'
+                      : 'var(--text-secondary)',
+              }}>
+                {motorStatus.msg}
+              </div>
+            )}
 
             {matricesLoading && (
               <div style={{
@@ -2763,8 +2855,8 @@ export default function ScreenProductFormView() {
                 lineHeight: 1.5,
               }}>
                 {lang === 'es'
-                  ? <>Aún no hay matrices guardadas para este SKU. Las matrices se crean desde el simulador del cliente-marca: <strong>Marcas → [marca] → Motor de Precios → [cliente]</strong>.</>
-                  : <>No matrices saved yet for this SKU. Matrices are created from the client-brand simulator.</>}
+                  ? <>Aún no hay matrices guardadas para este SKU. Las matrices se crean desde el simulador del cliente-marca (<strong>Marcas → [marca] → Motor de Precios → [cliente]</strong>) o con <strong>Aplicar precio del motor</strong> (usa el último Excel cargado y la banda vigente × 90d).</>
+                  : <>No matrices saved yet for this SKU. Create them from the client-brand simulator or with <strong>Apply engine price</strong> (latest uploaded Excel, current band × 90d).</>}
               </div>
             )}
 

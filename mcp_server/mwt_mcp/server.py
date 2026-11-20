@@ -1434,16 +1434,121 @@ def producto_precio_cliente(
     return _safe_role(_call)
 
 
+def _anotar_gobernanza(res: Any) -> Any:
+    """Resume la gobernanza de precios que devolvió el backend al crear."""
+    if not isinstance(res, dict) or not isinstance(res.get("gobernanza"), dict):
+        return res
+    g = res["gobernanza"]
+    if g.get("applied"):
+        res["gobernanza_resumen"] = (
+            f"Precio del motor aplicado: banda {g.get('banda')} · "
+            f"{g.get('plazo_dias')}d · lista {g.get('precio_lista')} · "
+            f"{g.get('clientes_con_precio')} clientes con precio."
+        )
+    else:
+        res["gobernanza_resumen"] = (
+            "Gobernanza NO aplicada: " + str(g.get("reason") or "sin motivo")
+            + ". Sube la tabla en Marcas → Marluvas → Motor de Precios "
+            "(o `motor_precios_importar`) y reintenta con "
+            "`producto_motor_precios_aplicar`."
+        )
+    return res
+
+
+@mcp.tool()
+def motor_precios_estado(brand_id: str, sku: str | None = None) -> Any:
+    """Estado del último Excel del motor de precios para una marca.
+
+    Sin `sku` → resumen de la marca: `{count, source_file, updated_at, anchor}`.
+    Con `sku` → si ese SKU está en el Excel y su precio base:
+    `{found, brl, ref, banda, plazo_dias, precio_base_usd, source_file}`.
+
+    Úsala ANTES de crear un producto: si `found=false`, el producto quedaría
+    sin gobernanza de precios."""
+    return _safe_role(lambda: api.get(
+        "commercial/marluvas/engine-snapshot/",
+        _params(brand_id=brand_id, sku=sku)))
+
+
+@mcp.tool()
+@write_tool
+def motor_precios_importar(
+    brand_id: str,
+    rows: list[dict],
+    file_name: str | None = None,
+    cliente_ids: list[str] | None = None,
+    banda_id: int | None = None,
+    plazo_dias: int = 90,
+    aplicar_productos: bool = True,
+) -> Any:
+    """Importa la tabla de precios COMEX al motor de precios (CEO/Admin).
+
+    `rows`: [{"sku":"700844","ref":"50B22M-CPAP-PAD","brl":67.7508}] — el precio
+    base en BRL de cada SKU (columna "Preço … (R$)" del Excel).
+
+    Qué hace (una sola vez, todo en el backend):
+      1. Guarda el BRL por SKU como "último Excel del motor".
+      2. Recalcula la matriz 12 bandas × plazos de TODOS los clientes activos
+         (o solo `cliente_ids`) con la comisión de cada uno.
+      3. Aplica la gobernanza a los productos existentes de la marca:
+         `client_prices`, `precio_lista`, `precio_mwt`.
+
+    `banda_id`: 1..12 (default: la banda vigente según el TC USD/BRL).
+    `plazo_dias`: 8/15/30/60/90 (default 90).
+    Para SKUs nuevos: después de importar, `producto_crear` aplica la
+    gobernanza automáticamente."""
+    g = _wguard()
+    if g:
+        return g
+    body = {
+        "brand_id": brand_id,
+        "rows": rows,
+        "file_name": file_name,
+        "cliente_ids": cliente_ids,
+        "banda_id": banda_id,
+        "plazo_dias": plazo_dias,
+        "aplicar_productos": aplicar_productos,
+    }
+    return _safe_role(lambda: api.post(
+        "commercial/marluvas/engine-import/", body))
+
+
+@mcp.tool()
+@write_tool
+def producto_motor_precios_aplicar(producto_id: str) -> Any:
+    """Aplica (o re-aplica) la gobernanza de precios del motor a UN producto.
+
+    Úsala cuando `producto_crear` devolvió `gobernanza.applied=false` y ya
+    subiste el Excel, o para refrescar un producto viejo tras una tabla nueva.
+    Devuelve `{applied, banda, plazo_dias, precio_lista, precio_mwt,
+    clientes_con_precio}`."""
+    g = _wguard()
+    if g:
+        return g
+    return _safe_role(lambda: api.post(
+        f"productos/{producto_id}/gobernanza-motor/", {}))
+
+
 @mcp.tool()
 @write_tool
 def producto_crear(datos: dict) -> Any:
     """Crea un producto. `datos`: sku, nombre, marca_id, categoria, unidad ("PAR" para
     calzado), costo_estandar, precio_lista, precio_mwt, hs_code, pais_origen_iso2 ("BR"),
     estado ("ACTIVO"), colores (["Negro"]).
+
+    GOBERNANZA DE PRECIOS (automática): al crear, el backend busca el SKU en el
+    último Excel del motor de precios (`pricing.marluvas_engine_sku`). Si está,
+    completa `precio_lista`, `precio_mwt` y `especificaciones.client_prices` con la
+    banda vigente × plazo 90 y la comisión de cada cliente, y devuelve
+    `gobernanza:{applied:true, banda, plazo_dias, precio_lista, clientes_con_precio}`.
+    NO hace falta mandar `precio_lista` ni `precio_mwt`: si el SKU existe en el
+    Excel, el motor manda. Si `gobernanza.applied=false`, el SKU no está en el
+    Excel: corre `motor_precios_importar` antes de crear productos nuevos.
+
     TALLAS: pon en **`tallas`** Y en **`especificaciones.sizes`** el MISMO array de **UUIDs**
     de talla (de `tallas_listar`) — NUNCA labels ni "UNICA". NCM: `hs_code` + `especificaciones.ncm`
     con el mismo código (ej. "6403.99.90"). Ej.:
-    {sku, nombre, marca_id, unidad:"PAR", precio_lista, precio_mwt, hs_code:"6403.99.90",
+    {sku, nombre, marca_id, unidad:"PAR", hs_code:"6403.99.90",
      tallas:[<uuid39>,<uuid40>...], especificaciones:{ncm:"6403.99.90", color:"Negro",
      sizes:[<uuid39>,<uuid40>...]}}. Tras crear, usa `producto_alias_crear` para el part-number del cliente."""
     g = _wguard()
@@ -1452,7 +1557,7 @@ def producto_crear(datos: dict) -> Any:
     _verr = validate_producto_datos(datos)
     if _verr:
         return {"error": True, "detail": _verr, "hint": "Revisa la lista de campos permitidos de producto_crear."}
-    return _safe_role(lambda: api.post("productos/", datos))
+    return _anotar_gobernanza(_safe_role(lambda: api.post("productos/", datos)))
 
 
 @mcp.tool()

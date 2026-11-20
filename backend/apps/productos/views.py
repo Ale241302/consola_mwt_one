@@ -110,7 +110,28 @@ class ProductoViewSet(viewsets.ViewSet):
         s = ProductoSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         s.save(id=uuid.uuid4())   # bypass read_only_fields=("id",)
-        return Response(s.data, status=201)
+
+        # ── Gobernanza de precios automática ───────────────────────────
+        # Un producto creado por una IA (MCP `producto_crear`) o por el
+        # formulario nunca debe quedar en $0 si su SKU ya está en el último
+        # Excel del motor de precios (pricing.marluvas_engine_sku).
+        # Aplica: precio_lista, precio_mwt, especificaciones.client_prices
+        # y la matriz 12 bandas × plazos por cliente. Si el SKU no está en
+        # el Excel, no toca nada y devuelve el motivo en `gobernanza`.
+        gobernanza = None
+        try:
+            from apps.commercial import engine
+            gobernanza = engine.aplicar_gobernanza_producto(
+                s.instance,
+                user_id=getattr(request.user, "id", None),
+            )
+        except Exception as exc:  # noqa: BLE001 — nunca romper el alta
+            log.warning("producto create · gobernanza falló: %s", exc)
+            gobernanza = {"applied": False, "reason": str(exc)}
+
+        data = dict(s.data)
+        data["gobernanza"] = gobernanza
+        return Response(data, status=201)
 
     def update(self, request, pk=None):
         try:
@@ -122,6 +143,31 @@ class ProductoViewSet(viewsets.ViewSet):
         s.save()
         return Response(s.data)
     partial_update = update
+
+    # ── Motor de precios · aplicar gobernanza a un producto existente ──
+    # POST /api/productos/<id>/gobernanza-motor/
+    #   → { applied, sku, brl, banda, plazo_dias, source_file,
+    #       precio_lista, precio_mwt, clientes_con_precio, matrices }
+    #
+    # Útil cuando el producto se cargó ANTES de subir el Excel del motor,
+    # o cuando se sube una tabla nueva y se quiere refrescar el precio.
+    @action(detail=True, methods=["post"], url_path="gobernanza-motor")
+    def gobernanza_motor(self, request, pk=None):
+        try:
+            producto = Producto.objects.get(pk=pk, is_active=True)
+        except Producto.DoesNotExist:
+            return Response({"detail": "Producto no existe"}, status=404)
+        try:
+            from apps.commercial import engine
+            res = engine.aplicar_gobernanza_producto(
+                producto,
+                user_id=getattr(request.user, "id", None),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("gobernanza-motor %s falló: %s", pk, exc)
+            return Response({"detail": f"No se pudo aplicar: {exc}"},
+                            status=500)
+        return Response(res, status=200)
 
     def destroy(self, request, pk=None):
         """

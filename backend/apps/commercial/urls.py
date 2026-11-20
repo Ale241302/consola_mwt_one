@@ -50,6 +50,8 @@ from .views import (
     MarluvasSaveSimulationBulkView,
     # Simulador Marluvas v7 · vista inversa (matrices por cliente desde un SKU)
     MarluvasProductClientsMatrixView, MarluvasUpsertSkuView,
+    # Motor de precios · import del Excel (snapshot marca+SKU) + gobernanza
+    MarluvasEngineImportView, MarluvasEngineSnapshotView,
 )
 # F6 · Sprint 2026-05-20 · Bitácora histórica de cambios de precios.
 from .views_price_history import (
@@ -144,6 +146,14 @@ urlpatterns = [
     path("commercial/marluvas/upsert-sku/",
          MarluvasUpsertSkuView.as_view(),
          name="commercial-marluvas-upsert-sku"),
+    # Motor de precios · import del Excel COMEX a nivel marca (snapshot + matrices)
+    path("commercial/marluvas/engine-import/",
+         MarluvasEngineImportView.as_view(),
+         name="commercial-marluvas-engine-import"),
+    # Motor de precios · estado del último Excel para marca/SKU
+    path("commercial/marluvas/engine-snapshot/",
+         MarluvasEngineSnapshotView.as_view(),
+         name="commercial-marluvas-engine-snapshot"),
     # F6 · Bitácora histórica (CEO-ONLY)
     path("commercial/marluvas/price-history/",
          PriceHistoryListView.as_view(),

@@ -3177,3 +3177,149 @@ class MarluvasUpsertSkuView(APIView):
             "sku":                  sku,
             "snapshot_at":          timezone.now().isoformat(),
         }, status=200)
+
+# =====================================================================
+# Motor de precios · import del Excel COMEX (nivel marca)
+# ---------------------------------------------------------------------
+# POST /api/commercial/marluvas/engine-import/
+#   body: {
+#     brand_id, file_name?,
+#     rows: [{sku, ref?, brl}],           # parseado del Excel
+#     cliente_ids?: [uuid],               # null = todos los clientes activos
+#     banda_id?: 1..12,                   # null = banda vigente según TC
+#     plazo_dias?: 8|15|30|60|90,         # default 90
+#     fecha_inicio?, fecha_fin?,
+#     aplicar_productos?: bool            # default true
+#   }
+#   → { ok, anchor, skus, snapshot, clientes, productos }
+#
+# Es el mismo camino que usa la carga masiva del frontend, pero calculado
+# 100% en el backend (una sola fuente de verdad) y dejando el snapshot
+# marca+SKU que después usa la gobernanza de productos.
+# CEO/Admin únicamente: mueve precios de TODOS los clientes.
+# =====================================================================
+class MarluvasEngineImportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from . import engine
+
+        if not _is_admin(request.user):
+            return Response(
+                {"detail": "Solo CEO/Admin puede importar precios del motor."},
+                status=403,
+            )
+
+        data = request.data or {}
+        try:
+            brand_id = MarluvasSaveSimulationView._parse_uuid(
+                data.get("brand_id"), "brand_id")
+            fecha_ini = MarluvasSaveSimulationView._parse_date_optional(
+                data.get("fecha_inicio"), "fecha_inicio")
+            fecha_fin = MarluvasSaveSimulationView._parse_date_optional(
+                data.get("fecha_fin"), "fecha_fin")
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+
+        rows = data.get("rows")
+        if not isinstance(rows, list) or not rows:
+            return Response({"detail": "rows[] vacío."}, status=400)
+        if len(rows) > 5000:
+            return Response({"detail": "Máximo 5000 filas por import."},
+                            status=400)
+
+        clientes_raw = data.get("cliente_ids")
+        cliente_ids = None
+        if isinstance(clientes_raw, list) and clientes_raw:
+            cliente_ids = [str(c) for c in clientes_raw]
+
+        user_id = None
+        raw_id = getattr(request.user, "id", None) or getattr(
+            request.user, "pk", None)
+        if raw_id:
+            try:
+                user_id = uuid.UUID(str(raw_id))
+            except (ValueError, TypeError):
+                user_id = None
+
+        try:
+            res = engine.importar(
+                brand_id,
+                rows,
+                file_name=data.get("file_name"),
+                cliente_ids=cliente_ids,
+                banda_id=data.get("banda_id"),
+                plazo_dias=data.get("plazo_dias"),
+                fecha_inicio=fecha_ini,
+                fecha_fin=fecha_fin,
+                user_id=user_id,
+                aplicar_productos=bool(data.get("aplicar_productos", True)),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("engine-import failed: %s", exc)
+            return Response({"detail": f"No se pudo importar: {exc}"},
+                            status=500)
+        return Response(res, status=200)
+
+
+class MarluvasEngineSnapshotView(APIView):
+    """GET · estado del último Excel del motor para una marca (y SKU).
+
+    GET /api/commercial/marluvas/engine-snapshot/?brand_id=<uuid>&sku=700844
+      → { brand_id, sku, found, brl, ref, source_file, banda, plazo_dias,
+          updated_at, precio_base_usd }
+    Sin `sku` devuelve el resumen de la marca: { count, source_file,
+    updated_at, anchor }.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from . import engine
+
+        brand_raw = request.query_params.get("brand_id")
+        sku = (request.query_params.get("sku") or "").strip()
+        if not brand_raw:
+            return Response({"detail": "brand_id es requerido."}, status=400)
+
+        if sku:
+            snap = engine.snapshot_para_sku(brand_raw, sku)
+            if not snap:
+                return Response({
+                    "brand_id": str(brand_raw), "sku": sku, "found": False,
+                    "detail": "El SKU no está en el último Excel del motor.",
+                }, status=200)
+            anchor = engine.anchor_actual(snap.get("anchor_banda"),
+                                          snap.get("anchor_plazo"))
+            base = engine.precio_base_usd(
+                snap["brl"], (anchor.get("banda") or {}).get("div") or 4.07, 0)
+            return Response({
+                "brand_id": str(brand_raw), "sku": sku, "found": True,
+                "brl": snap["brl"], "ref": snap["ref"],
+                "source_file": snap["source_file"],
+                "updated_at": snap["updated_at"],
+                "banda": (anchor.get("banda") or {}).get("id"),
+                "plazo_dias": anchor.get("plazo_dias"),
+                "precio_base_usd": round(base, 4),
+            }, status=200)
+
+        with connection.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*), MAX(source_file), MAX(updated_at)
+                  FROM pricing.marluvas_engine_sku
+                 WHERE brand_id = %s AND is_active = TRUE
+            """, [str(brand_raw)])
+            count, source_file, updated_at = cur.fetchone()
+        anchor = engine.anchor_actual()
+        return Response({
+            "brand_id": str(brand_raw),
+            "count": count or 0,
+            "source_file": source_file,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "anchor": {
+                "banda_id": (anchor.get("banda") or {}).get("id"),
+                "rango": (anchor.get("banda") or {}).get("rango"),
+                "plazo_dias": anchor.get("plazo_dias"),
+                "tc_usd_brl": anchor.get("tc_usd_brl"),
+            },
+        }, status=200)

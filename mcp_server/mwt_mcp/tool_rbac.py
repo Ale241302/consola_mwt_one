@@ -126,6 +126,10 @@ TOOL_MODULES: dict[str, tuple[str, str] | None] = {
     "producto_ficha_tecnica": ("productos", "view"),
     "producto_crear": ("productos", "create"),
     "producto_editar": ("productos", "update"),
+    # Motor de precios · gobernanza (import del Excel + aplicar a un producto)
+    "motor_precios_estado": ("productos", "view"),
+    "motor_precios_importar": ("productos", "update"),
+    "producto_motor_precios_aplicar": ("productos", "update"),
     "producto_alias_crear": ("productos", "create"),
     "ncm_listar": ("productos", "view"),
     "tallas_listar": ("sizing", "view"),

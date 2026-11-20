@@ -182,6 +182,7 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
   const [anchorBandaId, setAnchorBandaId] = useState(1);
   const [anchorPlazoDias, setAnchorPlazoDias] = useState(90);
   const [running, setRunning] = useState(false);
+  const [runningAll, setRunningAll] = useState(false);
   const [result, setResult]   = useState(null);
   // selection: { [cliente_id]: Set(sku) } · openClients: Set(cliente_id)
   const [selection, setSelection]   = useState({});
@@ -382,6 +383,43 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
   };
 
   const btnDisabled = !parsedSkus.length || !clientsWithSel.length || running;
+
+  // ── Aplicar a TODOS los clientes (motor de precios del backend) ─────
+  // A diferencia de `generate` (que respeta los SKUs habilitados por
+  // cliente), este camino recalcula la matriz de todos los clientes
+  // activos con su comisión y deja los precios en los productos.
+  const generateAll = async () => {
+    if (!parsedSkus.length || runningAll) return;
+    setRunningAll(true); setError(null); setResult(null);
+    try {
+      const resp = await apiFetch("/commercial/marluvas/engine-import/", {
+        method: "POST",
+        body: {
+          brand_id:         brandId,
+          file_name:        file?.name || null,
+          rows:             parsedSkus.map((p) => ({
+            sku: String(p.sku), ref: p.ref || null, brl: Number(p.brl),
+          })),
+          banda_id:         Number(anchorBandaId),
+          plazo_dias:       Number(anchorPlazoDias),
+          fecha_inicio:     fechaInicio || null,
+          fecha_fin:        fechaFinIndef ? null : (fechaFin || null),
+          aplicar_productos: true,
+        },
+        token: getToken(),
+      });
+      setResult({
+        saved_clients: resp?.clientes?.clientes_ok ?? 0,
+        results:       resp?.clientes?.results || [],
+        engine:        resp,
+      });
+      if (typeof onDone === "function") onDone();
+    } catch (e) {
+      setError(String(e?.body?.detail || e?.message || e));
+    } finally {
+      setRunningAll(false);
+    }
+  };
 
   return (
     <div style={{
@@ -645,18 +683,41 @@ function BulkPriceUploadPanel({ brandId, clients, lang = "es", onDone }) {
                 : `${clientsWithSel.length} of ${activeClients.length} clients with selected products`)
             : (lang === "es" ? "Sube un Excel para empezar." : "Upload an Excel to start.")}
         </div>
-        <button type="button" onClick={generate} disabled={btnDisabled}
-          style={{
-            padding: "9px 18px", borderRadius: 9, border: "none",
-            background: btnDisabled ? "#CBD5E1" : MINT, color: "#FFFFFF",
-            font: "700 13px/1 var(--font-body)",
-            cursor: btnDisabled ? "not-allowed" : "pointer",
-            display: "inline-flex", alignItems: "center", gap: 7,
-          }}>
-          {running
-            ? (lang === "es" ? "Generando..." : "Generating...")
-            : (lang === "es" ? `Generar para ${clientsWithSel.length} cliente(s)` : `Generate for ${clientsWithSel.length} client(s)`)}
-        </button>
+        <div style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }}>
+          {/* Motor de precios: aplica la tabla a TODOS los clientes activos,
+              sin depender de los SKUs habilitados por cliente. Es el camino
+              que también usa la gobernanza automática de productos. */}
+          <button type="button" onClick={generateAll}
+            disabled={!parsedSkus.length || runningAll}
+            style={{
+              padding: "9px 16px", borderRadius: 9,
+              border: `1px solid ${MINT}66`,
+              background: "#FFFFFF", color: "#065F46",
+              font: "700 13px/1 var(--font-body)",
+              cursor: (!parsedSkus.length || runningAll) ? "not-allowed" : "pointer",
+              opacity: (!parsedSkus.length || runningAll) ? 0.55 : 1,
+              display: "inline-flex", alignItems: "center", gap: 7,
+            }}
+            title={lang === "es"
+              ? "Recalcula la matriz de TODOS los clientes activos con su comisión y aplica los precios a los productos existentes"
+              : "Recalculate all active clients with their commission and apply prices to existing products"}>
+            {runningAll
+              ? (lang === "es" ? "Aplicando..." : "Applying...")
+              : (lang === "es" ? "Aplicar a todos los clientes" : "Apply to all clients")}
+          </button>
+          <button type="button" onClick={generate} disabled={btnDisabled}
+            style={{
+              padding: "9px 18px", borderRadius: 9, border: "none",
+              background: btnDisabled ? "#CBD5E1" : MINT, color: "#FFFFFF",
+              font: "700 13px/1 var(--font-body)",
+              cursor: btnDisabled ? "not-allowed" : "pointer",
+              display: "inline-flex", alignItems: "center", gap: 7,
+            }}>
+            {running
+              ? (lang === "es" ? "Generando..." : "Generating...")
+              : (lang === "es" ? `Generar para ${clientsWithSel.length} cliente(s)` : `Generate for ${clientsWithSel.length} client(s)`)}
+          </button>
+        </div>
       </div>
     </div>
   );
