@@ -2822,31 +2822,32 @@ def documento_descargar(documento_id: str, ttl_minutes: int | None = None) -> An
     else:
         ttl_minutes = 15
 
-    # 1) obtener el documento para saber su storage_url.
-    doc = _safe_role(lambda: api.get(f"documentos/{documento_id}/"))
-    if isinstance(doc, dict) and doc.get("error"):
-        return doc
+    # 1) obtener el documento para saber su storage_url. Se lee sin el filtro
+    # de redacción: storage_url es la clave del objeto que hay que firmar y la
+    # redacción la devolvía como '***'. El enlace que sale está atado a ese key
+    # y vence.
+    try:
+        doc = api.get(f"documentos/{documento_id}/")
+    except MwtApiError as e:
+        return {"error": True, "status": e.status, "detail": e.payload, "url": e.url}
     storage_url = None
     if isinstance(doc, dict):
         storage_url = doc.get("storage_url")
     if not storage_url:
         return {"error": True, "detail": "El documento no tiene archivo almacenado (storage_url vacío). Sube el binario con documento_subir o un flujo match_subir/sap_confirmar."}
-    # storage_url suele ser la clave MinIO; si es una URL absoluta, extraer la parte de key.
     key = storage_url
     if "download/?key=" in str(key):
         key = str(key).split("download/?key=")[-1]
-    elif key.startswith("http"):
-        # fallback: puede ser una URL firmada ya; si no es MinIO key legible, error.
-        return {"error": True, "detail": f"storage_url no parece una clave MinIO: {storage_url[:80]}"}
+        key = str(key).split("&")[0]
+    elif str(key).startswith("http"):
+        return {"error": True, "detail": f"storage_url no parece una clave MinIO: {str(storage_url)[:80]}"}
 
-    # 2) firmar la lectura.
-    try:
-        return _safe_role(lambda: api.post(
-            "storage/signed_url/",
-            {"key": key, "kind": "get", "ttl": ttl_minutes * 60},
-        ))
-    except MwtApiError as e:
-        return {"error": True, "status": e.status, "detail": e.payload, "url": e.url}
+    # 2) enlace HTTPS de descarga (proxy de la consola), no URL presignada de
+    # MinIO: MinIO firma sobre HTTP y el agente solo acepta HTTPS.
+    link = _descarga_link(key, ttl_minutes * 60)
+    if not link.get("url"):
+        return {"error": True, "detail": link.get("hint", "No se pudo firmar el enlace de descarga.")}
+    return {**link, "method": "GET", "available": True}
 
 
 @mcp.tool()
